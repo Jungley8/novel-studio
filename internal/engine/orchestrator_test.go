@@ -20,6 +20,21 @@ func (m *mockLLMClient) ChatCompletion(ctx context.Context, model string, system
 	return m.response, nil
 }
 
+func (m *mockLLMClient) ChatCompletionWithUsage(ctx context.Context, model string, systemPrompt, userPrompt string, temp float64) (string, engine.TokenUsage, error) {
+	if m.err != nil {
+		return "", engine.TokenUsage{}, m.err
+	}
+	return m.response, engine.TokenUsage{PromptTokens: 100, CompletionTokens: 200, TotalTokens: 300}, nil
+}
+
+func (m *mockLLMClient) ChatCompletionStream(ctx context.Context, model string, systemPrompt, userPrompt string, temp float64) (<-chan engine.StreamChunk, error) {
+	ch := make(chan engine.StreamChunk, 2)
+	ch <- engine.StreamChunk{Delta: m.response}
+	ch <- engine.StreamChunk{Done: true, Usage: &engine.TokenUsage{PromptTokens: 100, CompletionTokens: 200, TotalTokens: 300}}
+	close(ch)
+	return ch, nil
+}
+
 func TestOrchestrator_DeriveBeats(t *testing.T) {
 	mockJSON := `{
 		"beats": [

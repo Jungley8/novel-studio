@@ -24,6 +24,23 @@ func (m *mockWorkshopLLMClient) ChatCompletion(ctx context.Context, model, syste
 	return m.renderDraft, nil
 }
 
+func (m *mockWorkshopLLMClient) ChatCompletionWithUsage(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, TokenUsage, error) {
+	txt, err := m.ChatCompletion(ctx, model, systemPrompt, userPrompt, temperature)
+	return txt, TokenUsage{PromptTokens: 50, CompletionTokens: 100, TotalTokens: 150}, err
+}
+
+func (m *mockWorkshopLLMClient) ChatCompletionStream(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
+	txt, err := m.ChatCompletion(ctx, model, systemPrompt, userPrompt, temperature)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan StreamChunk, 2)
+	ch <- StreamChunk{Delta: txt}
+	ch <- StreamChunk{Done: true, Usage: &TokenUsage{PromptTokens: 50, CompletionTokens: 100, TotalTokens: 150}}
+	close(ch)
+	return ch, nil
+}
+
 func TestChapterWorkshop_ProduceChapter(t *testing.T) {
 	beatsResp := `{
 		"beats": [
@@ -82,6 +99,11 @@ func TestChapterWorkshop_ProduceChapter(t *testing.T) {
 		MaxRewriteLoops: 2,
 	}
 
+	var events []WorkshopEvent
+	req.OnProgress = func(ev WorkshopEvent) {
+		events = append(events, ev)
+	}
+
 	res, err := workshop.ProduceChapter(context.Background(), req)
 	if err != nil {
 		t.Fatalf("ProduceChapter failed: %v", err)
@@ -99,4 +121,79 @@ func TestChapterWorkshop_ProduceChapter(t *testing.T) {
 	if !strings.Contains(res.Content, "阵纹骤亮") {
 		t.Errorf("unexpected content: %s", res.Content)
 	}
+	if res.TotalUsage.TotalTokens == 0 {
+		t.Errorf("expected non-zero total tokens")
+	}
+	if len(events) == 0 {
+		t.Errorf("expected progress events to be emitted")
+	}
+}
+
+func TestChapterWorkshop_ResumeCheckpoint(t *testing.T) {
+	mockClient := &mockWorkshopLLMClient{
+		beatsJSON:   `{"beats": [], "state_mutation": {}}`,
+		renderDraft: "新草稿内容",
+		reviewJSON:  `{"verdict": "ACCEPTED", "score": 95, "issues": []}`,
+	}
+
+	orch := NewOrchestrator(mockClient)
+	qGate := NewQualityGate(mockClient, nil)
+
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:    "p-cp",
+			Title: "断点测试",
+		},
+	}
+
+	// Pre-populate mock checkpoint with drafted text
+	savedCheckpoint := &domain.ChapterCheckpoint{
+		ProjectID:    "p-cp",
+		ChapterIndex: 2,
+		Phase:        domain.CheckpointPhaseDrafted,
+		Beats: []domain.SceneBeat{
+			{Phase: "绝地反转", Action: "反击破敌"},
+		},
+		DraftText: "断点恢复的既有正文内容，无需重新消耗Token渲染。",
+	}
+
+	mockStoreWithCP := &mockCheckpointWorkshopStore{
+		mockChronicleStore: mockStore,
+		cp:                 savedCheckpoint,
+	}
+
+	chronicle := NewCanonChronicle(mockStoreWithCP)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStoreWithCP)
+
+	req := WorkshopProduceRequest{
+		ProjectID:        "p-cp",
+		ChapterIndex:     2,
+		ResumeCheckpoint: true,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter with checkpoint failed: %v", err)
+	}
+
+	if res.Content != "断点恢复的既有正文内容，无需重新消耗Token渲染。" {
+		t.Errorf("expected resumed content, got %s", res.Content)
+	}
+	if res.ResumedPhase != string(domain.CheckpointPhaseDrafted) {
+		t.Errorf("expected resumed phase %s, got %s", domain.CheckpointPhaseDrafted, res.ResumedPhase)
+	}
+}
+
+type mockCheckpointWorkshopStore struct {
+	*mockChronicleStore
+	cp *domain.ChapterCheckpoint
+}
+
+func (m *mockCheckpointWorkshopStore) GetCheckpoint(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, error) {
+	return m.cp, nil
+}
+
+func (m *mockCheckpointWorkshopStore) ClearCheckpoint(ctx context.Context, projectID string, chapterIndex int) error {
+	m.cp = nil
+	return nil
 }

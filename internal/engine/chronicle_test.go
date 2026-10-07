@@ -48,7 +48,16 @@ func (m *mockChronicleStore) ListPlotHooks(ctx context.Context, projectID string
 	return m.hooks, nil
 }
 func (m *mockChronicleStore) DeletePlotHook(ctx context.Context, id string) error { return nil }
-func (m *mockChronicleStore) Close() error                                        { return nil }
+func (m *mockChronicleStore) SaveCheckpoint(ctx context.Context, checkpoint *domain.ChapterCheckpoint) error {
+	return nil
+}
+func (m *mockChronicleStore) GetCheckpoint(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, error) {
+	return nil, nil
+}
+func (m *mockChronicleStore) ClearCheckpoint(ctx context.Context, projectID string, chapterIndex int) error {
+	return nil
+}
+func (m *mockChronicleStore) Close() error { return nil }
 
 func TestCanonChronicle_AssembleHorizon(t *testing.T) {
 	mockStore := &mockChronicleStore{

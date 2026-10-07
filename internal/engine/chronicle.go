@@ -11,15 +11,21 @@ import (
 
 // CanonHorizon encapsulates the synthesized rolling context window for a target chapter,
 // ensuring strict continuity across previous sealed canon and active plot hooks.
+// CanonHorizon encapsulates the synthesized three-tier context window for a target chapter:
+// Layer 1: Global world axioms & book progress
+// Layer 2: Rolling 3-chapter high-fidelity sealed canon
+// Layer 3: Cross-volume callbacks & active/urgent plot hooks
 type CanonHorizon struct {
-	Project          *domain.Project    `json:"project"`
-	TargetChapter    int                `json:"target_chapter"`
-	RollingCanonText string             `json:"rolling_canon_text"`
-	RecentChapters   []*domain.Chapter  `json:"recent_chapters"`
-	UrgentHooks      []*domain.PlotHook `json:"urgent_hooks"`
-	AllActiveHooks   []*domain.PlotHook `json:"all_active_hooks"`
-	ProtagonistState domain.Protagonist `json:"protagonist_state"`
-	WorldRules       string             `json:"world_rules"`
+	Project             *domain.Project    `json:"project"`
+	TargetChapter       int                `json:"target_chapter"`
+	GlobalSummary       string             `json:"global_summary"`
+	RollingCanonText    string             `json:"rolling_canon_text"`
+	HistoricalCallbacks string             `json:"historical_callbacks,omitempty"`
+	RecentChapters      []*domain.Chapter  `json:"recent_chapters"`
+	UrgentHooks         []*domain.PlotHook `json:"urgent_hooks"`
+	AllActiveHooks      []*domain.PlotHook `json:"all_active_hooks"`
+	ProtagonistState    domain.Protagonist `json:"protagonist_state"`
+	WorldRules          string             `json:"world_rules"`
 }
 
 // CanonChronicle acts as the deep context assembler and horizon keeper.
@@ -31,8 +37,10 @@ func NewCanonChronicle(s store.Store) *CanonChronicle {
 	return &CanonChronicle{store: s}
 }
 
-// AssembleHorizon deterministically synthesizes the rolling 3-chapter canon window,
-// urgent plot hooks nearing resolution, and verified entity states behind a single seam.
+// AssembleHorizon deterministically synthesizes the three-tier context horizon:
+// 1. Layer 1: Global Summary & Macro Arc
+// 2. Layer 2: Rolling 3-chapter sealed canon window
+// 3. Layer 3: Cross-volume callbacks for active hooks & urgent plot resolution
 func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, targetChapter int) (*CanonHorizon, error) {
 	if c.store == nil {
 		return nil, fmt.Errorf("store is not initialized")
@@ -53,7 +61,7 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 		return nil, fmt.Errorf("list plot hooks failed: %w", err)
 	}
 
-	// 1. Extract 3-chapter sealed rolling window prior to targetChapter
+	// Separate preceding chapters
 	var preceding []*domain.Chapter
 	for _, ch := range chapters {
 		if ch.ChapterIndex < targetChapter {
@@ -61,11 +69,18 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 		}
 	}
 
+	// Layer 1: Global Summary
+	globalSummary := fmt.Sprintf("书名：《%s》 | 目标平台：%s | 全书当前进度：已归档 %d 章，正向第 %d 章推进。\n核心世界法则：%s",
+		project.Title, project.TargetPlatform, len(preceding), targetChapter, project.WorldRules)
+
+	// Layer 2: Rolling 3-Chapter Window
 	windowSize := 3
 	var recent []*domain.Chapter
+	var older []*domain.Chapter
 	if len(preceding) <= windowSize {
 		recent = preceding
 	} else {
+		older = preceding[:len(preceding)-windowSize]
 		recent = preceding[len(preceding)-windowSize:]
 	}
 
@@ -96,13 +111,15 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 		}
 	}
 
-	// 2. Identify active and urgent plot hooks
+	// Identify active and urgent plot hooks
 	var activeHooks []*domain.PlotHook
 	var urgentHooks []*domain.PlotHook
+	activeOriginChapters := make(map[int]bool)
 
 	for _, h := range hooks {
 		if h.Status == domain.HookStatusOpen || h.Status == domain.HookStatusFermenting {
 			activeHooks = append(activeHooks, h)
+			activeOriginChapters[h.CreatedChapter] = true
 			// Urgent if scheduled for resolution within 2 chapters or overdue
 			if h.TargetChapter <= targetChapter+2 {
 				urgentHooks = append(urgentHooks, h)
@@ -110,14 +127,32 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 		}
 	}
 
+	// Layer 3: Cross-volume Historical Callbacks for long-arc foreshadowing
+	var cbSb strings.Builder
+	if len(older) > 0 {
+		var callbacks []string
+		for _, oldCh := range older {
+			if activeOriginChapters[oldCh.ChapterIndex] {
+				callbacks = append(callbacks, fmt.Sprintf("• 【第 %d 章：%s】埋下的长线伏笔根源，核心冲突：%s",
+					oldCh.ChapterIndex, oldCh.Title, oldCh.CoreConflict))
+			}
+		}
+		if len(callbacks) > 0 {
+			cbSb.WriteString("【跨卷历史因果线索 (Historical Callbacks)】\n")
+			cbSb.WriteString(strings.Join(callbacks, "\n"))
+		}
+	}
+
 	return &CanonHorizon{
-		Project:          project,
-		TargetChapter:    targetChapter,
-		RollingCanonText: strings.TrimSpace(sb.String()),
-		RecentChapters:   recent,
-		UrgentHooks:      urgentHooks,
-		AllActiveHooks:   activeHooks,
-		ProtagonistState: project.Protagonist,
-		WorldRules:       project.WorldRules,
+		Project:             project,
+		TargetChapter:       targetChapter,
+		GlobalSummary:       globalSummary,
+		RollingCanonText:    strings.TrimSpace(sb.String()),
+		HistoricalCallbacks: strings.TrimSpace(cbSb.String()),
+		RecentChapters:      recent,
+		UrgentHooks:         urgentHooks,
+		AllActiveHooks:      activeHooks,
+		ProtagonistState:    project.Protagonist,
+		WorldRules:          project.WorldRules,
 	}, nil
 }

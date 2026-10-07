@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ApplyStateMutation executes a structured transition on the protagonist's state machine,
@@ -58,12 +59,36 @@ func ApplyStateMutation(p Protagonist, mutation StateMutation) (Protagonist, []s
 	// 2. Process Power / Level Progression
 	powerDelta := strings.TrimSpace(mutation.PowerDelta)
 	if powerDelta != "" {
-		updatedLevel := applyPowerDelta(p.NameAndLevel, powerDelta)
+		updatedLevel, oldRealm, newRealm := applyPowerDelta(p.NameAndLevel, powerDelta)
 		if updatedLevel != p.NameAndLevel {
 			auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 境界/战力演变: %s ➔ %s", p.NameAndLevel, updatedLevel))
 			updated.NameAndLevel = updatedLevel
+
+			// Update structured level history
+			if updated.StructuredLevel == nil {
+				updated.StructuredLevel = &PowerLevel{
+					Realm: newRealm,
+				}
+			}
+			updated.StructuredLevel.History = append(updated.StructuredLevel.History, LevelTransition{
+				FromRealm: oldRealm,
+				ToRealm:   newRealm,
+				Reason:    powerDelta,
+				Timestamp: time.Now(),
+			})
+			updated.StructuredLevel.Realm = newRealm
 		}
 	}
+
+	// Update structured items
+	var structured []InventoryItem
+	for _, itm := range items {
+		structured = append(structured, InventoryItem{
+			Name:     itm,
+			Quantity: 1,
+		})
+	}
+	updated.StructuredItems = structured
 
 	return updated, auditTrail, nil
 }
@@ -146,14 +171,42 @@ func findItemIndex(items []string, target string) int {
 	return -1
 }
 
-func applyPowerDelta(current, delta string) string {
+func applyPowerDelta(current, delta string) (updatedLevel, oldRealm, newRealm string) {
 	current = strings.TrimSpace(current)
 	delta = strings.TrimSpace(delta)
 	if current == "" {
-		return delta
+		return delta, "", delta
 	}
 	if strings.Contains(current, delta) {
-		return current
+		return current, current, delta
 	}
-	return fmt.Sprintf("%s (%s)", current, delta)
+
+	// Clean out prefixes like "突破", "进阶", "晋升"
+	cleanDelta := delta
+	cleanDelta = strings.TrimPrefix(cleanDelta, "突破")
+	cleanDelta = strings.TrimPrefix(cleanDelta, "晋升")
+	cleanDelta = strings.TrimPrefix(cleanDelta, "进阶")
+	cleanDelta = strings.TrimSpace(cleanDelta)
+
+	// If current has form "Name (OldRealm)", replace the realm inside parenthesis
+	startIdx := strings.Index(current, "(")
+	endIdx := strings.LastIndex(current, ")")
+	if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+		name := strings.TrimSpace(current[:startIdx])
+		oldRealm = strings.TrimSpace(current[startIdx+1 : endIdx])
+		newRealm = cleanDelta
+		return fmt.Sprintf("%s (%s)", name, newRealm), oldRealm, newRealm
+	}
+
+	// Chinese brackets （ ）
+	startIdx = strings.Index(current, "（")
+	endIdx = strings.LastIndex(current, "）")
+	if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+		name := strings.TrimSpace(current[:startIdx])
+		oldRealm = strings.TrimSpace(current[startIdx+len("（") : endIdx])
+		newRealm = cleanDelta
+		return fmt.Sprintf("%s (%s)", name, newRealm), oldRealm, newRealm
+	}
+
+	return fmt.Sprintf("%s (%s)", current, cleanDelta), current, cleanDelta
 }

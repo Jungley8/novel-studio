@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,12 +12,40 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Jungley8/novel-studio/internal/config"
 )
 
-// LLMClient represents a standard chat completion provider.
+// TokenUsage holds token usage metrics from an LLM call.
+type TokenUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+// StreamChunk represents a streamed token or final usage report.
+type StreamChunk struct {
+	Delta string      `json:"delta"`
+	Usage *TokenUsage `json:"usage,omitempty"`
+	Done  bool        `json:"done"`
+	Err   error       `json:"err,omitempty"`
+}
+
+// LLMClient represents a standard chat completion provider supporting sync, usage, and streaming.
 type LLMClient interface {
 	ChatCompletion(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (string, error)
+	ChatCompletionWithUsage(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (string, TokenUsage, error)
+	ChatCompletionStream(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error)
 }
+
+// LLMRole distinguishes specific generation roles for multi-provider dispatch.
+type LLMRole string
+
+const (
+	RoleReasoner LLMRole = "reasoner"
+	RoleWriter   LLMRole = "writer"
+	RoleReviewer LLMRole = "reviewer"
+)
 
 type HTTPLLMClient struct {
 	mu         sync.RWMutex
@@ -53,9 +82,11 @@ type chatMessage struct {
 }
 
 type chatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []chatMessage `json:"messages"`
-	Temperature float64       `json:"temperature"`
+	Model         string                 `json:"model"`
+	Messages      []chatMessage          `json:"messages"`
+	Temperature   float64                `json:"temperature"`
+	Stream        bool                   `json:"stream,omitempty"`
+	StreamOptions map[string]interface{} `json:"stream_options,omitempty"`
 }
 
 type chatResponse struct {
@@ -64,6 +95,11 @@ type chatResponse struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
@@ -71,13 +107,19 @@ type chatResponse struct {
 }
 
 func (c *HTTPLLMClient) ChatCompletion(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	content, _, err := c.ChatCompletionWithUsage(ctx, model, systemPrompt, userPrompt, temperature)
+	return content, err
+}
+
+func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (string, TokenUsage, error) {
 	c.mu.RLock()
 	apiKey := c.apiKey
 	baseURL := c.baseURL
 	c.mu.RUnlock()
 
+	var zeroUsage TokenUsage
 	if apiKey == "" {
-		return "", errors.New("missing API key: please configure your API key in settings")
+		return "", zeroUsage, errors.New("missing API key: please configure your API key in settings")
 	}
 
 	reqBody := chatRequest{
@@ -91,45 +133,267 @@ func (c *HTTPLLMClient) ChatCompletion(ctx context.Context, model string, system
 
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("marshal request failed: %w", err)
+		return "", zeroUsage, fmt.Errorf("marshal request failed: %w", err)
 	}
 
 	endpoint := baseURL + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return "", fmt.Errorf("create request failed: %w", err)
+		return "", zeroUsage, fmt.Errorf("create request failed: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("do HTTP request failed: %w", err)
+		return "", zeroUsage, fmt.Errorf("do HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("read response body failed: %w", err)
+		return "", zeroUsage, fmt.Errorf("read response body failed: %w", err)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("LLM API returned HTTP %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", zeroUsage, fmt.Errorf("LLM API returned HTTP %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var chatResp chatResponse
 	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return "", fmt.Errorf("unmarshal LLM response failed: %w", err)
+		return "", zeroUsage, fmt.Errorf("unmarshal LLM response failed: %w", err)
 	}
 
 	if chatResp.Error != nil {
-		return "", fmt.Errorf("LLM API error: %s", chatResp.Error.Message)
+		return "", zeroUsage, fmt.Errorf("LLM API error: %s", chatResp.Error.Message)
 	}
 
 	if len(chatResp.Choices) == 0 {
-		return "", errors.New("LLM returned no choices")
+		return "", zeroUsage, errors.New("LLM returned no choices")
 	}
 
-	return chatResp.Choices[0].Message.Content, nil
+	var usage TokenUsage
+	if chatResp.Usage != nil {
+		usage = TokenUsage{
+			PromptTokens:     chatResp.Usage.PromptTokens,
+			CompletionTokens: chatResp.Usage.CompletionTokens,
+			TotalTokens:      chatResp.Usage.TotalTokens,
+		}
+	}
+
+	return chatResp.Choices[0].Message.Content, usage, nil
+}
+
+func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
+	c.mu.RLock()
+	apiKey := c.apiKey
+	baseURL := c.baseURL
+	c.mu.RUnlock()
+
+	if apiKey == "" {
+		return nil, errors.New("missing API key: please configure your API key in settings")
+	}
+
+	reqBody := chatRequest{
+		Model: model,
+		Messages: []chatMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
+		},
+		Temperature: temperature,
+		Stream:      true,
+		StreamOptions: map[string]interface{}{
+			"include_usage": true,
+		},
+	}
+
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal stream request: %w", err)
+	}
+
+	endpoint := baseURL + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("create stream request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do stream HTTP request: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("LLM Stream API returned HTTP %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	out := make(chan StreamChunk, 64)
+
+	go func() {
+		defer resp.Body.Close()
+		defer close(out)
+
+		scanner := bufio.NewScanner(resp.Body)
+		buf := make([]byte, 64*1024)
+		scanner.Buffer(buf, 1024*1024)
+
+		for scanner.Scan() {
+			select {
+			case <-ctx.Done():
+				out <- StreamChunk{Err: ctx.Err()}
+				return
+			default:
+			}
+
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, ":") {
+				continue
+			}
+
+			if strings.HasPrefix(line, "data:") {
+				data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+				if data == "[DONE]" {
+					out <- StreamChunk{Done: true}
+					return
+				}
+
+				var streamResp struct {
+					Choices []struct {
+						Delta struct {
+							Content string `json:"content"`
+						} `json:"delta"`
+					} `json:"choices"`
+					Usage *struct {
+						PromptTokens     int `json:"prompt_tokens"`
+						CompletionTokens int `json:"completion_tokens"`
+						TotalTokens      int `json:"total_tokens"`
+					} `json:"usage"`
+				}
+
+				if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
+					continue
+				}
+
+				var deltaText string
+				if len(streamResp.Choices) > 0 {
+					deltaText = streamResp.Choices[0].Delta.Content
+				}
+
+				var usage *TokenUsage
+				if streamResp.Usage != nil {
+					usage = &TokenUsage{
+						PromptTokens:     streamResp.Usage.PromptTokens,
+						CompletionTokens: streamResp.Usage.CompletionTokens,
+						TotalTokens:      streamResp.Usage.TotalTokens,
+					}
+				}
+
+				if deltaText != "" || usage != nil {
+					out <- StreamChunk{
+						Delta: deltaText,
+						Usage: usage,
+					}
+				}
+			}
+		}
+
+		if err := scanner.Err(); err != nil {
+			out <- StreamChunk{Err: err}
+		}
+	}()
+
+	return out, nil
+}
+
+// LLMRouter orchestrates multi-provider role dispatch (Writer, Reasoner, Reviewer)
+// ensuring independent models can review drafts without self-judging bias.
+type LLMRouter struct {
+	mu        sync.RWMutex
+	defaultCl *HTTPLLMClient
+	clients   map[LLMRole]*HTTPLLMClient
+	models    map[LLMRole]string
+}
+
+func NewLLMRouter(defaultCl *HTTPLLMClient) *LLMRouter {
+	return &LLMRouter{
+		defaultCl: defaultCl,
+		clients:   make(map[LLMRole]*HTTPLLMClient),
+		models:    make(map[LLMRole]string),
+	}
+}
+
+func (r *LLMRouter) ConfigureRole(role LLMRole, client *HTTPLLMClient, model string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clients[role] = client
+	r.models[role] = model
+}
+
+func (r *LLMRouter) UpdateFromConfig(cfg *config.Config) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.defaultCl.UpdateCredentials(cfg.APIBase, cfg.APIKey)
+
+	// Reasoner
+	if cfg.ReasonerProvider != nil && cfg.ReasonerProvider.APIBase != "" {
+		r.clients[RoleReasoner] = NewHTTPLLMClient(cfg.ReasonerProvider.APIBase, cfg.ReasonerProvider.APIKey)
+		r.models[RoleReasoner] = cfg.ReasonerProvider.Model
+	} else {
+		r.clients[RoleReasoner] = r.defaultCl
+		r.models[RoleReasoner] = cfg.ReasoningModel
+	}
+
+	// Writer
+	if cfg.WriterProvider != nil && cfg.WriterProvider.APIBase != "" {
+		r.clients[RoleWriter] = NewHTTPLLMClient(cfg.WriterProvider.APIBase, cfg.WriterProvider.APIKey)
+		r.models[RoleWriter] = cfg.WriterProvider.Model
+	} else {
+		r.clients[RoleWriter] = r.defaultCl
+		r.models[RoleWriter] = cfg.WriterModel
+	}
+
+	// Reviewer (P0: Independent cross-provider Reviewer)
+	if cfg.ReviewerProvider != nil && cfg.ReviewerProvider.APIBase != "" {
+		r.clients[RoleReviewer] = NewHTTPLLMClient(cfg.ReviewerProvider.APIBase, cfg.ReviewerProvider.APIKey)
+		r.models[RoleReviewer] = cfg.ReviewerProvider.Model
+	} else {
+		r.clients[RoleReviewer] = r.defaultCl
+		model := cfg.ReviewerModel
+		if model == "" {
+			model = cfg.ReasoningModel
+		}
+		r.models[RoleReviewer] = model
+	}
+}
+
+func (r *LLMRouter) ClientForRole(role LLMRole) (LLMClient, string) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	cl, ok := r.clients[role]
+	if !ok || cl == nil {
+		cl = r.defaultCl
+	}
+	model := r.models[role]
+	return cl, model
+}
+
+func (r *LLMRouter) ChatCompletion(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	return r.defaultCl.ChatCompletion(ctx, model, systemPrompt, userPrompt, temperature)
+}
+
+func (r *LLMRouter) ChatCompletionWithUsage(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (string, TokenUsage, error) {
+	return r.defaultCl.ChatCompletionWithUsage(ctx, model, systemPrompt, userPrompt, temperature)
+}
+
+func (r *LLMRouter) ChatCompletionStream(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
+	return r.defaultCl.ChatCompletionStream(ctx, model, systemPrompt, userPrompt, temperature)
 }

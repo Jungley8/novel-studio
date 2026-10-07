@@ -16,12 +16,38 @@ const (
 	HookStatusAbandoned  HookStatus = "ABANDONED"
 )
 
+// LevelTransition records an individual cultivation / power breakthrough event.
+type LevelTransition struct {
+	FromRealm string    `json:"from_realm"`
+	ToRealm   string    `json:"to_realm"`
+	Chapter   int       `json:"chapter,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// PowerLevel represents a structured cultivation realm and progression history.
+type PowerLevel struct {
+	Realm    string            `json:"realm"`
+	SubLevel int               `json:"sub_level"`
+	History  []LevelTransition `json:"history,omitempty"`
+}
+
+// InventoryItem represents a structured inventory entry with quantity and tier.
+type InventoryItem struct {
+	Name       string `json:"name"`
+	Quantity   int    `json:"quantity"`
+	Quality    string `json:"quality,omitempty"`
+	AcquiredAt int    `json:"acquired_at,omitempty"`
+}
+
 // Protagonist holds the structured state machine for the main character.
 type Protagonist struct {
-	NameAndLevel string `json:"name_and_level"`
-	Inventory    string `json:"inventory"`
-	CoreGoal     string `json:"core_goal"`
-	HealthStatus string `json:"health_status"`
+	NameAndLevel    string          `json:"name_and_level"`
+	Inventory       string          `json:"inventory"`
+	CoreGoal        string          `json:"core_goal"`
+	HealthStatus    string          `json:"health_status"`
+	StructuredLevel *PowerLevel     `json:"structured_level,omitempty"`
+	StructuredItems []InventoryItem `json:"structured_items,omitempty"`
 }
 
 // Project represents a novel book project.
@@ -102,11 +128,12 @@ const (
 
 // ReviewResult encapsulates the exact-body editor review output.
 type ReviewResult struct {
-	Verdict     ReviewVerdict `json:"verdict"`
-	Score       int           `json:"score"` // 1-100
-	Issues      []string      `json:"issues"`
-	Suggestions string        `json:"suggestions"`
-	ReviewedAt  time.Time     `json:"reviewed_at"`
+	Verdict         ReviewVerdict `json:"verdict"`
+	Score           int           `json:"score"` // 1-100
+	Issues          []string      `json:"issues"`
+	Suggestions     string        `json:"suggestions"`
+	ResolvedHookIDs []string      `json:"resolved_hook_ids,omitempty"`
+	ReviewedAt      time.Time     `json:"reviewed_at"`
 }
 
 // AuditReport unifies statistical heuristic metrics and semantic editor review verdicts into a single seam.
@@ -117,6 +144,7 @@ type AuditReport struct {
 	HitBannedWords  []string      `json:"hit_banned_words"`
 	Issues          []string      `json:"issues"`
 	Suggestions     string        `json:"suggestions"`
+	ResolvedHookIDs []string      `json:"resolved_hook_ids,omitempty"`
 	ReviewedAt      time.Time     `json:"reviewed_at"`
 }
 
@@ -125,12 +153,37 @@ func (a *AuditReport) ToReviewResult() *ReviewResult {
 		return nil
 	}
 	return &ReviewResult{
-		Verdict:     a.Verdict,
-		Score:       a.Score,
-		Issues:      a.Issues,
-		Suggestions: a.Suggestions,
-		ReviewedAt:  a.ReviewedAt,
+		Verdict:         a.Verdict,
+		Score:           a.Score,
+		Issues:          a.Issues,
+		Suggestions:     a.Suggestions,
+		ResolvedHookIDs: a.ResolvedHookIDs,
+		ReviewedAt:      a.ReviewedAt,
 	}
+}
+
+// CheckpointPhase indicates the progression stage reached in ChapterCheckpoint.
+type CheckpointPhase string
+
+const (
+	CheckpointPhaseBeats     CheckpointPhase = "BEATS_DERIVED"
+	CheckpointPhaseDrafted   CheckpointPhase = "DRAFTED"
+	CheckpointPhaseAudited   CheckpointPhase = "AUDITED"
+	CheckpointPhaseRewriting CheckpointPhase = "REWRITING"
+)
+
+// ChapterCheckpoint encapsulates an in-progress chapter generation state to survive restarts/crashes.
+type ChapterCheckpoint struct {
+	ProjectID     string          `json:"project_id"`
+	ChapterIndex  int             `json:"chapter_index"`
+	Phase         CheckpointPhase `json:"phase"`
+	CoreConflict  string          `json:"core_conflict"`
+	Beats         []SceneBeat     `json:"beats,omitempty"`
+	StateMutation StateMutation   `json:"state_mutation,omitempty"`
+	DraftText     string          `json:"draft_text,omitempty"`
+	AuditReport   *AuditReport    `json:"audit_report,omitempty"`
+	RewriteLoops  int             `json:"rewrite_loops"`
+	UpdatedAt     time.Time       `json:"updated_at"`
 }
 
 // Chapter represents a generated or drafted chapter.

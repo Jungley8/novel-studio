@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Jungley8/novel-studio/internal/config"
@@ -38,15 +39,40 @@ func setupTestServer(t *testing.T) (*server.Server, store.Store, *config.Config)
 }
 
 func TestServer_ConfigAndProjects(t *testing.T) {
-	srv, _, _ := setupTestServer(t)
+	srv, _, cfg := setupTestServer(t)
 
-	// 1. GET /api/config
+	// 1. GET /api/config & Masking Verification
+	// Set real key first
+	cfg.APIKey = "sk-1234567890abcdef"
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var gotCfg config.Config
+	_ = json.Unmarshal(w.Body.Bytes(), &gotCfg)
+	if gotCfg.APIKey == "sk-1234567890abcdef" || !strings.Contains(gotCfg.APIKey, "...") {
+		t.Errorf("expected masked API key in GET /api/config, got %s", gotCfg.APIKey)
+	}
+
+	// 1.1 POST /api/config with masked key must NOT overwrite real key
+	updatePayload := gotCfg
+	updatePayload.WriterModel = "deepseek-chat-v2"
+	bodyUp, _ := json.Marshal(updatePayload)
+	reqUp := httptest.NewRequest(http.MethodPost, "/api/config", bytes.NewReader(bodyUp))
+	wUp := httptest.NewRecorder()
+	srv.ServeHTTP(wUp, reqUp)
+	if wUp.Code != http.StatusOK {
+		t.Fatalf("expected 200 on config update, got %d", wUp.Code)
+	}
+	if cfg.APIKey != "sk-1234567890abcdef" {
+		t.Errorf("real API key was clobbered by masked value: %s", cfg.APIKey)
+	}
+	if cfg.WriterModel != "deepseek-chat-v2" {
+		t.Errorf("writer model was not updated: %s", cfg.WriterModel)
 	}
 
 	// 2. POST /api/projects

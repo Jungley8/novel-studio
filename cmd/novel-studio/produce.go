@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/Jungley8/novel-studio/internal/config"
 	"github.com/Jungley8/novel-studio/internal/engine"
@@ -38,7 +40,8 @@ func runProduceCLI(argv []string, defaultDataDir string) int {
 	}
 	defer s.Close()
 
-	ctx := context.Background()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
 	// Resolve Project ID
 	projectID := *projectIDFlag
@@ -69,39 +72,54 @@ func runProduceCLI(argv []string, defaultDataDir string) int {
 	fmt.Printf("  • 作品: 《%s》 (%s)\n", project.Title, project.TargetPlatform)
 	fmt.Printf("  • 目标章节: 第 %d 章\n", chapterIdx)
 	fmt.Printf("  • 核心冲突: %s\n", *conflictFlag)
-	fmt.Printf("  • 推理模型: %s | 渲染模型: %s\n", cfg.ReasoningModel, cfg.WriterModel)
+	fmt.Printf("  • 推理模型: %s | 渲染模型: %s | 独立审校: %s\n", cfg.ReasoningModel, cfg.WriterModel, cfg.ReviewerModel)
 	fmt.Println("==================================================================")
 
 	llmClient := engine.NewHTTPLLMClient(cfg.APIBase, cfg.APIKey)
-	orch := engine.NewOrchestrator(llmClient)
+	router := engine.NewLLMRouter(llmClient)
+	router.UpdateFromConfig(cfg)
+
+	orch := engine.NewOrchestrator(router)
 	chronicle := engine.NewCanonChronicle(s)
-	qualityGate := engine.NewQualityGate(llmClient, nil)
+	qualityGate := engine.NewQualityGate(router, nil)
 	workshop := engine.NewChapterWorkshop(orch, chronicle, qualityGate, s)
 
-	fmt.Print("⏳ 正在组装正史视界、推演节拍、文学渲染并执行主编终审...\n")
+	produceReq := engine.WorkshopProduceRequest{
+		ProjectID:        projectID,
+		ChapterIndex:     chapterIdx,
+		CoreConflict:     *conflictFlag,
+		ReasoningModel:   cfg.ReasoningModel,
+		WriterModel:      cfg.WriterModel,
+		ReviewerModel:    cfg.ReviewerModel,
+		WordsTarget:      2000,
+		AutoCommit:       *autoCommitFlag,
+		MaxRewriteLoops:  3,
+		ResumeCheckpoint: true,
+		OnProgress: func(ev engine.WorkshopEvent) {
+			fmt.Printf("  [%s] %s\n", ev.Phase, ev.Message)
+		},
+	}
 
-	res, err := workshop.ProduceChapter(ctx, engine.WorkshopProduceRequest{
-		ProjectID:       projectID,
-		ChapterIndex:    chapterIdx,
-		CoreConflict:    *conflictFlag,
-		ReasoningModel:  cfg.ReasoningModel,
-		WriterModel:     cfg.WriterModel,
-		ReviewerModel:   cfg.ReasoningModel,
-		WordsTarget:     2000,
-		AutoCommit:      *autoCommitFlag,
-		MaxRewriteLoops: 3,
-	})
+	res, err := workshop.ProduceChapter(ctx, produceReq)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "✗ 自主生产流水线执行失败: %v\n", err)
 		return 1
 	}
 
 	fmt.Println("\n✓ 生产完成！")
+	if res.ResumedPhase != "" {
+		fmt.Printf("  • 断点恢复: 从 [%s] 阶段无损续跑\n", res.ResumedPhase)
+	}
 	fmt.Printf("  • 终审裁决: %s (综合评分: %d/100, 突发度: %d)\n",
 		res.Audit.Verdict, res.Audit.Score, res.Audit.BurstinessScore)
 	fmt.Printf("  • 定向返工轮次: %d 次\n", res.RewriteLoops)
+	fmt.Printf("  • Token消耗: %d tokens (预估成本: $%.4f USD)\n",
+		res.TotalUsage.TotalTokens, res.EstimatedCostUSD)
 	if len(res.Audit.Issues) > 0 {
 		fmt.Printf("  • 审校批注: %s\n", strings.Join(res.Audit.Issues, "; "))
+	}
+	if len(res.Audit.ResolvedHookIDs) > 0 {
+		fmt.Printf("  • 伏笔闭环回收: %s (已标记 RESOLVED)\n", strings.Join(res.Audit.ResolvedHookIDs, ", "))
 	}
 	if res.Committed {
 		fmt.Printf("  • 持久化状态: 已原子归档写入 SQLite (实体状态机已更新)\n")

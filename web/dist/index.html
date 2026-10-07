@@ -156,6 +156,26 @@
             </div>
           </div>
 
+          <!-- 流水线执行状态指示条 (Pipeline Banner) -->
+          <div v-if="pipelineState.active || pipelineState.lastFinished" class="px-4 py-2 border-b border-zinc-800 bg-zinc-900/90 flex items-center justify-between text-xs transition">
+            <div class="flex items-center gap-3">
+              <div v-if="pipelineState.active" class="flex items-center gap-2">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+                <span class="font-bold text-amber-300">{{ pipelinePhaseLabel(pipelineState.phase) }}</span>
+              </div>
+              <div v-else class="flex items-center gap-2">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                <span class="font-bold text-emerald-300">流水线完成</span>
+              </div>
+              <span class="text-zinc-300 font-mono text-[11px]">{{ pipelineState.message }}</span>
+              <span v-if="pipelineState.resumed" class="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 font-medium">⚡ 崩溃断点已恢复</span>
+            </div>
+            <div class="flex items-center gap-4 text-zinc-400 text-[11px] font-mono">
+              <span v-if="pipelineState.tokens.total_tokens > 0">Tokens: <strong class="text-zinc-200">{{ pipelineState.tokens.total_tokens.toLocaleString() }}</strong> (提示: {{ pipelineState.tokens.prompt_tokens.toLocaleString() }} / 生成: {{ pipelineState.tokens.completion_tokens.toLocaleString() }})</span>
+              <span v-if="pipelineCostUSD > 0" class="text-emerald-400">预估成本: ~${{ pipelineCostUSD.toFixed(4) }}</span>
+            </div>
+          </div>
+
           <!-- 正文编辑区 -->
           <div class="flex-1 flex overflow-hidden">
             <textarea v-model="workbench.content" @input="runLinter" class="flex-1 p-6 bg-zinc-950 text-zinc-200 text-sm leading-relaxed font-serif resize-none focus:outline-none" placeholder="输入或生成正文内容..."></textarea>
@@ -219,6 +239,16 @@
                   <div class="leading-relaxed whitespace-pre-wrap text-zinc-300">{{ reviewResult.suggestions }}</div>
                 </div>
 
+                <!-- 伏笔回收结算认定 -->
+                <div v-if="reviewResult.resolved_hook_ids && reviewResult.resolved_hook_ids.length > 0" class="p-2 bg-emerald-950/30 border border-emerald-500/30 rounded text-[11px] space-y-1">
+                  <div class="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                    <span>🎣</span> 伏笔回收结算认定 ({{ reviewResult.resolved_hook_ids.length }})：
+                  </div>
+                  <div class="flex flex-wrap gap-1">
+                    <span v-for="hid in reviewResult.resolved_hook_ids" :key="hid" class="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.5 rounded font-mono">{{ hid }}</span>
+                  </div>
+                </div>
+
                 <button v-if="reviewResult.verdict === 'REVISION_NEEDED'" @click="rewriteDraft" :disabled="isRewriting" class="w-full mt-1 py-1.5 text-xs bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded transition font-medium disabled:opacity-50">
                   {{ isRewriting ? '正在按批注定向重写...' : '🔄 一键定向返工重写' }}
                 </button>
@@ -252,6 +282,17 @@
             <div>
               <label class="text-xs text-zinc-400">当前隐秘目标与不可触碰底线：</label>
               <input v-model="currentProject.protagonist.core_goal" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1 text-xs text-zinc-200">
+            </div>
+
+            <!-- 结构化突破演进记录 (Level History) -->
+            <div v-if="currentProject.protagonist.structured_level && currentProject.protagonist.structured_level.history && currentProject.protagonist.structured_level.history.length > 0" class="pt-2 border-t border-zinc-800 space-y-1.5">
+              <span class="text-[11px] font-bold text-amber-400">⚡ 境界突破演进历史：</span>
+              <div class="space-y-1 max-h-36 overflow-y-auto">
+                <div v-for="(trans, idx) in currentProject.protagonist.structured_level.history" :key="idx" class="text-[11px] flex items-center justify-between text-zinc-300 font-mono bg-zinc-950 px-2 py-1 rounded border border-zinc-800">
+                  <span>{{ trans.from_realm || '初始' }} ➔ <strong class="text-emerald-400">{{ trans.to_realm }}</strong></span>
+                  <span class="text-zinc-500 text-[10px]">第 {{ trans.chapter }} 章 {{ trans.reason ? '('+trans.reason+')' : '' }}</span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -316,27 +357,65 @@
 
       <!-- 标签页 5：系统配置 -->
       <div v-show="currentTab === 'config'" class="flex-1 p-6 overflow-y-auto max-w-3xl space-y-4">
-        <h2 class="text-lg font-bold text-zinc-100 border-b border-zinc-800 pb-2">大模型 API 与系统配置</h2>
+        <h2 class="text-lg font-bold text-zinc-100 border-b border-zinc-800 pb-2">大模型 API 与多通道架构配置</h2>
         <div class="p-4 bg-zinc-900 border border-zinc-800 rounded-lg space-y-4">
           <div>
-            <label class="block text-xs text-zinc-400 mb-1">OpenAI 兼容 Base URL：</label>
-            <input v-model="config.api_base" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200 font-mono">
+            <label class="block text-xs text-zinc-400 mb-1">主接口 Base URL (OpenAI 兼容)：</label>
+            <input v-model="config.api_base" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200 font-mono" placeholder="https://api.deepseek.com/v1">
           </div>
           <div>
-            <label class="block text-xs text-zinc-400 mb-1">API Key：</label>
+            <label class="block text-xs text-zinc-400 mb-1">主接口 API Key：</label>
             <input type="password" v-model="config.api_key" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200 font-mono" placeholder="sk-...">
           </div>
-          <div class="grid grid-cols-2 gap-4">
+          <div class="grid grid-cols-3 gap-4">
             <div>
-              <label class="block text-xs text-zinc-400 mb-1">因果推演模型 (Reasoning Model)：</label>
-              <input v-model="config.reasoning_model" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200">
+              <label class="block text-xs text-zinc-400 mb-1">因果推演模型 (Reasoning)：</label>
+              <input v-model="config.reasoning_model" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200" placeholder="deepseek-reasoner">
             </div>
             <div>
-              <label class="block text-xs text-zinc-400 mb-1">文学渲染模型 (Writer Model)：</label>
-              <input v-model="config.writer_model" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200">
+              <label class="block text-xs text-zinc-400 mb-1">文学渲染模型 (Writer)：</label>
+              <input v-model="config.writer_model" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200" placeholder="deepseek-chat">
+            </div>
+            <div>
+              <label class="block text-xs text-zinc-400 mb-1">主编终审模型 (Reviewer)：</label>
+              <input v-model="config.reviewer_model" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200" placeholder="deepseek-reasoner">
             </div>
           </div>
-          <button @click="saveConfig" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded text-xs transition">保存系统配置</button>
+
+          <!-- 独立质检员通道配置 (Reviewer Provider) -->
+          <div class="pt-4 border-t border-zinc-800 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                  <span>🛡️</span> 独立质检员通道 (Reviewer Provider - 解决自写自评盲区)
+                </span>
+                <p class="text-[11px] text-zinc-400 mt-0.5">配置第三方独立模型端点（如 OpenAI / Claude / Kimi），实现写作与质检物理隔离。</p>
+              </div>
+              <label class="flex items-center gap-1.5 text-xs text-zinc-300 cursor-pointer">
+                <input type="checkbox" v-model="enableReviewerProvider" class="rounded border-zinc-700 bg-zinc-800 text-amber-500">
+                <span>启用独立通道</span>
+              </label>
+            </div>
+
+            <div v-if="enableReviewerProvider" class="p-3 bg-zinc-950/70 border border-zinc-800 rounded space-y-3">
+              <div>
+                <label class="block text-xs text-zinc-400 mb-1">质检员 API Base：</label>
+                <input v-model="config.reviewer_provider.api_base" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200 font-mono" placeholder="https://api.openai.com/v1">
+              </div>
+              <div>
+                <label class="block text-xs text-zinc-400 mb-1">质检员 API Key：</label>
+                <input type="password" v-model="config.reviewer_provider.api_key" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200 font-mono" placeholder="sk-...">
+              </div>
+              <div>
+                <label class="block text-xs text-zinc-400 mb-1">质检员指定模型：</label>
+                <input v-model="config.reviewer_provider.model" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200 font-mono" placeholder="gpt-4o / claude-3-5-sonnet">
+              </div>
+            </div>
+          </div>
+
+          <div class="pt-2">
+            <button @click="saveConfig" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded text-xs transition">保存系统配置</button>
+          </div>
         </div>
       </div>
 
@@ -385,7 +464,40 @@
           api_base: '',
           api_key: '',
           reasoning_model: 'deepseek-reasoner',
-          writer_model: 'deepseek-chat'
+          writer_model: 'deepseek-chat',
+          reviewer_model: 'deepseek-reasoner',
+          reviewer_provider: {
+            api_base: '',
+            api_key: '',
+            model: ''
+          }
+        });
+        const enableReviewerProvider = ref(false);
+
+        const pipelineState = ref({
+          active: false,
+          lastFinished: false,
+          phase: '',
+          message: '',
+          resumed: false,
+          tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+        });
+
+        const pipelinePhaseLabel = (phase) => {
+          switch (phase) {
+            case 'BEATS': return '🎯 节拍因果推演';
+            case 'DRAFTED': return '📝 文学渲染生成';
+            case 'AUDITED': return '🛡️ 主编质量审核';
+            case 'REWRITING': return '🔄 缺陷定向返工';
+            case 'COMPLETED': return '✅ 生产闭环完成';
+            default: return phase || '⚡ 流水线运行中';
+          }
+        };
+
+        const pipelineCostUSD = computed(() => {
+          const p = pipelineState.value.tokens.prompt_tokens || 0;
+          const c = pipelineState.value.tokens.completion_tokens || 0;
+          return (p * 0.14 + c * 0.28) / 1000000;
         });
 
         const projects = ref([]);
@@ -443,7 +555,15 @@
 
         const loadConfig = async () => {
           try {
-            config.value = await api('/api/config');
+            const data = await api('/api/config');
+            config.value = {
+              ...config.value,
+              ...data,
+              reviewer_provider: data.reviewer_provider || { api_base: '', api_key: '', model: '' }
+            };
+            if (data.reviewer_provider && (data.reviewer_provider.api_base || data.reviewer_provider.api_key || data.reviewer_provider.model)) {
+              enableReviewerProvider.value = true;
+            }
           } catch (e) {
             console.error('load config error:', e);
           }
@@ -451,7 +571,11 @@
 
         const saveConfig = async () => {
           try {
-            await api('/api/config', { method: 'POST', body: JSON.stringify(config.value) });
+            const payload = { ...config.value };
+            if (!enableReviewerProvider.value) {
+              payload.reviewer_provider = null;
+            }
+            await api('/api/config', { method: 'POST', body: JSON.stringify(payload) });
             alert('系统配置已成功保存！');
           } catch (e) {
             alert('保存配置失败: ' + e.message);
@@ -621,9 +745,20 @@
         const produceAutonomous = async () => {
           if (!currentProject.value) return alert('请先选择或新建项目');
           isLoading.value = true;
+          pipelineState.value.active = true;
+          pipelineState.value.lastFinished = false;
+          pipelineState.value.phase = 'BEATS';
+          pipelineState.value.message = '正在初始化生产流水线并推演节拍...';
+          pipelineState.value.resumed = false;
+          pipelineState.value.tokens = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+
           try {
-            const res = await api('/api/projects/' + currentProject.value.id + '/workshop/produce', {
+            const response = await fetch('/api/projects/' + currentProject.value.id + '/workshop/produce?stream=true', {
               method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'text/event-stream'
+              },
               body: JSON.stringify({
                 chapter_index: nextChapterIndex.value,
                 core_conflict: workbench.value.coreConflict,
@@ -632,16 +767,73 @@
                 max_rewrite_loops: 3
               })
             });
-            if (res.beats) workbench.value.beats = res.beats;
-            if (res.state_mutation) workbench.value.stateMutation = res.state_mutation;
-            if (res.content) workbench.value.content = res.content;
-            if (res.audit) reviewResult.value = res.audit;
-            await runLinter();
-            alert(`⚡ 全流程自主生产完成！\n经历 ${res.rewrite_loops} 轮定向返工修缮，终审评分：${res.audit.score} 分 (${res.audit.verdict})`);
+
+            if (!response.ok) {
+              const err = await response.json().catch(() => ({ error: 'HTTP ' + response.status }));
+              throw new Error(err.error || response.statusText);
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let finalResult = null;
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+
+              const frames = buffer.split('\n\n');
+              buffer = frames.pop() || '';
+
+              for (const frame of frames) {
+                if (!frame.trim()) continue;
+                const lines = frame.split('\n');
+                let eventType = 'message';
+                let dataStr = '';
+                for (const line of lines) {
+                  if (line.startsWith('event:')) {
+                    eventType = line.substring(6).trim();
+                  } else if (line.startsWith('data:')) {
+                    dataStr += (dataStr ? '\n' : '') + line.substring(5).trim();
+                  }
+                }
+
+                if (!dataStr) continue;
+                try {
+                  const data = JSON.parse(dataStr);
+                  if (eventType === 'progress') {
+                    if (data.phase) pipelineState.value.phase = data.phase;
+                    if (data.message) pipelineState.value.message = data.message;
+                    if (data.resumed !== undefined) pipelineState.value.resumed = data.resumed;
+                    if (data.tokens) pipelineState.value.tokens = data.tokens;
+                  } else if (eventType === 'complete') {
+                    finalResult = data;
+                  } else if (eventType === 'error') {
+                    throw new Error(data.error || '流水线执行异常');
+                  }
+                } catch (pe) {
+                  if (eventType === 'error') throw pe;
+                  console.warn('parse SSE data chunk error:', pe, dataStr);
+                }
+              }
+            }
+
+            if (finalResult) {
+              if (finalResult.beats) workbench.value.beats = finalResult.beats;
+              if (finalResult.state_mutation) workbench.value.stateMutation = finalResult.state_mutation;
+              if (finalResult.content) workbench.value.content = finalResult.content;
+              if (finalResult.audit) reviewResult.value = finalResult.audit;
+              await runLinter();
+              pipelineState.value.lastFinished = true;
+              pipelineState.value.message = `生产完成！终审评分: ${finalResult.audit?.score || 0} (${finalResult.audit?.verdict || ''})，定向返工: ${finalResult.rewrite_loops || 0} 轮`;
+              alert(`⚡ 全流程自主生产完成！\n经历 ${finalResult.rewrite_loops || 0} 轮定向返工修缮，终审评分：${finalResult.audit?.score || 0} 分 (${finalResult.audit?.verdict || ''})`);
+            }
           } catch (e) {
             alert('自主生产流水线异常: ' + e.message);
           } finally {
             isLoading.value = false;
+            pipelineState.value.active = false;
           }
         };
 
@@ -724,6 +916,10 @@
           isLoading,
           showNewProjectModal,
           config,
+          enableReviewerProvider,
+          pipelineState,
+          pipelinePhaseLabel,
+          pipelineCostUSD,
           projects,
           selectedProjectId,
           currentProject,

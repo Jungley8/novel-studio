@@ -39,6 +39,19 @@ func (q *QualityGate) Audit(
 	beats []domain.SceneBeat,
 	draftText string,
 ) (*domain.AuditReport, error) {
+	return q.AuditWithHooks(ctx, reviewerModel, project, chapterIndex, beats, nil, draftText)
+}
+
+// AuditWithHooks extends Audit with open plot hook awareness to verify hook payoffs and resolutions.
+func (q *QualityGate) AuditWithHooks(
+	ctx context.Context,
+	reviewerModel string,
+	project *domain.Project,
+	chapterIndex int,
+	beats []domain.SceneBeat,
+	activeHooks []*domain.PlotHook,
+	draftText string,
+) (*domain.AuditReport, error) {
 	// 1. Fast algorithmic pre-pass
 	heuristic := q.linter.Analyze(draftText)
 
@@ -55,19 +68,30 @@ func (q *QualityGate) Audit(
 		heuristicNotes = strings.Join(hList, "; ")
 	}
 
+	hooksContext := "暂无开放伏笔"
+	if len(activeHooks) > 0 {
+		var hList []string
+		for _, h := range activeHooks {
+			hList = append(hList, fmt.Sprintf("- [%s] ID:%s | 标题:《%s》 | 目标章节:第%d章 | 详情:%s", h.Status, h.ID, h.Title, h.TargetChapter, h.Details))
+		}
+		hooksContext = strings.Join(hList, "\n")
+	}
+
 	systemPrompt := `你是一名极其严苛、深谙网络小说工业标准的总审编（QualityGate Reviewer）。
 你的任务是对正文草稿进行严格的综合审校。
 审查重点：
 1. 世界法则与实体状态不变量：主角是否违背了世界法则？是否使用了未持有的物品？
 2. 节拍因果履约：4 个节拍的核心动作和打破预期是否全部落实？
 3. 反AI味声口：句长是否有起伏？是否存在情绪悬浮或空洞废话？
+4. 伏笔回收判定：若正文成功回收或推进了提供的开放伏笔，在 resolved_hook_ids 中列出其 ID。
 
 必须且仅输出标准 JSON 格式：
 {
   "verdict": "ACCEPTED" 或 "REVISION_NEEDED",
   "score": 1到100的整数 (80分及以上方可通过),
   "issues": ["具体问题1", "具体问题2"],
-  "suggestions": "具体的定向修改整改指令"
+  "suggestions": "具体的定向修改整改指令",
+  "resolved_hook_ids": ["已在此章成功回收的伏笔ID列表，若无则为空数组 []"]
 }`
 
 	beatsJSON, _ := json.Marshal(beats)
@@ -77,6 +101,8 @@ func (q *QualityGate) Audit(
 【主角当前状态】%s | 物品栏: %s
 【要求履行的节拍】%s
 【底层算法质检预警】%s
+【参考开放伏笔】
+%s
 
 【待审正文草稿】
 %s
@@ -87,6 +113,7 @@ func (q *QualityGate) Audit(
 		project.Protagonist.NameAndLevel, project.Protagonist.Inventory,
 		string(beatsJSON),
 		heuristicNotes,
+		hooksContext,
 		draftText,
 	)
 
@@ -95,12 +122,17 @@ func (q *QualityGate) Audit(
 		return nil, fmt.Errorf("quality gate LLM review failed: %w", err)
 	}
 
-	cleanJSON := extractJSON(resp)
+	cleanJSON, err := ExtractAndCleanJSON(resp)
+	if err != nil {
+		cleanJSON = extractJSON(resp)
+	}
+
 	var out struct {
-		Verdict     domain.ReviewVerdict `json:"verdict"`
-		Score       int                  `json:"score"`
-		Issues      []string             `json:"issues"`
-		Suggestions string               `json:"suggestions"`
+		Verdict         domain.ReviewVerdict `json:"verdict"`
+		Score           int                  `json:"score"`
+		Issues          []string             `json:"issues"`
+		Suggestions     string               `json:"suggestions"`
+		ResolvedHookIDs []string             `json:"resolved_hook_ids"`
 	}
 	if err := json.Unmarshal([]byte(cleanJSON), &out); err != nil {
 		return nil, fmt.Errorf("parse quality gate JSON failed (raw: %s): %w", resp, err)
@@ -140,6 +172,7 @@ func (q *QualityGate) Audit(
 		HitBannedWords:  heuristic.HitBannedWords,
 		Issues:          allIssues,
 		Suggestions:     out.Suggestions,
+		ResolvedHookIDs: out.ResolvedHookIDs,
 		ReviewedAt:      time.Now(),
 	}, nil
 }

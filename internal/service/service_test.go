@@ -46,12 +46,12 @@ func TestDoctorAndServiceManager(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	mgr, err := NewServiceManager(tmpDir, 28980)
+	mgr, err := NewServiceManager(tmpDir, 39998)
 	if err != nil {
 		t.Fatalf("NewServiceManager failed: %v", err)
 	}
-	if mgr.port != 28980 {
-		t.Errorf("expected port 28980, got %d", mgr.port)
+	if mgr.port != 39998 {
+		t.Errorf("expected port 39998, got %d", mgr.port)
 	}
 
 	// Status on non-running port

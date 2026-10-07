@@ -20,6 +20,7 @@ type Server struct {
 	configPath  string
 	store       store.Store
 	llmClient   *engine.HTTPLLMClient
+	llmRouter   *engine.LLMRouter
 	orch        *engine.Orchestrator
 	linter      *engine.Linter
 	chronicle   *engine.CanonChronicle
@@ -46,8 +47,18 @@ func New(
 		linter = engine.NewLinter(nil)
 	}
 
+	var router *engine.LLMRouter
+	if llmClient != nil {
+		router = engine.NewLLMRouter(llmClient)
+		router.UpdateFromConfig(cfg)
+	}
+
 	chronicle := engine.NewCanonChronicle(s)
-	qualityGate := engine.NewQualityGate(llmClient, nil)
+	var qgClient engine.LLMClient = llmClient
+	if router != nil {
+		qgClient = router
+	}
+	qualityGate := engine.NewQualityGate(qgClient, nil)
 	workshop := engine.NewChapterWorkshop(orch, chronicle, qualityGate, s)
 
 	srv := &Server{
@@ -55,6 +66,7 @@ func New(
 		configPath:  configPath,
 		store:       s,
 		llmClient:   llmClient,
+		llmRouter:   router,
 		orch:        orch,
 		linter:      linter,
 		chronicle:   chronicle,
@@ -121,28 +133,106 @@ func errorResponse(w http.ResponseWriter, status int, msg string) {
 	jsonResponse(w, status, map[string]string{"error": msg})
 }
 
+func maskKey(k string) string {
+	k = strings.TrimSpace(k)
+	if k == "" {
+		return ""
+	}
+	if len(k) <= 8 {
+		return "********"
+	}
+	return k[:3] + "..." + k[len(k)-4:]
+}
+
+func (s *Server) maskedConfig() config.Config {
+	cpy := *s.cfg
+	cpy.APIKey = maskKey(cpy.APIKey)
+	if cpy.ReviewerProvider != nil {
+		rcpy := *cpy.ReviewerProvider
+		rcpy.APIKey = maskKey(rcpy.APIKey)
+		cpy.ReviewerProvider = &rcpy
+	}
+	if cpy.WriterProvider != nil {
+		wcpy := *cpy.WriterProvider
+		wcpy.APIKey = maskKey(wcpy.APIKey)
+		cpy.WriterProvider = &wcpy
+	}
+	if cpy.ReasonerProvider != nil {
+		rpcpy := *cpy.ReasonerProvider
+		rpcpy.APIKey = maskKey(rpcpy.APIKey)
+		cpy.ReasonerProvider = &rpcpy
+	}
+	return cpy
+}
+
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		jsonResponse(w, http.StatusOK, s.cfg)
+		jsonResponse(w, http.StatusOK, s.maskedConfig())
 	case http.MethodPost:
+		r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
 		var updated config.Config
 		if err := json.NewDecoder(r.Body).Decode(&updated); err != nil {
 			errorResponse(w, http.StatusBadRequest, "invalid config JSON: "+err.Error())
 			return
 		}
+
 		s.cfg.APIBase = updated.APIBase
-		s.cfg.APIKey = updated.APIKey
+		if updated.APIKey != "" && !strings.Contains(updated.APIKey, "...") && !strings.Contains(updated.APIKey, "***") {
+			s.cfg.APIKey = updated.APIKey
+		}
 		s.cfg.ReasoningModel = updated.ReasoningModel
 		s.cfg.WriterModel = updated.WriterModel
+		if updated.ReviewerModel != "" {
+			s.cfg.ReviewerModel = updated.ReviewerModel
+		}
+
+		// Update independent providers if specified
+		if updated.ReviewerProvider != nil {
+			if s.cfg.ReviewerProvider == nil {
+				s.cfg.ReviewerProvider = &config.ProviderConfig{}
+			}
+			s.cfg.ReviewerProvider.APIBase = updated.ReviewerProvider.APIBase
+			s.cfg.ReviewerProvider.Model = updated.ReviewerProvider.Model
+			if updated.ReviewerProvider.APIKey != "" && !strings.Contains(updated.ReviewerProvider.APIKey, "...") && !strings.Contains(updated.ReviewerProvider.APIKey, "***") {
+				s.cfg.ReviewerProvider.APIKey = updated.ReviewerProvider.APIKey
+			}
+		}
+
+		if updated.WriterProvider != nil {
+			if s.cfg.WriterProvider == nil {
+				s.cfg.WriterProvider = &config.ProviderConfig{}
+			}
+			s.cfg.WriterProvider.APIBase = updated.WriterProvider.APIBase
+			s.cfg.WriterProvider.Model = updated.WriterProvider.Model
+			if updated.WriterProvider.APIKey != "" && !strings.Contains(updated.WriterProvider.APIKey, "...") && !strings.Contains(updated.WriterProvider.APIKey, "***") {
+				s.cfg.WriterProvider.APIKey = updated.WriterProvider.APIKey
+			}
+		}
+
+		if updated.ReasonerProvider != nil {
+			if s.cfg.ReasonerProvider == nil {
+				s.cfg.ReasonerProvider = &config.ProviderConfig{}
+			}
+			s.cfg.ReasonerProvider.APIBase = updated.ReasonerProvider.APIBase
+			s.cfg.ReasonerProvider.Model = updated.ReasonerProvider.Model
+			if updated.ReasonerProvider.APIKey != "" && !strings.Contains(updated.ReasonerProvider.APIKey, "...") && !strings.Contains(updated.ReasonerProvider.APIKey, "***") {
+				s.cfg.ReasonerProvider.APIKey = updated.ReasonerProvider.APIKey
+			}
+		}
+
 		if s.llmClient != nil {
 			s.llmClient.UpdateCredentials(s.cfg.APIBase, s.cfg.APIKey)
 		}
+		if s.llmRouter != nil {
+			s.llmRouter.UpdateFromConfig(s.cfg)
+		}
+
 		if err := s.cfg.Save(s.configPath); err != nil {
 			errorResponse(w, http.StatusInternalServerError, "save config failed: "+err.Error())
 			return
 		}
-		jsonResponse(w, http.StatusOK, s.cfg)
+		jsonResponse(w, http.StatusOK, s.maskedConfig())
 	default:
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -517,6 +607,8 @@ func (s *Server) handleWorkshopProduce(w http.ResponseWriter, r *http.Request, p
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+
 	var req engine.WorkshopProduceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		errorResponse(w, http.StatusBadRequest, err.Error())
@@ -530,11 +622,47 @@ func (s *Server) handleWorkshopProduce(w http.ResponseWriter, r *http.Request, p
 		req.WriterModel = s.cfg.WriterModel
 	}
 	if req.ReviewerModel == "" {
-		req.ReviewerModel = s.cfg.ReasoningModel
+		req.ReviewerModel = s.cfg.ReviewerModel
+		if req.ReviewerModel == "" {
+			req.ReviewerModel = s.cfg.ReasoningModel
+		}
 	}
 
 	if s.workshop == nil {
 		errorResponse(w, http.StatusInternalServerError, "workshop not configured")
+		return
+	}
+
+	isSSE := strings.Contains(r.Header.Get("Accept"), "text/event-stream") || r.URL.Query().Get("stream") == "true"
+	if isSSE {
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		req.OnProgress = func(ev engine.WorkshopEvent) {
+			evBytes, _ := json.Marshal(ev)
+			_, _ = fmt.Fprintf(w, "event: progress\ndata: %s\n\n", string(evBytes))
+			flusher.Flush()
+		}
+
+		res, err := s.workshop.ProduceChapter(r.Context(), req)
+		if err != nil {
+			errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
+			_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(errPayload))
+			flusher.Flush()
+			return
+		}
+
+		resultPayload, _ := json.Marshal(res)
+		_, _ = fmt.Fprintf(w, "event: complete\ndata: %s\n\n", string(resultPayload))
+		flusher.Flush()
 		return
 	}
 

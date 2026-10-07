@@ -25,6 +25,11 @@ type Store interface {
 	ListPlotHooks(ctx context.Context, projectID string) ([]*domain.PlotHook, error)
 	DeletePlotHook(ctx context.Context, id string) error
 
+	// Chapter Checkpoint (断点续跑)
+	SaveCheckpoint(ctx context.Context, checkpoint *domain.ChapterCheckpoint) error
+	GetCheckpoint(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, error)
+	ClearCheckpoint(ctx context.Context, projectID string, chapterIndex int) error
+
 	// Close database connection
 	Close() error
 }

@@ -6,14 +6,24 @@ import (
 	"path/filepath"
 )
 
+type ProviderConfig struct {
+	APIBase string `json:"api_base"`
+	APIKey  string `json:"api_key"`
+	Model   string `json:"model"`
+}
+
 type Config struct {
-	ServerPort      int    `json:"server_port"`
-	DataDir         string `json:"data_dir"`
-	APIBase         string `json:"api_base"`
-	APIKey          string `json:"api_key"`
-	ReasoningModel  string `json:"reasoning_model"`
-	WriterModel     string `json:"writer_model"`
-	AutoOpenBrowser bool   `json:"auto_open_browser"`
+	ServerPort       int             `json:"server_port"`
+	DataDir          string          `json:"data_dir"`
+	APIBase          string          `json:"api_base"`
+	APIKey           string          `json:"api_key"`
+	ReasoningModel   string          `json:"reasoning_model"`
+	WriterModel      string          `json:"writer_model"`
+	ReviewerModel    string          `json:"reviewer_model,omitempty"`
+	ReviewerProvider *ProviderConfig `json:"reviewer_provider,omitempty"`
+	ReasonerProvider *ProviderConfig `json:"reasoner_provider,omitempty"`
+	WriterProvider   *ProviderConfig `json:"writer_provider,omitempty"`
+	AutoOpenBrowser  bool            `json:"auto_open_browser"`
 }
 
 func DefaultConfig() *Config {
@@ -28,6 +38,7 @@ func DefaultConfig() *Config {
 		APIKey:          "",
 		ReasoningModel:  "deepseek-reasoner",
 		WriterModel:     "deepseek-chat",
+		ReviewerModel:   "deepseek-reasoner",
 		AutoOpenBrowser: true,
 	}
 }

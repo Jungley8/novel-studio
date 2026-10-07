@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
@@ -79,8 +80,20 @@ func (s *SQLiteStore) migrate() error {
 		FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 	);
 
+	CREATE TABLE IF NOT EXISTS chapter_checkpoints (
+		project_id TEXT NOT NULL,
+		chapter_index INTEGER NOT NULL,
+		phase TEXT NOT NULL,
+		core_conflict TEXT,
+		payload_json TEXT NOT NULL,
+		updated_at TIMESTAMP NOT NULL,
+		PRIMARY KEY(project_id, chapter_index),
+		FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_chapters_project ON chapters(project_id, chapter_index);
 	CREATE INDEX IF NOT EXISTS idx_hooks_project ON plot_hooks(project_id, status);
+	CREATE INDEX IF NOT EXISTS idx_checkpoints_project ON chapter_checkpoints(project_id, chapter_index);
 	`
 	if _, err := s.db.Exec(schema); err != nil {
 		return err
@@ -272,13 +285,31 @@ func (s *SQLiteStore) CommitChapter(ctx context.Context, projectID string, c *do
 		return nil, fmt.Errorf("update project protagonist in tx: %w", err)
 	}
 
-	// 4. Update plot hooks status if target_chapter <= current chapter
+	// 4. Update plot hooks status: mark resolved hooks as RESOLVED, and overdue open hooks as FERMENTING
+	if c.Review != nil && len(c.Review.ResolvedHookIDs) > 0 {
+		for _, hid := range c.Review.ResolvedHookIDs {
+			hid = strings.TrimSpace(hid)
+			if hid != "" {
+				_, _ = tx.ExecContext(ctx,
+					`UPDATE plot_hooks SET status = 'RESOLVED' WHERE project_id = ? AND (id = ? OR title = ?)`,
+					projectID, hid, hid,
+				)
+			}
+		}
+	}
+
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE plot_hooks SET status = 'FERMENTING' WHERE project_id = ? AND status = 'OPEN' AND target_chapter <= ?`,
 		projectID, c.ChapterIndex,
 	); err != nil {
 		return nil, fmt.Errorf("update plot hooks in tx: %w", err)
 	}
+
+	// 5. Clear checkpoint if one was saved during drafting
+	_, _ = tx.ExecContext(ctx,
+		`DELETE FROM chapter_checkpoints WHERE project_id = ? AND chapter_index = ?`,
+		projectID, c.ChapterIndex,
+	)
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit tx: %w", err)
@@ -468,6 +499,56 @@ func (s *SQLiteStore) ListPlotHooks(ctx context.Context, projectID string) ([]*d
 
 func (s *SQLiteStore) DeletePlotHook(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM plot_hooks WHERE id = ?`, id)
+	return err
+}
+
+func (s *SQLiteStore) SaveCheckpoint(ctx context.Context, cp *domain.ChapterCheckpoint) error {
+	if cp == nil || cp.ProjectID == "" || cp.ChapterIndex <= 0 {
+		return errors.New("invalid checkpoint: project_id and positive chapter_index required")
+	}
+	cp.UpdatedAt = time.Now()
+	payload, err := json.Marshal(cp)
+	if err != nil {
+		return fmt.Errorf("marshal checkpoint payload: %w", err)
+	}
+
+	query := `
+	INSERT INTO chapter_checkpoints (project_id, chapter_index, phase, core_conflict, payload_json, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?)
+	ON CONFLICT(project_id, chapter_index) DO UPDATE SET
+		phase = excluded.phase,
+		core_conflict = excluded.core_conflict,
+		payload_json = excluded.payload_json,
+		updated_at = excluded.updated_at;
+	`
+	_, err = s.db.ExecContext(ctx, query, cp.ProjectID, cp.ChapterIndex, string(cp.Phase), cp.CoreConflict, string(payload), cp.UpdatedAt)
+	return err
+}
+
+func (s *SQLiteStore) GetCheckpoint(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT payload_json FROM chapter_checkpoints WHERE project_id = ? AND chapter_index = ?`,
+		projectID, chapterIndex,
+	)
+	var payload string
+	if err := row.Scan(&payload); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil // No checkpoint exists
+		}
+		return nil, fmt.Errorf("get checkpoint: %w", err)
+	}
+	var cp domain.ChapterCheckpoint
+	if err := json.Unmarshal([]byte(payload), &cp); err != nil {
+		return nil, fmt.Errorf("unmarshal checkpoint: %w", err)
+	}
+	return &cp, nil
+}
+
+func (s *SQLiteStore) ClearCheckpoint(ctx context.Context, projectID string, chapterIndex int) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM chapter_checkpoints WHERE project_id = ? AND chapter_index = ?`,
+		projectID, chapterIndex,
+	)
 	return err
 }
 

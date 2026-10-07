@@ -59,4 +59,27 @@ func TestApplyStateMutation(t *testing.T) {
 	if !foundWarning {
 		t.Errorf("expected invariant warning when consuming unheld item, got %v", auditGhost)
 	}
+
+	// 5. Test Structured Level & Items
+	if updated.StructuredLevel == nil || len(updated.StructuredLevel.History) == 0 {
+		t.Fatalf("expected structured level history to be populated")
+	}
+	if len(updated.StructuredItems) != 4 {
+		t.Errorf("expected 4 structured items, got %d", len(updated.StructuredItems))
+	}
+
+	// 6. Test multiple level progressions without nesting parentheses
+	mutation2 := StateMutation{
+		PowerDelta: "突破筑基初期",
+	}
+	updated2, _, err := ApplyStateMutation(updated, mutation2)
+	if err != nil {
+		t.Fatalf("ApplyStateMutation 2 failed: %v", err)
+	}
+	if strings.Contains(updated2.NameAndLevel, "((") || strings.Contains(updated2.NameAndLevel, "))") {
+		t.Errorf("nested parentheses detected: %s", updated2.NameAndLevel)
+	}
+	if !strings.Contains(updated2.NameAndLevel, "筑基初期") {
+		t.Errorf("expected 筑基初期, got %s", updated2.NameAndLevel)
+	}
 }

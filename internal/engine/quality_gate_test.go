@@ -16,6 +16,18 @@ func (m *mockQualityReviewerClient) ChatCompletion(ctx context.Context, model, s
 	return m.response, nil
 }
 
+func (m *mockQualityReviewerClient) ChatCompletionWithUsage(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, TokenUsage, error) {
+	return m.response, TokenUsage{PromptTokens: 50, CompletionTokens: 50, TotalTokens: 100}, nil
+}
+
+func (m *mockQualityReviewerClient) ChatCompletionStream(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
+	ch := make(chan StreamChunk, 2)
+	ch <- StreamChunk{Delta: m.response}
+	ch <- StreamChunk{Done: true}
+	close(ch)
+	return ch, nil
+}
+
 func TestQualityGate_Audit(t *testing.T) {
 	mockResp := `{
 		"verdict": "ACCEPTED",

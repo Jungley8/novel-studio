@@ -90,6 +90,11 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 		rollingCanon = horizon.RollingCanonText
 	}
 
+	callbacksText := ""
+	if strings.TrimSpace(horizon.HistoricalCallbacks) != "" {
+		callbacksText = "\n\n" + horizon.HistoricalCallbacks
+	}
+
 	project := horizon.Project
 	userPrompt := fmt.Sprintf(`【作品信息】
 书名：《%s》
@@ -105,7 +110,7 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 当前隐秘目标：%s
 
 【前序正史视界 (最近 3 章密封剧情)】
-%s
+%s%s
 
 【当前开放状态的伏笔】
 %s
@@ -117,7 +122,7 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 		project.Title, project.TargetPlatform, horizon.TargetChapter,
 		horizon.WorldRules,
 		horizon.ProtagonistState.NameAndLevel, horizon.ProtagonistState.Inventory, horizon.ProtagonistState.CoreGoal,
-		rollingCanon,
+		rollingCanon, callbacksText,
 		hooksSummary,
 		coreConflict,
 	)
@@ -127,7 +132,10 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 		return nil, fmt.Errorf("derive beats LLM call failed: %w", err)
 	}
 
-	cleanJSON := extractJSON(resp)
+	cleanJSON, err := ExtractAndCleanJSON(resp)
+	if err != nil {
+		cleanJSON = extractJSON(resp)
+	}
 	var out DeriveBeatsOutput
 	if err := json.Unmarshal([]byte(cleanJSON), &out); err != nil {
 		return nil, fmt.Errorf("parse beats JSON failed (raw: %s): %w", resp, err)
@@ -222,12 +230,17 @@ func (o *Orchestrator) ReviewDraft(
 		return nil, fmt.Errorf("review draft LLM call failed: %w", err)
 	}
 
-	cleanJSON := extractJSON(resp)
+	cleanJSON, err := ExtractAndCleanJSON(resp)
+	if err != nil {
+		cleanJSON = extractJSON(resp)
+	}
+
 	var out struct {
-		Verdict     domain.ReviewVerdict `json:"verdict"`
-		Score       int                  `json:"score"`
-		Issues      []string             `json:"issues"`
-		Suggestions string               `json:"suggestions"`
+		Verdict         domain.ReviewVerdict `json:"verdict"`
+		Score           int                  `json:"score"`
+		Issues          []string             `json:"issues"`
+		Suggestions     string               `json:"suggestions"`
+		ResolvedHookIDs []string             `json:"resolved_hook_ids"`
 	}
 	if err := json.Unmarshal([]byte(cleanJSON), &out); err != nil {
 		return nil, fmt.Errorf("parse review JSON failed (raw: %s): %w", resp, err)
@@ -242,11 +255,12 @@ func (o *Orchestrator) ReviewDraft(
 	}
 
 	return &domain.ReviewResult{
-		Verdict:     out.Verdict,
-		Score:       out.Score,
-		Issues:      out.Issues,
-		Suggestions: out.Suggestions,
-		ReviewedAt:  time.Now(),
+		Verdict:         out.Verdict,
+		Score:           out.Score,
+		Issues:          out.Issues,
+		Suggestions:     out.Suggestions,
+		ResolvedHookIDs: out.ResolvedHookIDs,
+		ReviewedAt:      time.Now(),
 	}, nil
 }
 
@@ -289,6 +303,9 @@ func (o *Orchestrator) RewriteDraft(
 }
 
 func extractJSON(s string) string {
+	if valid, err := ExtractAndCleanJSON(s); err == nil {
+		return valid
+	}
 	start := strings.Index(s, "{")
 	end := strings.LastIndex(s, "}")
 	if start != -1 && end != -1 && end > start {

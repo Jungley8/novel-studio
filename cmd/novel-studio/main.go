@@ -36,7 +36,10 @@ func main() {
 			os.Exit(service.RunDoctorCLI(os.Args[2:], defaultDataDir, 28980))
 		case "produce":
 			os.Exit(runProduceCLI(os.Args[2:], defaultDataDir))
-		case "help":
+		case "version", "--version", "-v":
+			fmt.Printf("NovelStudio %s\n", version)
+			os.Exit(0)
+		case "help", "--help", "-h":
 			printUsage()
 			os.Exit(0)
 		}

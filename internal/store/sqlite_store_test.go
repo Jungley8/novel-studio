@@ -166,7 +166,7 @@ func TestSQLiteStore_CommitChapterAtomic(t *testing.T) {
 	if updatedProj.Protagonist.Inventory != "粗布衣, 洗髓丹x1" {
 		t.Errorf("unexpected inventory: %s", updatedProj.Protagonist.Inventory)
 	}
-	if updatedProj.Protagonist.NameAndLevel != "林凡 (练气一层) (灵力初醒)" {
+	if updatedProj.Protagonist.NameAndLevel != "林凡 (灵力初醒)" {
 		t.Errorf("unexpected name and level: %s", updatedProj.Protagonist.NameAndLevel)
 	}
 
@@ -186,5 +186,86 @@ func TestSQLiteStore_CommitChapterAtomic(t *testing.T) {
 	}
 	if len(hooks) != 1 || hooks[0].Status != domain.HookStatusFermenting {
 		t.Errorf("expected hook status FERMENTING, got %v", hooks[0].Status)
+	}
+
+	// 4. Test Hook Resolution via Review.ResolvedHookIDs in Chapter 3
+	ch3 := &domain.Chapter{
+		ChapterIndex: 3,
+		Title:        "第三章 身世揭晓",
+		Content:      "老头揭下面具，正是前朝掌门...",
+		Review: &domain.ReviewResult{
+			Verdict:         domain.ReviewVerdictAccepted,
+			Score:           90,
+			ResolvedHookIDs: []string{"hook-atomic-1"},
+		},
+	}
+	_, err = s.CommitChapter(ctx, "proj-atomic", ch3)
+	if err != nil {
+		t.Fatalf("CommitChapter ch3 failed: %v", err)
+	}
+	hooksAfter, err := s.ListPlotHooks(ctx, "proj-atomic")
+	if err != nil {
+		t.Fatalf("ListPlotHooks after ch3 failed: %v", err)
+	}
+	if hooksAfter[0].Status != domain.HookStatusResolved {
+		t.Errorf("expected hook status RESOLVED, got %v", hooksAfter[0].Status)
+	}
+}
+
+func TestSQLiteStore_Checkpoint(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "checkpoint_test.db")
+
+	s, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	p := &domain.Project{
+		ID:             "proj-cp",
+		Title:          "断点测试",
+		TargetPlatform: "通用",
+	}
+	_ = s.SaveProject(ctx, p)
+
+	// Save checkpoint
+	cp := &domain.ChapterCheckpoint{
+		ProjectID:    "proj-cp",
+		ChapterIndex: 1,
+		Phase:        domain.CheckpointPhaseDrafted,
+		CoreConflict: "主角被围困",
+		Beats: []domain.SceneBeat{
+			{Phase: "蓄力压迫", Tension: 6, Action: "敌人封锁退路"},
+		},
+		DraftText: "四面楚歌，杀声震天。",
+	}
+	if err := s.SaveCheckpoint(ctx, cp); err != nil {
+		t.Fatalf("SaveCheckpoint failed: %v", err)
+	}
+
+	// Retrieve checkpoint
+	got, err := s.GetCheckpoint(ctx, "proj-cp", 1)
+	if err != nil {
+		t.Fatalf("GetCheckpoint failed: %v", err)
+	}
+	if got == nil || got.DraftText != "四面楚歌，杀声震天。" {
+		t.Fatalf("unexpected checkpoint data: %v", got)
+	}
+	if got.Phase != domain.CheckpointPhaseDrafted {
+		t.Errorf("expected phase DRAFTED, got %s", got.Phase)
+	}
+
+	// Clear checkpoint
+	if err := s.ClearCheckpoint(ctx, "proj-cp", 1); err != nil {
+		t.Fatalf("ClearCheckpoint failed: %v", err)
+	}
+	cleared, err := s.GetCheckpoint(ctx, "proj-cp", 1)
+	if err != nil {
+		t.Fatalf("GetCheckpoint after clear failed: %v", err)
+	}
+	if cleared != nil {
+		t.Errorf("expected nil checkpoint after clear, got %v", cleared)
 	}
 }
