@@ -51,17 +51,49 @@ type HTTPLLMClient struct {
 	mu         sync.RWMutex
 	baseURL    string
 	apiKey     string
+	sessionID  string
 	httpClient *http.Client
 }
 
 func NewHTTPLLMClient(baseURL, apiKey string) *HTTPLLMClient {
 	c := &HTTPLLMClient{
+		sessionID: fmt.Sprintf("novel-studio-%x", time.Now().UnixNano()),
 		httpClient: &http.Client{
 			Timeout: 120 * time.Second,
 		},
 	}
 	c.UpdateCredentials(baseURL, apiKey)
 	return c
+}
+
+func (c *HTTPLLMClient) SetSessionID(sessionID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sessionID = sessionID
+}
+
+func (c *HTTPLLMClient) SessionID() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sessionID
+}
+
+func (c *HTTPLLMClient) applyHeaders(req *http.Request, apiKey, endpoint string) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	c.mu.RLock()
+	sessionID := c.sessionID
+	c.mu.RUnlock()
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("novel-studio-%x", time.Now().UnixNano())
+	}
+
+	// OpenCode Go & Zen requires x-opencode-session for cache routing & session affinity
+	// See: https://opencode.ai/docs/go/#where-can-i-use-it
+	if strings.Contains(endpoint, "opencode") {
+		req.Header.Set("x-opencode-session", sessionID)
+	}
 }
 
 func (c *HTTPLLMClient) UpdateCredentials(baseURL, apiKey string) {
@@ -164,8 +196,7 @@ func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 		return "", zeroUsage, fmt.Errorf("create request failed: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	c.applyHeaders(req, apiKey, endpoint)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -252,8 +283,7 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 		return nil, fmt.Errorf("create stream request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	c.applyHeaders(req, apiKey, endpoint)
 	req.Header.Set("Accept", "text/event-stream")
 
 	resp, err := c.httpClient.Do(req)

@@ -60,10 +60,12 @@ func TestLLMRouter_RoleDispatch(t *testing.T) {
 func TestHTTPLLMClient_OpenCodeAndResponsesCompatibility(t *testing.T) {
 	// 1. Mock server that returns Responses API format (output_text)
 	calledPath := ""
+	receivedSession := ""
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calledPath = r.URL.Path
+		receivedSession = r.Header.Get("x-opencode-session")
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/zen/go/v1/responses" {
+		if r.URL.Path == "/opencode/zen/go/v1/responses" {
 			// Responses API style response
 			_, _ = w.Write([]byte(`{"output_text":"来自 OpenCode Responses API 的推演正文","usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}`))
 		} else {
@@ -75,14 +77,17 @@ func TestHTTPLLMClient_OpenCodeAndResponsesCompatibility(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test A: User configures baseURL with /responses
-	clientA := engine.NewHTTPLLMClient(ts.URL+"/zen/go/v1/responses", "test-key")
+	// Test A: User configures baseURL with /responses and opencode domain
+	clientA := engine.NewHTTPLLMClient(ts.URL+"/opencode/zen/go/v1/responses", "test-key")
 	gotA, usageA, errA := clientA.ChatCompletionWithUsage(ctx, "muse-spark-1.3-contributor", "sys", "user", 0.7)
 	if errA != nil {
 		t.Fatalf("ChatCompletionWithUsage with /responses failed: %v", errA)
 	}
-	if calledPath != "/zen/go/v1/responses" {
-		t.Errorf("expected path /zen/go/v1/responses, got %s", calledPath)
+	if calledPath != "/opencode/zen/go/v1/responses" {
+		t.Errorf("expected path /opencode/zen/go/v1/responses, got %s", calledPath)
+	}
+	if receivedSession == "" {
+		t.Errorf("expected x-opencode-session header to be sent for opencode endpoint")
 	}
 	if gotA != "来自 OpenCode Responses API 的推演正文" {
 		t.Errorf("unexpected output: %s", gotA)
@@ -92,13 +97,16 @@ func TestHTTPLLMClient_OpenCodeAndResponsesCompatibility(t *testing.T) {
 	}
 
 	// Test B: User configures standard BaseURL
-	clientB := engine.NewHTTPLLMClient(ts.URL+"/zen/go/v1", "test-key")
+	clientB := engine.NewHTTPLLMClient(ts.URL+"/opencode/zen/go/v1", "test-key")
 	gotB, usageB, errB := clientB.ChatCompletionWithUsage(ctx, "muse-spark-1.3-contributor", "sys", "user", 0.7)
 	if errB != nil {
 		t.Fatalf("ChatCompletionWithUsage with base URL failed: %v", errB)
 	}
-	if calledPath != "/zen/go/v1/chat/completions" {
-		t.Errorf("expected path /zen/go/v1/chat/completions, got %s", calledPath)
+	if calledPath != "/opencode/zen/go/v1/chat/completions" {
+		t.Errorf("expected path /opencode/zen/go/v1/chat/completions, got %s", calledPath)
+	}
+	if receivedSession == "" {
+		t.Errorf("expected x-opencode-session header to be sent for opencode endpoint")
 	}
 	if gotB != "来自 OpenCode Chat Completions 的正文" {
 		t.Errorf("unexpected output: %s", gotB)
