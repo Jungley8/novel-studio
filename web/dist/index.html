@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NovelStudio 故事工厂 (Desktop Pro)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #18181b; }
+    ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen font-sans antialiased selection:bg-amber-500 selection:text-black">
+  <div id="app" class="flex h-screen overflow-hidden">
+
+    <!-- 侧边栏：项目与状态导航 -->
+    <aside class="w-64 bg-zinc-900 border-r border-zinc-800 flex flex-col justify-between shrink-0">
+      <div>
+        <div class="p-4 border-b border-zinc-800 flex items-center justify-between">
+          <div>
+            <h1 class="text-base font-bold bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">NovelStudio</h1>
+            <p class="text-xs text-zinc-500">Go 桌面工业级核心</p>
+          </div>
+          <span class="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20">SQLite ON</span>
+        </div>
+
+        <!-- 当前项目选择器 -->
+        <div class="p-3 border-b border-zinc-800 bg-zinc-900/60">
+          <label class="block text-[11px] text-zinc-400 mb-1">选择/切换作品：</label>
+          <div class="flex gap-1.5">
+            <select v-model="selectedProjectId" @change="onProjectChange" class="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200">
+              <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.title }}</option>
+            </select>
+            <button @click="showNewProjectModal = true" class="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-black font-bold rounded text-xs">+</button>
+          </div>
+        </div>
+
+        <nav class="p-2 space-y-1">
+          <button @click="currentTab = 'workbench'" :class="currentTab === 'workbench' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:bg-zinc-800/50'" class="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition">
+            <span>✍️</span> 生产车间 (Workbench)
+          </button>
+          <button @click="currentTab = 'statemachine'" :class="currentTab === 'statemachine' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:bg-zinc-800/50'" class="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition">
+            <span>🛡️</span> 实体状态机 (State Machine)
+          </button>
+          <button @click="currentTab = 'hooks'" :class="currentTab === 'hooks' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:bg-zinc-800/50'" class="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition">
+            <span>🪝</span> 伏笔因果账本 (Plot Ledger)
+          </button>
+          <button @click="currentTab = 'chapters'" :class="currentTab === 'chapters' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:bg-zinc-800/50'" class="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition">
+            <span>📚</span> 章节历史与归档 (History)
+          </button>
+          <button @click="currentTab = 'config'" :class="currentTab === 'config' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:bg-zinc-800/50'" class="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition">
+            <span>⚙️</span> API与系统配置
+          </button>
+        </nav>
+      </div>
+
+      <!-- 底部持久化与导出 -->
+      <div class="p-3 border-t border-zinc-800 bg-zinc-900/50 space-y-2">
+        <div class="flex gap-1.5">
+          <a :href="currentProject ? '/api/projects/' + currentProject.id + '/export/json' : '#'" download class="flex-1 py-1 px-2 text-center text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded border border-zinc-700 transition">
+            导出工程快照
+          </a>
+          <a :href="currentProject ? '/api/projects/' + currentProject.id + '/export/markdown' : '#'" download class="flex-1 py-1 px-2 text-center text-xs bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 rounded border border-amber-500/30 transition">
+            导出全本 MD
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 主展示区 -->
+    <main class="flex-1 flex flex-col overflow-hidden bg-zinc-950">
+
+      <!-- 顶栏状态指示 -->
+      <header class="h-12 border-b border-zinc-800 px-6 flex items-center justify-between bg-zinc-900/40">
+        <div class="flex items-center gap-3" v-if="currentProject">
+          <span class="text-sm font-semibold text-zinc-200">作品：</span>
+          <span class="font-bold text-amber-400">{{ currentProject.title }}</span>
+          <span class="text-xs px-2 py-0.5 bg-zinc-800 text-zinc-400 rounded">{{ currentProject.target_platform }}</span>
+        </div>
+        <div class="flex items-center gap-4 text-xs text-zinc-400" v-if="currentProject">
+          <div>已归档章节：<span class="font-mono text-zinc-200">{{ chapters.length }} 章</span></div>
+          <div>当前正在生产：<span class="font-mono text-amber-400">第 {{ nextChapterIndex }} 章</span></div>
+        </div>
+      </header>
+
+      <!-- 标签页 1：生产车间 (Workbench) -->
+      <div v-show="currentTab === 'workbench'" class="flex-1 flex overflow-hidden">
+        <!-- 左侧：章节节拍与指令 -->
+        <div class="w-96 border-r border-zinc-800 p-4 flex flex-col justify-between overflow-y-auto">
+          <div class="space-y-4">
+            <div class="flex items-center justify-between">
+              <h2 class="text-sm font-bold text-zinc-200">章节节拍表 (Beats)</h2>
+              <button @click="deriveBeats" :disabled="isLoading" class="text-xs px-2 py-1 bg-amber-500 hover:bg-amber-600 text-black font-bold rounded disabled:opacity-50 transition">
+                {{ isLoading ? '推理中...' : '🎲 自动推演因果节拍' }}
+              </button>
+            </div>
+
+            <div>
+              <label class="block text-xs text-zinc-400 mb-1">本章核心冲突 / 打破预期：</label>
+              <textarea v-model="workbench.coreConflict" rows="2" class="w-full bg-zinc-900 border border-zinc-700 rounded p-2 text-xs text-zinc-200 focus:outline-none focus:border-amber-500" placeholder="例如：主角在宗门拍卖会揭穿反派抬价的残次药草陷阱"></textarea>
+            </div>
+
+            <!-- 4 个节拍卡片 -->
+            <div class="space-y-2">
+              <div v-for="(beat, idx) in workbench.beats" :key="idx" class="p-2 bg-zinc-900/80 border border-zinc-800 rounded-md">
+                <div class="flex justify-between items-center mb-1">
+                  <span class="text-[11px] font-bold text-amber-400">Beat {{ idx + 1 }}: {{ beat.phase }}</span>
+                  <span class="text-[10px] text-zinc-500">张力: {{ beat.tension }}/10</span>
+                </div>
+                <input v-model="beat.action" class="w-full bg-zinc-800/60 border border-zinc-700/50 rounded px-2 py-1 text-xs text-zinc-200 mb-1" placeholder="核心物理动作事实">
+                <input v-model="beat.expectation_broken" class="w-full bg-zinc-800/60 border border-zinc-700/50 rounded px-2 py-1 text-xs text-zinc-400" placeholder="打破谁的预期？">
+              </div>
+            </div>
+
+            <!-- 状态变动结算预测 -->
+            <div class="p-2 bg-zinc-900/60 border border-zinc-800 rounded-md text-xs space-y-1">
+              <span class="font-bold text-zinc-300">状态机结算变更：</span>
+              <input v-model="workbench.stateMutation.inventory_delta" class="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-300" placeholder="物品变动，如: +残破古玉">
+              <input v-model="workbench.stateMutation.power_delta" class="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-300" placeholder="战力变动，如: 心境突破">
+            </div>
+          </div>
+
+          <button @click="renderScene" :disabled="isLoading" class="w-full mt-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-black font-bold rounded text-sm disabled:opacity-50 shadow-lg shadow-orange-500/10 transition">
+            {{ isLoading ? '渲染生成中...' : '🚀 启动文学渲染与质检' }}
+          </button>
+        </div>
+
+        <!-- 中间：正文编辑器与实时质检 -->
+        <div class="flex-1 flex flex-col overflow-hidden">
+          <div class="p-3 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/20">
+            <div class="flex items-center gap-3">
+              <span class="text-sm font-bold text-zinc-300">章节正文工坊</span>
+              <span class="text-xs text-zinc-500">字数：{{ workbench.content.length }} 字</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button @click="runLinter" class="px-2.5 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded border border-zinc-700 transition">
+                🔍 执行反AI味质检
+              </button>
+              <button @click="commitChapter" :disabled="!workbench.content" class="px-3 py-1 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded disabled:opacity-50 transition">
+                ✅ 归档本章并更新状态机
+              </button>
+            </div>
+          </div>
+
+          <!-- 正文编辑区 -->
+          <div class="flex-1 flex overflow-hidden">
+            <textarea v-model="workbench.content" @input="runLinter" class="flex-1 p-6 bg-zinc-950 text-zinc-200 text-sm leading-relaxed font-serif resize-none focus:outline-none" placeholder="输入或生成正文内容..."></textarea>
+
+            <!-- 侧栏：Linter 质检仪表板 -->
+            <div class="w-72 border-l border-zinc-800 p-4 bg-zinc-900/30 overflow-y-auto space-y-4">
+              <h3 class="text-xs font-bold text-zinc-400 uppercase tracking-wider">质检与对抗指标</h3>
+
+              <!-- 突发度打分 -->
+              <div class="p-3 bg-zinc-900 border border-zinc-800 rounded">
+                <div class="flex justify-between items-center text-xs mb-1">
+                  <span class="text-zinc-400">句长突发度 (Burstiness)</span>
+                  <span :class="linterReport.burstiness_score >= 45 ? 'text-emerald-400' : 'text-rose-400'" class="font-mono font-bold">{{ linterReport.burstiness_score }} 分</span>
+                </div>
+                <div class="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden">
+                  <div :style="{ width: Math.min(100, linterReport.burstiness_score) + '%' }" :class="linterReport.burstiness_score >= 45 ? 'bg-emerald-500' : 'bg-rose-500'" class="h-full"></div>
+                </div>
+                <p class="text-[10px] text-zinc-500 mt-1">越长短交替，AI检测率越低（合格线 ≥ 45）。</p>
+              </div>
+
+              <!-- 违禁套话检测 -->
+              <div class="p-3 bg-zinc-900 border border-zinc-800 rounded space-y-1">
+                <div class="flex justify-between items-center text-xs">
+                  <span class="text-zinc-400">命中套词 (Clichés)</span>
+                  <span class="font-mono text-xs" :class="linterReport.hit_banned_words.length === 0 ? 'text-emerald-400' : 'text-rose-400'">{{ linterReport.hit_banned_words.length }} 个</span>
+                </div>
+                <div v-if="linterReport.hit_banned_words.length > 0" class="flex flex-wrap gap-1 mt-1">
+                  <span v-for="word in linterReport.hit_banned_words" :key="word" class="text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20 px-1 rounded">{{ word }}</span>
+                </div>
+                <div v-else class="text-[10px] text-emerald-400/80">未检出高频模式化废词。</div>
+              </div>
+
+              <div class="p-3 bg-zinc-900 border border-zinc-800 rounded space-y-1">
+                <span class="text-xs text-zinc-400">质检总结：</span>
+                <p class="text-[11px]" :class="linterReport.passed ? 'text-emerald-400' : 'text-amber-400'">{{ linterReport.message }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 标签页 2：实体状态机 -->
+      <div v-show="currentTab === 'statemachine'" class="flex-1 p-6 overflow-y-auto space-y-6" v-if="currentProject">
+        <div class="flex justify-between items-center border-b border-zinc-800 pb-4">
+          <div>
+            <h2 class="text-lg font-bold text-zinc-100">核心实体状态机 (Entity State Machine)</h2>
+            <p class="text-xs text-zinc-400">每次生成前自动注入模型上下文，防止战力崩坏与道具凭空产生。</p>
+          </div>
+          <button @click="saveCurrentProject" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-black font-bold rounded text-xs transition">保存状态机设定</button>
+        </div>
+
+        <div class="grid grid-cols-2 gap-6">
+          <div class="p-4 bg-zinc-900 border border-zinc-800 rounded-lg space-y-3">
+            <h3 class="text-sm font-bold text-amber-400 flex items-center gap-2"><span>👤</span> 主角当前物理状态</h3>
+            <div>
+              <label class="text-xs text-zinc-400">姓名与境界/等级：</label>
+              <input v-model="currentProject.protagonist.name_and_level" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1 text-xs text-zinc-200">
+            </div>
+            <div>
+              <label class="text-xs text-zinc-400">随身物品栏 (Inventory)：</label>
+              <textarea v-model="currentProject.protagonist.inventory" rows="4" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded p-2 text-xs text-zinc-200"></textarea>
+            </div>
+            <div>
+              <label class="text-xs text-zinc-400">当前隐秘目标与不可触碰底线：</label>
+              <input v-model="currentProject.protagonist.core_goal" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1 text-xs text-zinc-200">
+            </div>
+          </div>
+
+          <div class="p-4 bg-zinc-900 border border-zinc-800 rounded-lg space-y-3">
+            <h3 class="text-sm font-bold text-amber-400 flex items-center gap-2"><span>⚖️</span> 世界公理与绝对法则 (Rule Engine)</h3>
+            <p class="text-xs text-zinc-500">模型严禁违背的底层公理：</p>
+            <textarea v-model="currentProject.world_rules" rows="8" class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-xs text-zinc-200 font-mono"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- 标签页 3：伏笔因果账本 -->
+      <div v-show="currentTab === 'hooks'" class="flex-1 p-6 overflow-y-auto space-y-4" v-if="currentProject">
+        <div class="flex justify-between items-center border-b border-zinc-800 pb-3">
+          <div>
+            <h2 class="text-lg font-bold text-zinc-100">伏笔因果账本 (Plot Ledger)</h2>
+            <p class="text-xs text-zinc-400">确保每一个悬念均有回收，杜绝烂尾与伏笔遗漏。</p>
+          </div>
+          <button @click="createPlotHook" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-black font-bold rounded text-xs transition">+ 新增伏笔记录</button>
+        </div>
+
+        <div class="space-y-2">
+          <div v-for="hook in hooks" :key="hook.id" class="p-3 bg-zinc-900 border border-zinc-800 rounded-lg flex items-center justify-between gap-4">
+            <div class="flex-1 grid grid-cols-4 gap-3 items-center text-xs">
+              <input v-model="hook.title" @change="updatePlotHook(hook)" class="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-200 font-bold" placeholder="伏笔名称">
+              <input v-model="hook.details" @change="updatePlotHook(hook)" class="col-span-2 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-300" placeholder="因果事实描述">
+              <div class="flex items-center gap-2">
+                <span class="text-zinc-500">第 {{ hook.created_chapter }} 章 ➔ 目标第 {{ hook.target_chapter }} 章</span>
+              </div>
+            </div>
+            <select v-model="hook.status" @change="updatePlotHook(hook)" class="bg-zinc-800 border border-zinc-700 text-xs text-zinc-300 rounded px-2 py-1">
+              <option value="OPEN">⏳ 开放中 (Open)</option>
+              <option value="FERMENTING">🔥 发酵中 (Fermenting)</option>
+              <option value="RESOLVED">✅ 已回收 (Resolved)</option>
+            </select>
+            <button @click="deletePlotHook(hook.id)" class="text-rose-400 hover:text-rose-300 text-xs">删除</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 标签页 4：章节历史列表 -->
+      <div v-show="currentTab === 'chapters'" class="flex-1 p-6 overflow-y-auto space-y-4">
+        <h2 class="text-lg font-bold text-zinc-100 border-b border-zinc-800 pb-2">已归档章节列表</h2>
+        <div class="space-y-3">
+          <div v-for="c in chapters" :key="c.id" class="p-4 bg-zinc-900 border border-zinc-800 rounded-lg space-y-2">
+            <div class="flex justify-between items-center">
+              <span class="text-sm font-bold text-amber-400">第 {{ c.chapter_index }} 章：{{ c.title }}</span>
+              <span class="text-xs text-zinc-500 font-mono">{{ c.word_count }} 字 | 突发度 {{ c.burstiness_score }} 分</span>
+            </div>
+            <p class="text-xs text-zinc-400">冲突：{{ c.core_conflict }}</p>
+            <div class="text-xs text-zinc-300 bg-zinc-950 p-2.5 rounded border border-zinc-800/80 font-serif line-clamp-3">
+              {{ c.content }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 标签页 5：系统配置 -->
+      <div v-show="currentTab === 'config'" class="flex-1 p-6 overflow-y-auto max-w-3xl space-y-4">
+        <h2 class="text-lg font-bold text-zinc-100 border-b border-zinc-800 pb-2">大模型 API 与系统配置</h2>
+        <div class="p-4 bg-zinc-900 border border-zinc-800 rounded-lg space-y-4">
+          <div>
+            <label class="block text-xs text-zinc-400 mb-1">OpenAI 兼容 Base URL：</label>
+            <input v-model="config.api_base" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200 font-mono">
+          </div>
+          <div>
+            <label class="block text-xs text-zinc-400 mb-1">API Key：</label>
+            <input type="password" v-model="config.api_key" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200 font-mono" placeholder="sk-...">
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs text-zinc-400 mb-1">因果推演模型 (Reasoning Model)：</label>
+              <input v-model="config.reasoning_model" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200">
+            </div>
+            <div>
+              <label class="block text-xs text-zinc-400 mb-1">文学渲染模型 (Writer Model)：</label>
+              <input v-model="config.writer_model" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-200">
+            </div>
+          </div>
+          <button @click="saveConfig" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded text-xs transition">保存系统配置</button>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- 新建项目弹窗 -->
+    <div v-if="showNewProjectModal" class="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+      <div class="bg-zinc-900 border border-zinc-800 rounded-lg p-6 max-w-md w-full space-y-4">
+        <h3 class="text-base font-bold text-zinc-100">新建小说项目</h3>
+        <div>
+          <label class="text-xs text-zinc-400">书名：</label>
+          <input v-model="newProjectForm.title" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded p-1.5 text-xs text-zinc-200" placeholder="例如：极道天魔">
+        </div>
+        <div>
+          <label class="text-xs text-zinc-400">目标平台：</label>
+          <select v-model="newProjectForm.target_platform" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded p-1.5 text-xs text-zinc-200">
+            <option value="番茄脑洞">番茄脑洞 (快节奏/爽点密集)</option>
+            <option value="知乎盐言">知乎盐言 (第一人称/反转复仇)</option>
+            <option value="起点仙侠">起点仙侠 (严谨战力/厚重世界观)</option>
+            <option value="海外短剧">海外短剧 (ReelShort/高概念冲突)</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs text-zinc-400">主角初始姓名与等级：</label>
+          <input v-model="newProjectForm.protagonist_name" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded p-1.5 text-xs text-zinc-200" placeholder="例如：林越 (练气一层)">
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button @click="showNewProjectModal = false" class="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-300 rounded">取消</button>
+          <button @click="createProject" class="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-black font-bold text-xs rounded">立即创建</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const { createApp, ref, computed, onMounted } = Vue;
+
+    createApp({
+      setup() {
+        const currentTab = ref('workbench');
+        const isLoading = ref(false);
+        const showNewProjectModal = ref(false);
+
+        const config = ref({
+          api_base: '',
+          api_key: '',
+          reasoning_model: 'deepseek-reasoner',
+          writer_model: 'deepseek-chat'
+        });
+
+        const projects = ref([]);
+        const selectedProjectId = ref('');
+        const currentProject = ref(null);
+        const chapters = ref([]);
+        const hooks = ref([]);
+
+        const newProjectForm = ref({
+          title: '',
+          target_platform: '番茄脑洞',
+          protagonist_name: ''
+        });
+
+        const workbench = ref({
+          coreConflict: '',
+          beats: [
+            { phase: '蓄力压迫', tension: 4, action: '', expectation_broken: '' },
+            { phase: '试探下套', tension: 6, action: '', expectation_broken: '' },
+            { phase: '绝地反转', tension: 9, action: '', expectation_broken: '' },
+            { phase: '章末留钩', tension: 8, action: '', expectation_broken: '' }
+          ],
+          stateMutation: {
+            inventory_delta: '',
+            power_delta: ''
+          },
+          content: ''
+        });
+
+        const linterReport = ref({
+          burstiness_score: 50,
+          hit_banned_words: [],
+          passed: true,
+          message: '就绪'
+        });
+
+        const nextChapterIndex = computed(() => chapters.value.length + 1);
+
+        // API 客户端请求封装
+        const api = async (endpoint, options = {}) => {
+          const res = await fetch(endpoint, {
+            headers: { 'Content-Type': 'application/json' },
+            ...options
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({ error: 'HTTP ' + res.status }));
+            throw new Error(err.error || 'Request failed');
+          }
+          return res.json();
+        };
+
+        const loadConfig = async () => {
+          try {
+            config.value = await api('/api/config');
+          } catch (e) {
+            console.error('load config error:', e);
+          }
+        };
+
+        const saveConfig = async () => {
+          try {
+            await api('/api/config', { method: 'POST', body: JSON.stringify(config.value) });
+            alert('系统配置已成功保存！');
+          } catch (e) {
+            alert('保存配置失败: ' + e.message);
+          }
+        };
+
+        const loadProjects = async () => {
+          try {
+            projects.value = await api('/api/projects');
+            if (projects.value.length > 0 && !selectedProjectId.value) {
+              selectedProjectId.value = projects.value[0].id;
+              await selectProject(projects.value[0].id);
+            }
+          } catch (e) {
+            console.error('load projects error:', e);
+          }
+        };
+
+        const selectProject = async (id) => {
+          try {
+            currentProject.value = await api('/api/projects/' + id);
+            chapters.value = await api('/api/projects/' + id + '/chapters');
+            hooks.value = await api('/api/projects/' + id + '/hooks');
+          } catch (e) {
+            console.error('select project error:', e);
+          }
+        };
+
+        const onProjectChange = () => {
+          selectProject(selectedProjectId.value);
+        };
+
+        const createProject = async () => {
+          if (!newProjectForm.value.title) return alert('请输入书名');
+          try {
+            const created = await api('/api/projects', {
+              method: 'POST',
+              body: JSON.stringify({
+                title: newProjectForm.value.title,
+                target_platform: newProjectForm.value.target_platform,
+                world_rules: '1. 修真境界不可越级强行碾压；\n2. 违背天地因果必遭反噬。',
+                protagonist: {
+                  name_and_level: newProjectForm.value.protagonist_name || '主角 (练气一层)',
+                  inventory: '粗布衣袍, 基础功法',
+                  core_goal: '破除宗门危机'
+                }
+              })
+            });
+            showNewProjectModal.value = false;
+            await loadProjects();
+            selectedProjectId.value = created.id;
+            await selectProject(created.id);
+          } catch (e) {
+            alert('创建项目失败: ' + e.message);
+          }
+        };
+
+        const saveCurrentProject = async () => {
+          if (!currentProject.value) return;
+          try {
+            await api('/api/projects', { method: 'POST', body: JSON.stringify(currentProject.value) });
+            alert('项目设定与状态机已更新保存！');
+          } catch (e) {
+            alert('保存项目失败: ' + e.message);
+          }
+        };
+
+        const deriveBeats = async () => {
+          if (!currentProject.value) return alert('请先选择或新建项目');
+          isLoading.value = true;
+          try {
+            const out = await api('/api/projects/' + currentProject.value.id + '/derive-beats', {
+              method: 'POST',
+              body: JSON.stringify({
+                chapter_index: nextChapterIndex.value,
+                core_conflict: workbench.value.coreConflict
+              })
+            });
+            if (out.beats) workbench.value.beats = out.beats;
+            if (out.state_mutation) workbench.value.stateMutation = out.state_mutation;
+          } catch (e) {
+            alert('推演节拍失败: ' + e.message);
+          } finally {
+            isLoading.value = false;
+          }
+        };
+
+        const renderScene = async () => {
+          if (!currentProject.value) return alert('请先选择或新建项目');
+          isLoading.value = true;
+          try {
+            const out = await api('/api/projects/' + currentProject.value.id + '/render-scene', {
+              method: 'POST',
+              body: JSON.stringify({
+                chapter_index: nextChapterIndex.value,
+                beats: workbench.value.beats,
+                words_target: 2000
+              })
+            });
+            workbench.value.content = out.content;
+            await runLinter();
+          } catch (e) {
+            alert('场景渲染失败: ' + e.message);
+          } finally {
+            isLoading.value = false;
+          }
+        };
+
+        const runLinter = async () => {
+          if (!workbench.value.content) return;
+          try {
+            const res = await api('/api/linter/analyze', {
+              method: 'POST',
+              body: JSON.stringify({ text: workbench.value.content })
+            });
+            linterReport.value = res;
+          } catch (e) {
+            console.error('linter error:', e);
+          }
+        };
+
+        const commitChapter = async () => {
+          if (!currentProject.value || !workbench.value.content) return;
+          try {
+            await api('/api/projects/' + currentProject.value.id + '/chapters', {
+              method: 'POST',
+              body: JSON.stringify({
+                chapter_index: nextChapterIndex.value,
+                title: '第 ' + nextChapterIndex.value + ' 章',
+                core_conflict: workbench.value.coreConflict,
+                beats: workbench.value.beats,
+                state_mutation: workbench.value.stateMutation,
+                content: workbench.value.content,
+                burstiness_score: linterReport.value.burstiness_score,
+                linter_passed: linterReport.value.passed
+              })
+            });
+            alert('第 ' + nextChapterIndex.value + ' 章归档成功！状态机已结算！');
+            workbench.value.content = '';
+            workbench.value.coreConflict = '';
+            await selectProject(currentProject.value.id);
+          } catch (e) {
+            alert('归档失败: ' + e.message);
+          }
+        };
+
+        const createPlotHook = async () => {
+          if (!currentProject.value) return;
+          try {
+            await api('/api/projects/' + currentProject.value.id + '/hooks', {
+              method: 'POST',
+              body: JSON.stringify({
+                title: '新伏笔',
+                details: '核心悬念事实',
+                created_chapter: nextChapterIndex.value,
+                target_chapter: nextChapterIndex.value + 8,
+                status: 'OPEN'
+              })
+            });
+            hooks.value = await api('/api/projects/' + currentProject.value.id + '/hooks');
+          } catch (e) {
+            alert('新建伏笔失败: ' + e.message);
+          }
+        };
+
+        const updatePlotHook = async (hook) => {
+          try {
+            await api('/api/projects/' + currentProject.value.id + '/hooks', {
+              method: 'POST',
+              body: JSON.stringify(hook)
+            });
+          } catch (e) {
+            alert('更新伏笔失败: ' + e.message);
+          }
+        };
+
+        const deletePlotHook = async (id) => {
+          try {
+            await api('/api/hooks/' + id, { method: 'DELETE' });
+            hooks.value = await api('/api/projects/' + currentProject.value.id + '/hooks');
+          } catch (e) {
+            alert('删除伏笔失败: ' + e.message);
+          }
+        };
+
+        onMounted(async () => {
+          await loadConfig();
+          await loadProjects();
+        });
+
+        return {
+          currentTab,
+          isLoading,
+          showNewProjectModal,
+          config,
+          projects,
+          selectedProjectId,
+          currentProject,
+          chapters,
+          hooks,
+          newProjectForm,
+          workbench,
+          linterReport,
+          nextChapterIndex,
+          onProjectChange,
+          createProject,
+          saveCurrentProject,
+          deriveBeats,
+          renderScene,
+          runLinter,
+          commitChapter,
+          createPlotHook,
+          updatePlotHook,
+          deletePlotHook,
+          saveConfig
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
