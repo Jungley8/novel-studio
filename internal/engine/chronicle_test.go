@@ -75,7 +75,7 @@ func TestCanonChronicle_AssembleHorizon(t *testing.T) {
 			{ChapterIndex: 1, Title: "第一章 入门试炼", CoreConflict: "考核受阻"},
 			{ChapterIndex: 2, Title: "第二章 险象环生", CoreConflict: "妖兽围攻"},
 			{ChapterIndex: 3, Title: "第三章 绝处逢生", CoreConflict: "误入古洞府"},
-			{ChapterIndex: 4, Title: "第四章 炼制灵丹", CoreConflict: "灵药匮乏"},
+			{ChapterIndex: 4, Title: "第四章 炼制灵丹", CoreConflict: "灵药匮乏", Content: "夜色渐浓，丹炉内的药香愈发纯粹。韩立长舒一口气，盖上了鼎盖。"},
 		},
 		hooks: []*domain.PlotHook{
 			{Title: "神秘老者信物", CreatedChapter: 1, TargetChapter: 5, Status: domain.HookStatusOpen},
@@ -102,6 +102,10 @@ func TestCanonChronicle_AssembleHorizon(t *testing.T) {
 
 	if !strings.Contains(horizon.RollingCanonText, "第二章 险象环生") {
 		t.Errorf("expected rolling canon text to contain Chapter 2")
+	}
+
+	if !strings.Contains(horizon.TailAnchor, "盖上了鼎盖") {
+		t.Errorf("expected tail anchor to be captured from chapter 4, got: %s", horizon.TailAnchor)
 	}
 
 	// Urgent hooks check: TargetChapter 5 should flag hook with TargetChapter 5

@@ -20,6 +20,7 @@ type CanonHorizon struct {
 	TargetChapter       int                `json:"target_chapter"`
 	GlobalSummary       string             `json:"global_summary"`
 	RollingCanonText    string             `json:"rolling_canon_text"`
+	TailAnchor          string             `json:"tail_anchor,omitempty"`
 	HistoricalCallbacks string             `json:"historical_callbacks,omitempty"`
 	RecentChapters      []*domain.Chapter  `json:"recent_chapters"`
 	UrgentHooks         []*domain.PlotHook `json:"urgent_hooks"`
@@ -107,7 +108,29 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 			if ch.StateMutation.InventoryDelta != "" || ch.StateMutation.PowerDelta != "" {
 				sb.WriteString(fmt.Sprintf("• 状态结算：%s %s\n", ch.StateMutation.InventoryDelta, ch.StateMutation.PowerDelta))
 			}
+			runes := []rune(ch.Content)
+			if len(runes) > 0 {
+				start := 0
+				if len(runes) > 200 {
+					start = len(runes) - 200
+				}
+				anchor := string(runes[start:])
+				sb.WriteString(fmt.Sprintf("• 尾段风格锚定（最后%d字）：%s\n", len([]rune(anchor)), anchor))
+			}
 			sb.WriteString("\n")
+		}
+	}
+
+	var tailAnchor string
+	if len(recent) > 0 {
+		lastCh := recent[len(recent)-1]
+		lastRunes := []rune(lastCh.Content)
+		if len(lastRunes) > 0 {
+			start := 0
+			if len(lastRunes) > 200 {
+				start = len(lastRunes) - 200
+			}
+			tailAnchor = string(lastRunes[start:])
 		}
 	}
 
@@ -148,6 +171,7 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 		TargetChapter:       targetChapter,
 		GlobalSummary:       globalSummary,
 		RollingCanonText:    strings.TrimSpace(sb.String()),
+		TailAnchor:          tailAnchor,
 		HistoricalCallbacks: strings.TrimSpace(cbSb.String()),
 		RecentChapters:      recent,
 		UrgentHooks:         urgentHooks,
