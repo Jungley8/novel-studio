@@ -138,14 +138,18 @@ type ReviewResult struct {
 
 // AuditReport unifies statistical heuristic metrics and semantic editor review verdicts into a single seam.
 type AuditReport struct {
-	Verdict         ReviewVerdict `json:"verdict"`
-	Score           int           `json:"score"` // 1-100
-	BurstinessScore int           `json:"burstiness_score"`
-	HitBannedWords  []string      `json:"hit_banned_words"`
-	Issues          []string      `json:"issues"`
-	Suggestions     string        `json:"suggestions"`
-	ResolvedHookIDs []string      `json:"resolved_hook_ids,omitempty"`
-	ReviewedAt      time.Time     `json:"reviewed_at"`
+	Verdict            ReviewVerdict `json:"verdict"`
+	Score              int           `json:"score"` // 1-100
+	BurstinessScore    int           `json:"burstiness_score"`
+	HitBannedWords     []string      `json:"hit_banned_words"`
+	DialogueRatio      float64       `json:"dialogue_ratio,omitempty"`
+	ParagraphVariance  int           `json:"paragraph_variance,omitempty"`
+	TopRepeatedNgrams  []string      `json:"top_repeated_ngrams,omitempty"`
+	ExclamationDensity float64       `json:"exclamation_density,omitempty"`
+	Issues             []string      `json:"issues"`
+	Suggestions        string        `json:"suggestions"`
+	ResolvedHookIDs    []string      `json:"resolved_hook_ids,omitempty"`
+	ReviewedAt         time.Time     `json:"reviewed_at"`
 }
 
 func (a *AuditReport) ToReviewResult() *ReviewResult {
@@ -205,8 +209,12 @@ type Chapter struct {
 
 // LinterResult represents quality analysis of a chapter draft.
 type LinterResult struct {
-	BurstinessScore int      `json:"burstiness_score"`
-	HitBannedWords  []string `json:"hit_banned_words"`
-	Passed          bool     `json:"passed"`
-	Message         string   `json:"message"`
+	BurstinessScore    int      `json:"burstiness_score"`
+	HitBannedWords     []string `json:"hit_banned_words"`
+	DialogueRatio      float64  `json:"dialogue_ratio"`
+	ParagraphVariance  int      `json:"paragraph_variance"`
+	TopRepeatedNgrams  []string `json:"top_repeated_ngrams,omitempty"`
+	ExclamationDensity float64  `json:"exclamation_density"`
+	Passed             bool     `json:"passed"`
+	Message            string   `json:"message"`
 }

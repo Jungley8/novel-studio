@@ -1,75 +1,295 @@
 package engine
 
 import (
+	"fmt"
 	"math"
+	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
 )
 
-// DefaultBannedKeywords contains frequent AI slop / cliches in Chinese web fiction.
-var DefaultBannedKeywords = []string{
-	"不由得", "仿佛", "宛若", "嘴角勾起", "眼神复杂",
-	"一时间", "殊不知", "与此同时", "冷哼一声", "眼中闪过一丝",
-	"倒吸一口凉气", "如释重负", "心头一震", "暗自思忖",
+// CoreBannedKeywords are hard-ban AI slop words. Any single hit forces a penalty.
+var CoreBannedKeywords = []string{
+	// === 情绪悬浮 ===
+	"不由得", "不禁", "下意识地", "情不自禁", "莫名其妙地", "百感交集",
+	// === AI 万能动作 ===
+	"嘴角勾起", "嘴角微扬", "嘴角上扬", "眼神复杂", "目光深邃",
+	"冷哼一声", "冷笑一声", "嗤笑一声",
+	"倒吸一口凉气", "倒抽一口冷气",
+	"暗自思忖", "心中暗道", "心头一震", "心中一凛", "暗暗心惊", "暗自窃喜",
+	// === 时间过渡 ===
+	"一时间", "与此同时", "殊不知", "话音刚落", "下一刻", "刹那间", "转瞬之间",
+	// === 比喻套路 ===
+	"仿佛", "宛若", "犹如", "如同", "好似",
+	"如释重负", "如坠冰窟", "犹如神助",
+	// === 动作重复 ===
+	"眉头紧锁", "眉头微皱", "双拳紧握",
+	"眼中闪过一丝", "目光一凝", "瞳孔微缩",
+	"点了点头", "摇了摇头",
+	// === 环境万能句 ===
+	"空气仿佛凝固", "空气中弥漫着", "气氛变得凝重",
+	"鸦雀无声", "针落可闻", "天地为之一暗", "风起云涌",
+	// === 打斗模板 ===
+	"身形暴退", "身影如电", "凌厉的攻势",
+	"强横的气息", "恐怖的威压", "破空之声", "势如破竹",
+	// === 心理直白 ===
+	"此刻的他", "不得不承认", "不得不说",
+	"一股无形的力量", "一股莫名的感觉", "心中升起一股",
 }
 
-// Linter analyzes text against AI detection metrics and clichés.
+// DefaultBannedKeywords is kept as an alias for backward compatibility.
+var DefaultBannedKeywords = CoreBannedKeywords
+
+// WarningKeywords are allowed once but flagged when appearing ≥2 times in a chapter.
+var WarningKeywords = []string{
+	"竟然", "居然", "没想到",
+	"深吸一口气", "长舒一口气",
+	"微微一笑", "淡淡一笑",
+	"缓缓说道", "沉声说道", "冷声说道",
+}
+
+// Linter analyzes text against AI detection metrics and clichés using two-tier detection.
 type Linter struct {
-	bannedKeywords []string
+	coreBanned    []string
+	warningBanned []string
 }
 
 func NewLinter(customBanned []string) *Linter {
-	words := DefaultBannedKeywords
+	core := CoreBannedKeywords
 	if len(customBanned) > 0 {
-		words = customBanned
+		core = customBanned
 	}
-	return &Linter{bannedKeywords: words}
+	return &Linter{
+		coreBanned:    core,
+		warningBanned: WarningKeywords,
+	}
 }
 
-// Analyze evaluates the burstiness standard deviation and scans for clichés.
+// Analyze evaluates the burstiness standard deviation, two-tier cliché scanning,
+// and 4 structural narrative metrics: dialogue ratio, paragraph variance, n-grams, exclamation density.
 func (l *Linter) Analyze(text string) domain.LinterResult {
 	if strings.TrimSpace(text) == "" {
 		return domain.LinterResult{
-			BurstinessScore: 0,
-			HitBannedWords:  nil,
-			Passed:          false,
-			Message:         "文本为空",
+			BurstinessScore:    0,
+			HitBannedWords:     nil,
+			DialogueRatio:      0,
+			ParagraphVariance:  0,
+			TopRepeatedNgrams:  nil,
+			ExclamationDensity: 0,
+			Passed:             false,
+			Message:            "文本为空",
 		}
 	}
 
-	// 1. Scan for banned words
+	// 1. Scan core banned words (any single hit = penalty)
 	var hits []string
-	for _, word := range l.bannedKeywords {
+	for _, word := range l.coreBanned {
 		if strings.Contains(text, word) {
 			hits = append(hits, word)
 		}
 	}
 
-	// 2. Compute Burstiness (sentence length standard deviation)
+	// 2. Scan warning words (frequency >= 2 = penalty)
+	for _, word := range l.warningBanned {
+		count := strings.Count(text, word)
+		if count >= 2 {
+			hits = append(hits, fmt.Sprintf("%s(×%d)", word, count))
+		}
+	}
+
+	// 3. Compute Burstiness (sentence length standard deviation)
 	sentences := splitSentences(text)
 	burstiness := calculateBurstiness(sentences)
 
-	passed := len(hits) == 0 && burstiness >= 45
+	// 4. Compute Structural Narrative Metrics
+	dialogueRatio := calculateDialogueRatio(text)
+	paraVariance := calculateParagraphVariance(text)
+	topNgrams := calculateRepeatedNgrams(text)
+	exclDensity := calculateExclamationDensity(text)
 
-	msg := "质检通过，句式方差优良，无AI模式化套词。"
+	runesLen := len([]rune(text))
+	passed := len(hits) == 0 && burstiness >= 45 && exclDensity <= 4.0
+	if runesLen >= 300 {
+		if dialogueRatio > 0.75 || (dialogueRatio < 0.05 && runesLen > 800) {
+			passed = false
+		}
+	}
+
+	var parts []string
+	if len(hits) > 0 {
+		parts = append(parts, "命中AI高频套词")
+	}
+	if burstiness < 45 {
+		parts = append(parts, "句长节奏过于平缓(易被平台反AI检测识别)")
+	}
+	if exclDensity > 4.0 {
+		parts = append(parts, fmt.Sprintf("感叹号过密(每千字%.1f个)", exclDensity))
+	}
+	if runesLen >= 300 && dialogueRatio > 0.75 {
+		parts = append(parts, fmt.Sprintf("对话占比过高(%.1f%%)", dialogueRatio*100))
+	}
+	if runesLen > 800 && dialogueRatio < 0.05 {
+		parts = append(parts, "通篇缺乏对话角色交互")
+	}
+
+	msg := "质检通过，句式方差与叙事维度优良，无AI模式化套词。"
 	if !passed {
-		var parts []string
-		if len(hits) > 0 {
-			parts = append(parts, "命中AI高频套词")
-		}
-		if burstiness < 45 {
-			parts = append(parts, "句长节奏过于平缓(易被平台反AI检测识别)")
-		}
 		msg = "质检预警: " + strings.Join(parts, "；")
 	}
 
 	return domain.LinterResult{
-		BurstinessScore: burstiness,
-		HitBannedWords:  hits,
-		Passed:          passed,
-		Message:         msg,
+		BurstinessScore:    burstiness,
+		HitBannedWords:     hits,
+		DialogueRatio:      dialogueRatio,
+		ParagraphVariance:  paraVariance,
+		TopRepeatedNgrams:  topNgrams,
+		ExclamationDensity: exclDensity,
+		Passed:             passed,
+		Message:            msg,
 	}
+}
+
+func calculateDialogueRatio(text string) float64 {
+	runes := []rune(text)
+	total := len(runes)
+	if total == 0 {
+		return 0
+	}
+	var inDialogue bool
+	var endQuote rune
+	dialogueCount := 0
+
+	for _, r := range runes {
+		if !inDialogue {
+			switch r {
+			case '「':
+				inDialogue = true
+				endQuote = '」'
+				dialogueCount++
+			case '“':
+				inDialogue = true
+				endQuote = '”'
+				dialogueCount++
+			case '"':
+				inDialogue = true
+				endQuote = '"'
+				dialogueCount++
+			}
+		} else {
+			dialogueCount++
+			if r == endQuote {
+				inDialogue = false
+			}
+		}
+	}
+	ratio := float64(dialogueCount) / float64(total)
+	return math.Round(ratio*1000) / 1000
+}
+
+func calculateParagraphVariance(text string) int {
+	lines := strings.Split(text, "\n")
+	var lengths []float64
+	var sum float64
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) > 0 {
+			l := float64(len([]rune(trimmed)))
+			lengths = append(lengths, l)
+			sum += l
+		}
+	}
+	if len(lengths) <= 1 {
+		return 0
+	}
+	mean := sum / float64(len(lengths))
+	var varianceSum float64
+	for _, l := range lengths {
+		diff := l - mean
+		varianceSum += diff * diff
+	}
+	variance := varianceSum / float64(len(lengths))
+	stdDev := math.Sqrt(variance)
+	return int(math.Round(stdDev))
+}
+
+func calculateExclamationDensity(text string) float64 {
+	runes := []rune(text)
+	total := len(runes)
+	if total == 0 {
+		return 0
+	}
+	count := 0
+	for _, r := range runes {
+		if r == '！' || r == '!' {
+			count++
+		}
+	}
+	density := (float64(count) * 1000.0) / float64(total)
+	return math.Round(density*100) / 100
+}
+
+func calculateRepeatedNgrams(text string) []string {
+	var hanRunes []rune
+	for _, r := range text {
+		if unicode.Is(unicode.Han, r) {
+			hanRunes = append(hanRunes, r)
+		}
+	}
+	if len(hanRunes) < 10 {
+		return nil
+	}
+
+	counts := make(map[string]int)
+	for n := 3; n <= 4; n++ {
+		for i := 0; i <= len(hanRunes)-n; i++ {
+			gram := string(hanRunes[i : i+n])
+			counts[gram]++
+		}
+	}
+
+	type gramFreq struct {
+		gram  string
+		count int
+	}
+	var candidates []gramFreq
+	threshold := 4
+	if len(hanRunes) < 1000 {
+		threshold = 3
+	}
+	for g, c := range counts {
+		if c >= threshold {
+			candidates = append(candidates, gramFreq{gram: g, count: c})
+		}
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].count == candidates[j].count {
+			return len(candidates[i].gram) > len(candidates[j].gram)
+		}
+		return candidates[i].count > candidates[j].count
+	})
+
+	var result []string
+	seen := make(map[string]bool)
+	for _, c := range candidates {
+		isSub := false
+		for s := range seen {
+			if strings.Contains(s, c.gram) {
+				isSub = true
+				break
+			}
+		}
+		if !isSub {
+			seen[c.gram] = true
+			result = append(result, fmt.Sprintf("%s(×%d)", c.gram, c.count))
+			if len(result) >= 5 {
+				break
+			}
+		}
+	}
+	return result
 }
 
 func splitSentences(text string) []string {
