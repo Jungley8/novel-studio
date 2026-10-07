@@ -7,10 +7,26 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <style>
+    :root {
+      --studio-bg-canvas: #09090b;
+      --studio-bg-surface: #121215;
+      --studio-bg-elevated: #18181b;
+      --studio-bg-subtle: #27272a;
+      --studio-border-subtle: #27272a;
+      --studio-border-muted: #3f3f46;
+      --studio-border-focus: #f59e0b;
+      --studio-amber: #f59e0b;
+      --studio-emerald: #10b981;
+      --studio-rose: #f43f5e;
+      --studio-cyan: #06b6d4;
+    }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #18181b; }
     ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+    .tension-gradient {
+      background: linear-gradient(90deg, #10b981 0%, #f59e0b 50%, #f43f5e 100%);
+    }
   </style>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen font-sans antialiased selection:bg-amber-500 selection:text-black">
@@ -86,106 +102,257 @@
         </div>
       </header>
 
-      <!-- 标签页 1：生产车间 (Workbench) -->
-      <div v-show="currentTab === 'workbench'" class="flex-1 flex overflow-hidden">
-        <!-- 左侧：章节节拍与指令 -->
-        <div class="w-96 border-r border-zinc-800 p-4 flex flex-col justify-between overflow-y-auto">
-          <div class="space-y-4">
-            <div class="flex items-center justify-between">
-              <h2 class="text-sm font-bold text-zinc-200">章节节拍表 (Beats)</h2>
-              <button @click="deriveBeats" :disabled="isLoading" class="text-xs px-2 py-1 bg-amber-500 hover:bg-amber-600 text-black font-bold rounded disabled:opacity-50 transition">
-                {{ isLoading ? '推理中...' : '🎲 自动推演因果节拍' }}
+      <!-- 标签页 1：生产车间 (Workbench) 流程化交互体系 -->
+      <div v-show="currentTab === 'workbench'" class="flex-1 flex flex-col overflow-hidden">
+        
+        <!-- 1. 顶部工序流程导航条 (6-Stage Interactive Stepper) -->
+        <div class="border-b border-zinc-800 bg-zinc-900/95 px-6 py-2.5 flex items-center justify-between shrink-0 gap-4 select-none">
+          <div class="flex items-center gap-1.5 overflow-x-auto text-xs py-0.5">
+            <template v-for="(step, sIdx) in workflowSteps" :key="step.id">
+              <button 
+                @click="goToStep(step.id)" 
+                :class="[
+                  activeStep === step.id 
+                    ? 'bg-amber-500/10 text-amber-300 border-amber-500/50 shadow-sm shadow-amber-500/10 font-bold' 
+                    : stepCompleted[step.id]
+                      ? 'bg-zinc-800/80 text-zinc-300 border-zinc-700 hover:border-zinc-500'
+                      : 'bg-zinc-900/60 text-zinc-500 border-zinc-800/80 hover:text-zinc-400'
+                ]"
+                class="flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition shrink-0 cursor-pointer">
+                <span 
+                  :class="[
+                    activeStep === step.id 
+                      ? 'bg-amber-500 text-black font-extrabold ring-2 ring-amber-500/30' 
+                      : stepCompleted[step.id]
+                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                        : 'bg-zinc-800 text-zinc-500'
+                  ]"
+                  class="w-5 h-5 rounded-full flex items-center justify-center text-[10px]">
+                  <span v-if="stepCompleted[step.id] && activeStep !== step.id">✓</span>
+                  <span v-else>{{ step.id }}</span>
+                </span>
+                <span>{{ step.title }}</span>
+                <span v-if="stepBadge(step.id)" class="text-[10px] px-1.5 py-0.2 rounded font-mono" :class="stepBadgeClass(step.id)">
+                  {{ stepBadge(step.id) }}
+                </span>
               </button>
-            </div>
-
-            <div>
-              <label class="block text-xs text-zinc-400 mb-1">本章核心冲突 / 打破预期：</label>
-              <textarea v-model="workbench.coreConflict" rows="2" class="w-full bg-zinc-900 border border-zinc-700 rounded p-2 text-xs text-zinc-200 focus:outline-none focus:border-amber-500" placeholder="例如：主角在宗门拍卖会揭穿反派抬价的残次药草陷阱"></textarea>
-            </div>
-
-            <!-- 4 个节拍卡片 -->
-            <div class="space-y-2">
-              <div v-for="(beat, idx) in workbench.beats" :key="idx" class="p-2 bg-zinc-900/80 border border-zinc-800 rounded-md">
-                <div class="flex justify-between items-center mb-1">
-                  <span class="text-[11px] font-bold text-amber-400">Beat {{ idx + 1 }}: {{ beat.phase }}</span>
-                  <span class="text-[10px] text-zinc-500">张力: {{ beat.tension }}/10</span>
-                </div>
-                <input v-model="beat.action" class="w-full bg-zinc-800/60 border border-zinc-700/50 rounded px-2 py-1 text-xs text-zinc-200 mb-1" placeholder="核心物理动作事实">
-                <input v-model="beat.expectation_broken" class="w-full bg-zinc-800/60 border border-zinc-700/50 rounded px-2 py-1 text-xs text-zinc-400" placeholder="打破谁的预期？">
-              </div>
-            </div>
-
-            <!-- 状态变动结算预测 -->
-            <div class="p-2 bg-zinc-900/60 border border-zinc-800 rounded-md text-xs space-y-1">
-              <span class="font-bold text-zinc-300">状态机结算变更：</span>
-              <input v-model="workbench.stateMutation.inventory_delta" class="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-300" placeholder="物品变动，如: +残破古玉">
-              <input v-model="workbench.stateMutation.power_delta" class="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-300" placeholder="战力变动，如: 心境突破">
-            </div>
+              <span v-if="sIdx < workflowSteps.length - 1" class="text-zinc-700 text-xs select-none">➔</span>
+            </template>
           </div>
 
-          <div class="space-y-2 mt-4">
-            <button @click="produceAutonomous" :disabled="isLoading" class="w-full py-2 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-600 hover:to-orange-700 text-black font-extrabold rounded text-xs disabled:opacity-50 shadow-lg shadow-amber-500/10 transition flex items-center justify-center gap-1.5">
-              <span>⚡</span> {{ isLoading ? '全流程自主生产中...' : '一键全流程自主生产 (Auto-Pipeline)' }}
-            </button>
-            <button @click="renderScene" :disabled="isLoading" class="w-full py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium rounded text-xs disabled:opacity-50 border border-zinc-700 transition">
-              {{ isLoading ? '渲染生成中...' : '🚀 单步文学渲染 (Step Render)' }}
+          <!-- 右侧：全自主生产快捷按钮 -->
+          <div class="flex items-center gap-3 shrink-0">
+            <button 
+              @click="produceAutonomous" 
+              :disabled="isLoading" 
+              class="px-3.5 py-1.5 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-600 hover:to-orange-700 text-black font-extrabold rounded text-xs disabled:opacity-50 shadow-md shadow-amber-500/10 transition flex items-center gap-1.5 cursor-pointer">
+              <span>⚡</span> {{ isLoading ? '流水线全力生产中...' : '一键全流程自主生产' }}
             </button>
           </div>
         </div>
 
-        <!-- 中间：正文编辑器与实时质检 -->
-        <div class="flex-1 flex flex-col overflow-hidden">
-          <div class="p-3 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/20">
-            <div class="flex items-center gap-3">
-              <span class="text-sm font-bold text-zinc-300">章节正文工坊</span>
-              <span class="text-xs text-zinc-500">字数：{{ workbench.content.length }} 字</span>
+        <!-- 2. 流水线执行状态指示条 (Pipeline Banner, if active or finished) -->
+        <div v-if="pipelineState.active || pipelineState.lastFinished" class="px-6 py-2 border-b border-zinc-800 bg-zinc-900/90 flex items-center justify-between text-xs transition shrink-0">
+          <div class="flex items-center gap-3">
+            <div v-if="pipelineState.active" class="flex items-center gap-2">
+              <span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+              <span class="font-bold text-amber-300">{{ pipelinePhaseLabel(pipelineState.phase) }}</span>
             </div>
-            <div class="flex items-center gap-2">
-              <button @click="runLinter" class="px-2.5 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded border border-zinc-700 transition">
-                🔍 反AI味质检
-              </button>
-              <button @click="reviewDraft" :disabled="!workbench.content || isReviewing" class="px-2.5 py-1 text-xs bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded border border-amber-500/30 font-medium transition disabled:opacity-50">
-                {{ isReviewing ? '主编终审中...' : '🛡️ AI主编终审' }}
-              </button>
-              <button v-if="reviewResult && reviewResult.verdict === 'REVISION_NEEDED'" @click="rewriteDraft" :disabled="isRewriting" class="px-2.5 py-1 text-xs bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 rounded border border-rose-500/40 font-medium transition disabled:opacity-50">
-                {{ isRewriting ? '定向返工中...' : '🔄 定向返工' }}
-              </button>
-              <button @click="commitChapter" :disabled="!workbench.content" class="px-3 py-1 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded disabled:opacity-50 transition">
-                ✅ 归档本章并更新状态机
-              </button>
+            <div v-else class="flex items-center gap-2">
+              <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+              <span class="font-bold text-emerald-300">流水线闭环完成</span>
             </div>
+            <span class="text-zinc-300 font-mono text-[11px]">{{ pipelineState.message }}</span>
+            <span v-if="pipelineState.resumed" class="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 font-medium">⚡ 崩溃断点已恢复</span>
           </div>
-
-          <!-- 流水线执行状态指示条 (Pipeline Banner) -->
-          <div v-if="pipelineState.active || pipelineState.lastFinished" class="px-4 py-2 border-b border-zinc-800 bg-zinc-900/90 flex items-center justify-between text-xs transition">
-            <div class="flex items-center gap-3">
-              <div v-if="pipelineState.active" class="flex items-center gap-2">
-                <span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
-                <span class="font-bold text-amber-300">{{ pipelinePhaseLabel(pipelineState.phase) }}</span>
-              </div>
-              <div v-else class="flex items-center gap-2">
-                <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
-                <span class="font-bold text-emerald-300">流水线完成</span>
-              </div>
-              <span class="text-zinc-300 font-mono text-[11px]">{{ pipelineState.message }}</span>
-              <span v-if="pipelineState.resumed" class="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 font-medium">⚡ 崩溃断点已恢复</span>
-            </div>
-            <div class="flex items-center gap-4 text-zinc-400 text-[11px] font-mono">
-              <span v-if="pipelineState.tokens.total_tokens > 0">Tokens: <strong class="text-zinc-200">{{ pipelineState.tokens.total_tokens.toLocaleString() }}</strong> (提示: {{ pipelineState.tokens.prompt_tokens.toLocaleString() }} / 生成: {{ pipelineState.tokens.completion_tokens.toLocaleString() }})</span>
-              <span v-if="pipelineCostUSD > 0" class="text-emerald-400">预估成本: ~${{ pipelineCostUSD.toFixed(4) }}</span>
-            </div>
+          <div class="flex items-center gap-4 text-zinc-400 text-[11px] font-mono">
+            <span v-if="pipelineState.tokens.total_tokens > 0">Tokens: <strong class="text-zinc-200">{{ pipelineState.tokens.total_tokens.toLocaleString() }}</strong> (提示: {{ pipelineState.tokens.prompt_tokens.toLocaleString() }} / 生成: {{ pipelineState.tokens.completion_tokens.toLocaleString() }})</span>
+            <span v-if="pipelineCostUSD > 0" class="text-emerald-400">预估成本: ~${{ pipelineCostUSD.toFixed(4) }}</span>
           </div>
+        </div>
 
-          <!-- 正文编辑区 -->
-          <div class="flex-1 flex overflow-hidden">
-            <textarea v-model="workbench.content" @input="runLinter" class="flex-1 p-6 bg-zinc-950 text-zinc-200 text-sm leading-relaxed font-serif resize-none focus:outline-none" placeholder="输入或生成正文内容..."></textarea>
+        <!-- 3. 工序主交互区 (双栏联动布局) -->
+        <div class="flex-1 flex overflow-hidden">
+          
+          <!-- 左侧：工步决策与操作面板 (Width: 420px) -->
+          <div class="w-[420px] border-r border-zinc-800 p-5 flex flex-col justify-between overflow-y-auto shrink-0 bg-zinc-900/30">
+            
+            <!-- STEP 1 决策面板：冲突与视界规划 -->
+            <div v-show="activeStep === 1" class="space-y-4">
+              <div class="border-b border-zinc-800 pb-2">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-sm font-bold text-amber-400 flex items-center gap-1.5">
+                    <span>🎯</span> Step 1: 冲突与视界规划
+                  </h3>
+                  <span class="text-[11px] text-zinc-500">第 {{ nextChapterIndex }} 章</span>
+                </div>
+                <p class="text-xs text-zinc-400 mt-1">明确戏剧核心对峙事实与打破预期的切入点。</p>
+              </div>
 
-            <!-- 侧栏：Linter 质检仪表板 -->
-            <div class="w-72 border-l border-zinc-800 p-4 bg-zinc-900/30 overflow-y-auto space-y-4">
-              <h3 class="text-xs font-bold text-zinc-400 uppercase tracking-wider">质检与对抗指标</h3>
+              <div>
+                <label class="block text-xs font-semibold text-zinc-300 mb-1.5">本章核心冲突 / 打破常规预期：</label>
+                <textarea 
+                  v-model="workbench.coreConflict" 
+                  rows="3" 
+                  class="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-xs text-zinc-200 focus:outline-none focus:border-amber-500 leading-relaxed font-sans" 
+                  placeholder="例如：主角在宗门拍卖会揭穿反派抬价的残次药草陷阱，顺水推舟反坑反派万两灵石..."></textarea>
+              </div>
+
+              <!-- 快捷冲突灵感预设 -->
+              <div>
+                <span class="text-[11px] font-bold text-zinc-400 flex items-center gap-1 mb-1.5">
+                  <span>💡</span> 平台特色灵感速选：
+                </span>
+                <div class="grid grid-cols-2 gap-1.5">
+                  <button 
+                    v-for="(p, pIdx) in inspirationPresets" 
+                    :key="pIdx"
+                    @click="setConflictInspiration(p)"
+                    class="p-2 text-left bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/60 hover:border-amber-500/50 rounded text-[11px] text-zinc-300 transition cursor-pointer">
+                    <div class="font-bold text-amber-400 mb-0.5">{{ p.title }}</div>
+                    <div class="text-[10px] text-zinc-500 line-clamp-1">{{ p.desc }}</div>
+                  </button>
+                </div>
+              </div>
+
+              <!-- 目标字数设定 -->
+              <div>
+                <div class="flex justify-between items-center text-xs mb-1">
+                  <span class="text-zinc-400">本章目标字数：</span>
+                  <span class="font-mono text-amber-400 font-bold">{{ wordsTarget }} 字</span>
+                </div>
+                <div class="flex gap-2">
+                  <button 
+                    v-for="target in [1500, 2000, 2500, 3000]" 
+                    :key="target" 
+                    @click="wordsTarget = target"
+                    :class="wordsTarget === target ? 'bg-amber-500 text-black font-bold' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'"
+                    class="flex-1 py-1 rounded text-xs transition border border-zinc-700 cursor-pointer">
+                    {{ target }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- 待回收伏笔雷达 (快捷注入) -->
+              <div v-if="activeHooksList.length > 0" class="p-2.5 bg-zinc-900/90 border border-zinc-800 rounded-lg space-y-1.5">
+                <div class="text-[11px] font-bold text-zinc-300 flex items-center justify-between">
+                  <span class="flex items-center gap-1"><span>🪝</span> 开放伏笔雷达 (可引用回收)：</span>
+                  <span class="text-[10px] text-zinc-500">{{ activeHooksList.length }} 个活跃</span>
+                </div>
+                <div class="space-y-1 max-h-28 overflow-y-auto">
+                  <div 
+                    v-for="h in activeHooksList" 
+                    :key="h.id"
+                    @click="appendHookToConflict(h)"
+                    class="p-1.5 bg-zinc-950/70 hover:bg-zinc-800/80 border border-zinc-800 hover:border-amber-500/40 rounded text-[10px] flex items-center justify-between text-zinc-300 cursor-pointer transition">
+                    <span class="font-semibold text-amber-400/90 truncate flex-1">{{ h.title }}: {{ h.details }}</span>
+                    <span class="text-emerald-400 shrink-0 ml-1">+ 选用</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- STEP 2 决策面板：因果节拍与张力推演 -->
+            <div v-show="activeStep === 2" class="space-y-3">
+              <div class="border-b border-zinc-800 pb-2">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-sm font-bold text-amber-400 flex items-center gap-1.5">
+                    <span>🎲</span> Step 2: 因果节拍与张力推演
+                  </h3>
+                  <button @click="deriveBeats" :disabled="isLoading" class="text-[11px] text-amber-400 hover:underline cursor-pointer">
+                    {{ isLoading ? '推演中...' : '重新推演' }}
+                  </button>
+                </div>
+                <p class="text-xs text-zinc-400 mt-1">严格遵循物理动作与预期打破，拒绝空泛抒情。</p>
+              </div>
+
+              <!-- 4 个节拍卡片 -->
+              <div class="space-y-2">
+                <div v-for="(beat, idx) in workbench.beats" :key="idx" class="p-2.5 bg-zinc-900/90 border border-zinc-800 rounded-lg space-y-1.5">
+                  <div class="flex justify-between items-center">
+                    <span class="text-xs font-bold text-amber-400 flex items-center gap-1">
+                      <span>Beat {{ idx + 1 }}:</span> {{ beat.phase }}
+                    </span>
+                    <div class="flex items-center gap-1.5 text-[10px]">
+                      <span class="text-zinc-500">张力:</span>
+                      <span :class="tensionTextColor(beat.tension)" class="font-mono font-bold">{{ beat.tension }}/10</span>
+                      <div class="w-12 bg-zinc-800 h-1.5 rounded-full overflow-hidden">
+                        <div :style="{ width: (beat.tension * 10) + '%' }" :class="tensionBarClass(beat.tension)" class="h-full"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="block text-[10px] text-zinc-500 mb-0.5">核心物理动作：</label>
+                    <input v-model="beat.action" class="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200" placeholder="动作事实描述">
+                  </div>
+                  <div>
+                    <label class="block text-[10px] text-zinc-500 mb-0.5">打破谁的预期：</label>
+                    <input v-model="beat.expectation_broken" class="w-full bg-zinc-800/60 border border-zinc-700/60 rounded px-2 py-0.5 text-xs text-zinc-400" placeholder="受众/配角的认知反差">
+                  </div>
+                </div>
+              </div>
+
+              <!-- 状态变动结算预测 -->
+              <div class="p-2.5 bg-zinc-900/90 border border-zinc-800 rounded-lg text-xs space-y-1.5">
+                <span class="font-bold text-zinc-300 flex items-center gap-1"><span>⚖️</span> 状态机结算预测：</span>
+                <input v-model="workbench.stateMutation.inventory_delta" class="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300" placeholder="物品变动，如: +残破古玉">
+                <input v-model="workbench.stateMutation.power_delta" class="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300" placeholder="战力变动，如: 心境突破">
+              </div>
+            </div>
+
+            <!-- STEP 3 决策面板：双视点文学渲染 -->
+            <div v-show="activeStep === 3" class="space-y-4">
+              <div class="border-b border-zinc-800 pb-2">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-sm font-bold text-amber-400 flex items-center gap-1.5">
+                    <span>📝</span> Step 3: 双视点文学渲染
+                  </h3>
+                  <span class="text-[11px] text-zinc-500">{{ workbench.content ? workbench.content.length + ' 字' : '未生成' }}</span>
+                </div>
+                <p class="text-xs text-zinc-400 mt-1">融合物理动作细节与感官微表情，工业化正文生成。</p>
+              </div>
+
+              <div class="p-3 bg-zinc-900/80 border border-zinc-800 rounded-lg space-y-2">
+                <div class="text-xs font-bold text-zinc-300 flex items-center justify-between">
+                  <span>生产状态：</span>
+                  <span :class="isLoading ? 'text-amber-400 animate-pulse' : 'text-emerald-400'">
+                    {{ isLoading ? '大模型正在实时渲染...' : (workbench.content ? '初稿已就绪' : '等待渲染') }}
+                  </span>
+                </div>
+                <div class="w-full bg-zinc-800 h-2 rounded-full overflow-hidden">
+                  <div :style="{ width: Math.min(100, (workbench.content.length / wordsTarget) * 100) + '%' }" class="h-full bg-gradient-to-r from-amber-500 to-emerald-500 transition-all duration-300"></div>
+                </div>
+                <div class="flex justify-between text-[11px] text-zinc-500 font-mono">
+                  <span>进度：{{ Math.round((workbench.content.length / wordsTarget) * 100) }}%</span>
+                  <span>目标：{{ wordsTarget }} 字</span>
+                </div>
+              </div>
+
+              <!-- 叙事视点指导准则 -->
+              <div class="p-3 bg-zinc-950/60 border border-zinc-800 rounded-lg text-xs space-y-1.5 text-zinc-400">
+                <div class="font-bold text-zinc-300 flex items-center gap-1"><span>🔍</span> 工业级写作规约：</div>
+                <p class="text-[11px] leading-relaxed">● 必须具备强因果锁链：每一段剧情动作均有前因后果。</p>
+                <p class="text-[11px] leading-relaxed">● 双视点交织：既描写主角的核心物理动作，又穿插对手/观众的认知震撼。</p>
+                <p class="text-[11px] leading-relaxed">● 杜绝模式化开篇与总结套话（如“只见”、“宛如”、“不得不说”）。</p>
+              </div>
+            </div>
+
+            <!-- STEP 4 决策面板：质检门禁与主编终审 -->
+            <div v-show="activeStep === 4" class="space-y-4">
+              <div class="border-b border-zinc-800 pb-2">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-sm font-bold text-amber-400 flex items-center gap-1.5">
+                    <span>🛡️</span> Step 4: 质检门禁与终审
+                  </h3>
+                  <button @click="reviewDraft" :disabled="isReviewing" class="text-[11px] text-amber-400 hover:underline cursor-pointer">
+                    {{ isReviewing ? '终审中...' : '重新质检' }}
+                  </button>
+                </div>
+                <p class="text-xs text-zinc-400 mt-1">启发式反AI味指标预检与独立主编双盲终审裁决。</p>
+              </div>
 
               <!-- 突发度打分 -->
-              <div class="p-3 bg-zinc-900 border border-zinc-800 rounded">
+              <div class="p-3 bg-zinc-900 border border-zinc-800 rounded-lg space-y-1">
                 <div class="flex justify-between items-center text-xs mb-1">
                   <span class="text-zinc-400">句长突发度 (Burstiness)</span>
                   <span :class="linterReport.burstiness_score >= 45 ? 'text-emerald-400' : 'text-rose-400'" class="font-mono font-bold">{{ linterReport.burstiness_score }} 分</span>
@@ -193,69 +360,360 @@
                 <div class="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden">
                   <div :style="{ width: Math.min(100, linterReport.burstiness_score) + '%' }" :class="linterReport.burstiness_score >= 45 ? 'bg-emerald-500' : 'bg-rose-500'" class="h-full"></div>
                 </div>
-                <p class="text-[10px] text-zinc-500 mt-1">越长短交替，AI检测率越低（合格线 ≥ 45）。</p>
+                <p class="text-[10px] text-zinc-500">句长越交替，反AI味越强 (达标线 ≥ 45 分)。</p>
               </div>
 
               <!-- 违禁套话检测 -->
-              <div class="p-3 bg-zinc-900 border border-zinc-800 rounded space-y-1">
+              <div class="p-3 bg-zinc-900 border border-zinc-800 rounded-lg space-y-1">
                 <div class="flex justify-between items-center text-xs">
-                  <span class="text-zinc-400">命中套词 (Clichés)</span>
-                  <span class="font-mono text-xs" :class="linterReport.hit_banned_words.length === 0 ? 'text-emerald-400' : 'text-rose-400'">{{ linterReport.hit_banned_words.length }} 个</span>
+                  <span class="text-zinc-400">违规模式化套词：</span>
+                  <span class="font-mono text-xs" :class="linterReport.hit_banned_words.length === 0 ? 'text-emerald-400' : 'text-rose-400'">{{ linterReport.hit_banned_words.length }} 处命中</span>
                 </div>
                 <div v-if="linterReport.hit_banned_words.length > 0" class="flex flex-wrap gap-1 mt-1">
-                  <span v-for="word in linterReport.hit_banned_words" :key="word" class="text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20 px-1 rounded">{{ word }}</span>
+                  <span v-for="w in linterReport.hit_banned_words" :key="w" class="text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20 px-1 rounded">{{ w }}</span>
                 </div>
-                <div v-else class="text-[10px] text-emerald-400/80">未检出高频模式化废词。</div>
+                <div v-else class="text-[10px] text-emerald-400/80">未检出高频模式化套词。</div>
               </div>
 
-              <div class="p-3 bg-zinc-900 border border-zinc-800 rounded space-y-1">
-                <span class="text-xs text-zinc-400">质检总结：</span>
-                <p class="text-[11px]" :class="linterReport.passed ? 'text-emerald-400' : 'text-amber-400'">{{ linterReport.message }}</p>
-              </div>
-
-              <!-- 主编终审 (Reviewer) 结果面板 -->
-              <div v-if="reviewResult" class="p-3 bg-zinc-900 border rounded space-y-2.5 transition" :class="reviewResult.verdict === 'ACCEPTED' ? 'border-emerald-500/40' : 'border-rose-500/40'">
+              <!-- 主编终审报告 -->
+              <div v-if="reviewResult" class="p-3 bg-zinc-900 border rounded-lg space-y-2" :class="reviewResult.verdict === 'ACCEPTED' ? 'border-emerald-500/40' : 'border-rose-500/40'">
                 <div class="flex justify-between items-center text-xs">
                   <span class="font-bold flex items-center gap-1">
-                    <span v-if="reviewResult.verdict === 'ACCEPTED'" class="text-emerald-400">✓ 主编裁决: 通过</span>
-                    <span v-else class="text-rose-400">⚠️ 主编裁决: 需返工</span>
+                    <span v-if="reviewResult.verdict === 'ACCEPTED'" class="text-emerald-400">✓ 主编裁决: 验收通过</span>
+                    <span v-else class="text-rose-400">⚠️ 主编裁决: 需定向返工</span>
                   </span>
-                  <span class="px-1.5 py-0.5 rounded text-[11px] font-mono font-bold" :class="reviewResult.score >= 80 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'">
+                  <span class="px-2 py-0.5 rounded text-xs font-mono font-bold" :class="reviewResult.score >= 80 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'">
                     {{ reviewResult.score }} 分
                   </span>
                 </div>
-
-                <!-- 问题清单 -->
                 <div v-if="reviewResult.issues && reviewResult.issues.length > 0" class="space-y-1">
                   <div class="text-[10px] text-zinc-400 font-semibold">检出问题点 ({{ reviewResult.issues.length }})：</div>
-                  <ul class="text-[11px] text-rose-300 space-y-1 list-disc list-inside bg-zinc-950/40 p-1.5 rounded border border-zinc-800">
-                    <li v-for="(issue, i) in reviewResult.issues" :key="i">{{ issue }}</li>
+                  <ul class="text-[11px] text-rose-300 space-y-1 list-disc list-inside bg-zinc-950/60 p-2 rounded border border-zinc-800">
+                    <li v-for="(iss, i) in reviewResult.issues" :key="i">{{ iss }}</li>
                   </ul>
                 </div>
-
-                <!-- 修改建议 -->
-                <div v-if="reviewResult.suggestions" class="p-2 bg-zinc-950/70 rounded text-[11px] text-zinc-300 space-y-1 border border-zinc-800/80">
-                  <div class="text-[10px] text-zinc-500 font-semibold">修改指示批注：</div>
-                  <div class="leading-relaxed whitespace-pre-wrap text-zinc-300">{{ reviewResult.suggestions }}</div>
-                </div>
-
                 <!-- 伏笔回收结算认定 -->
                 <div v-if="reviewResult.resolved_hook_ids && reviewResult.resolved_hook_ids.length > 0" class="p-2 bg-emerald-950/30 border border-emerald-500/30 rounded text-[11px] space-y-1">
                   <div class="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
-                    <span>🎣</span> 伏笔回收结算认定 ({{ reviewResult.resolved_hook_ids.length }})：
+                    <span>🎣</span> 伏笔回收判定成功 ({{ reviewResult.resolved_hook_ids.length }})：
                   </div>
                   <div class="flex flex-wrap gap-1">
                     <span v-for="hid in reviewResult.resolved_hook_ids" :key="hid" class="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.5 rounded font-mono">{{ hid }}</span>
                   </div>
                 </div>
-
-                <button v-if="reviewResult.verdict === 'REVISION_NEEDED'" @click="rewriteDraft" :disabled="isRewriting" class="w-full mt-1 py-1.5 text-xs bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded transition font-medium disabled:opacity-50">
-                  {{ isRewriting ? '正在按批注定向重写...' : '🔄 一键定向返工重写' }}
-                </button>
               </div>
             </div>
+
+            <!-- STEP 5 决策面板：定向返工修缮 -->
+            <div v-show="activeStep === 5" class="space-y-4">
+              <div class="border-b border-zinc-800 pb-2">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-sm font-bold text-amber-400 flex items-center gap-1.5">
+                    <span>🔄</span> Step 5: 定向返工修缮
+                  </h3>
+                  <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 font-mono text-amber-400">
+                    第 {{ rewriteLoopCount }} / 3 轮
+                  </span>
+                </div>
+                <p class="text-xs text-zinc-400 mt-1">遵从主编具体批注执行针对性精修，杜绝整篇推翻重来。</p>
+              </div>
+
+              <!-- 主编批注备忘 -->
+              <div v-if="reviewResult && reviewResult.suggestions" class="p-3 bg-zinc-900 border border-zinc-800 rounded-lg space-y-1.5">
+                <span class="text-xs font-bold text-zinc-300 flex items-center gap-1"><span>📋</span> 主编修改批注指示：</span>
+                <p class="text-[11px] text-zinc-300 leading-relaxed whitespace-pre-wrap bg-zinc-950 p-2.5 rounded border border-zinc-800/80">{{ reviewResult.suggestions }}</p>
+              </div>
+
+              <!-- 待修复问题核对 -->
+              <div v-if="reviewResult && reviewResult.issues && reviewResult.issues.length > 0" class="space-y-1">
+                <span class="text-xs font-bold text-zinc-400">待修复缺陷条目：</span>
+                <div class="space-y-1">
+                  <div v-for="(issue, i) in reviewResult.issues" :key="i" class="p-2 bg-rose-500/10 border border-rose-500/20 rounded text-[11px] text-rose-300 flex items-start gap-1.5">
+                    <span class="text-rose-400 font-bold shrink-0">#{{ i + 1 }}</span>
+                    <span>{{ issue }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- STEP 6 决策面板：状态机结算与归档 -->
+            <div v-show="activeStep === 6" class="space-y-4">
+              <div class="border-b border-zinc-800 pb-2">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-sm font-bold text-emerald-400 flex items-center gap-1.5">
+                    <span>✅</span> Step 6: 实体状态机结算与归档
+                  </h3>
+                  <span class="text-[11px] text-zinc-500">终审就绪</span>
+                </div>
+                <p class="text-xs text-zinc-400 mt-1">核算战力突破与物品演变，原子写入本地 SQLite 存储。</p>
+              </div>
+
+              <!-- 结算明细卡 -->
+              <div class="p-3 bg-zinc-900 border border-zinc-800 rounded-lg space-y-2.5 text-xs">
+                <div class="flex justify-between items-center pb-2 border-b border-zinc-800">
+                  <span class="text-zinc-400">归档章节：</span>
+                  <span class="font-bold text-zinc-200">第 {{ nextChapterIndex }} 章</span>
+                </div>
+                <div class="flex justify-between items-center pb-2 border-b border-zinc-800">
+                  <span class="text-zinc-400">章节字数：</span>
+                  <span class="font-mono text-zinc-200 font-bold">{{ workbench.content.length }} 字</span>
+                </div>
+                <div class="space-y-1">
+                  <span class="text-zinc-400">战力境界结算：</span>
+                  <div class="font-mono text-emerald-400 bg-zinc-950 p-1.5 rounded border border-zinc-800">{{ workbench.stateMutation.power_delta || '维持现状无境界变动' }}</div>
+                </div>
+                <div class="space-y-1">
+                  <span class="text-zinc-400">物品背包结算：</span>
+                  <div class="font-mono text-emerald-400 bg-zinc-950 p-1.5 rounded border border-zinc-800">{{ workbench.stateMutation.inventory_delta || '无道具收支' }}</div>
+                </div>
+                <div v-if="reviewResult && reviewResult.resolved_hook_ids && reviewResult.resolved_hook_ids.length > 0" class="space-y-1">
+                  <span class="text-zinc-400">伏笔回收状态翻转：</span>
+                  <div class="font-mono text-emerald-400 bg-zinc-950 p-1.5 rounded border border-zinc-800">
+                    将 {{ reviewResult.resolved_hook_ids.join(', ') }} 置为 RESOLVED
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 底部统一操作栏 (Navigation CTA Bar) -->
+            <div class="pt-4 border-t border-zinc-800 space-y-2 mt-4 shrink-0">
+              <!-- Step 1 按钮 -->
+              <div v-show="activeStep === 1">
+                <button 
+                  @click="deriveBeats" 
+                  :disabled="isLoading || !workbench.coreConflict.trim()" 
+                  class="w-full py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-black font-extrabold rounded-lg text-xs transition flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/10 cursor-pointer">
+                  <span>🎲</span> {{ isLoading ? '因果节拍推演中...' : '推演因果节拍 ➔ (进入第 2 步)' }}
+                </button>
+              </div>
+
+              <!-- Step 2 按钮 -->
+              <div v-show="activeStep === 2" class="space-y-2">
+                <button 
+                  @click="renderScene" 
+                  :disabled="isLoading" 
+                  class="w-full py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-black font-extrabold rounded-lg text-xs transition flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/10 cursor-pointer">
+                  <span>🚀</span> {{ isLoading ? '双视点文学渲染中...' : '确认节拍，开始文学渲染 ➔ (进入第 3 步)' }}
+                </button>
+                <div class="flex gap-2">
+                  <button @click="activeStep = 1" class="flex-1 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition cursor-pointer">
+                    ⬅ 返回修改冲突
+                  </button>
+                  <button @click="deriveBeats" :disabled="isLoading" class="flex-1 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition cursor-pointer">
+                    🎲 重新推演
+                  </button>
+                </div>
+              </div>
+
+              <!-- Step 3 按钮 -->
+              <div v-show="activeStep === 3" class="space-y-2">
+                <button 
+                  @click="reviewDraft" 
+                  :disabled="isReviewing || !workbench.content" 
+                  class="w-full py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-black font-extrabold rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer">
+                  <span>🛡️</span> {{ isReviewing ? '主编终审进行中...' : '初稿完成，提交质量审核 ➔ (进入第 4 步)' }}
+                </button>
+                <div class="flex gap-2">
+                  <button @click="activeStep = 2" class="flex-1 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition cursor-pointer">
+                    ⬅ 调整节拍
+                  </button>
+                  <button @click="renderScene" :disabled="isLoading" class="flex-1 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition cursor-pointer">
+                    🚀 重新渲染
+                  </button>
+                </div>
+              </div>
+
+              <!-- Step 4 按钮 -->
+              <div v-show="activeStep === 4" class="space-y-2">
+                <button 
+                  v-if="reviewResult && reviewResult.verdict === 'REVISION_NEEDED'"
+                  @click="activeStep = 5" 
+                  class="w-full py-2.5 bg-rose-500 hover:bg-rose-600 text-white font-extrabold rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-rose-500/20">
+                  <span>🔄</span> 发现缺陷，进入定向返工修缮 ➔ (第 5 步)
+                </button>
+                <button 
+                  v-else
+                  @click="activeStep = 6" 
+                  :disabled="!workbench.content" 
+                  class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-emerald-600/20">
+                  <span>✅</span> 终审合格，进入结算归档 ➔ (第 6 步)
+                </button>
+                <div class="flex gap-2">
+                  <button @click="activeStep = 3" class="flex-1 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition cursor-pointer">
+                    ⬅ 修改正文
+                  </button>
+                  <button @click="reviewDraft" :disabled="isReviewing" class="flex-1 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition cursor-pointer">
+                    🔍 重新复核
+                  </button>
+                </div>
+              </div>
+
+              <!-- Step 5 按钮 -->
+              <div v-show="activeStep === 5" class="space-y-2">
+                <button 
+                  @click="rewriteDraft" 
+                  :disabled="isRewriting" 
+                  class="w-full py-2.5 bg-rose-500 hover:bg-rose-600 text-white font-extrabold rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-rose-500/20">
+                  <span>🔄</span> {{ isRewriting ? '正在按批注外科手术式重写...' : '按批注执行定向重写' }}
+                </button>
+                <div class="flex gap-2">
+                  <button @click="activeStep = 4" class="flex-1 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition cursor-pointer">
+                    ⬅ 返回质检报告
+                  </button>
+                  <button @click="activeStep = 6" class="flex-1 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-emerald-400 rounded text-xs transition font-semibold cursor-pointer">
+                    忽略缺陷强行归档 ➔
+                  </button>
+                </div>
+              </div>
+
+              <!-- Step 6 按钮 -->
+              <div v-show="activeStep === 6" class="space-y-2">
+                <button 
+                  @click="commitChapter" 
+                  :disabled="!workbench.content" 
+                  class="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black rounded-lg text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/20 cursor-pointer">
+                  <span>🎉</span> 确认归档本章并演变实体状态机
+                </button>
+                <button @click="activeStep = 4" class="w-full py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition cursor-pointer">
+                  ⬅ 返回终审结果
+                </button>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- 右侧：主要工作区与视界画布 (Right Canvas) -->
+          <div class="flex-1 flex flex-col overflow-hidden bg-zinc-950">
+            
+            <!-- 场景 A: 在 Step 1 展现正史视界与伏笔看板 -->
+            <div v-show="activeStep === 1" class="flex-1 p-6 overflow-y-auto space-y-6 max-w-4xl">
+              <div class="border-b border-zinc-800 pb-3 flex justify-between items-center">
+                <div>
+                  <h2 class="text-base font-bold text-zinc-100 flex items-center gap-2">
+                    <span>📖</span> 作品正史视界 (Canon Horizon)
+                  </h2>
+                  <p class="text-xs text-zinc-400">大模型推演本章时将被严格锁定的上下文与物理法则。</p>
+                </div>
+                <span class="text-xs px-2.5 py-1 rounded bg-zinc-800 font-mono text-amber-400">第 {{ nextChapterIndex }} 章</span>
+              </div>
+
+              <div class="grid grid-cols-2 gap-4" v-if="currentProject">
+                <!-- 主角物理状态卡 -->
+                <div class="p-4 bg-zinc-900/80 border border-zinc-800 rounded-lg space-y-2">
+                  <span class="text-xs font-bold text-amber-400 flex items-center gap-1"><span>👤</span> 主角当前物理状态</span>
+                  <div class="text-xs text-zinc-200">
+                    <span class="text-zinc-500">境界等级：</span>{{ currentProject.protagonist.name_and_level }}
+                  </div>
+                  <div class="text-xs text-zinc-200">
+                    <span class="text-zinc-500">隐秘底线：</span>{{ currentProject.protagonist.core_goal }}
+                  </div>
+                  <div class="text-xs text-zinc-300 bg-zinc-950 p-2 rounded border border-zinc-800/80 max-h-24 overflow-y-auto font-mono">
+                    <span class="text-zinc-500">随身物品：</span>{{ currentProject.protagonist.inventory || '(空)' }}
+                  </div>
+                </div>
+
+                <!-- 世界公理与法则 -->
+                <div class="p-4 bg-zinc-900/80 border border-zinc-800 rounded-lg space-y-2">
+                  <span class="text-xs font-bold text-amber-400 flex items-center gap-1"><span>⚖️</span> 世界公理与绝对法则</span>
+                  <div class="text-xs text-zinc-300 bg-zinc-950 p-2.5 rounded border border-zinc-800/80 max-h-32 overflow-y-auto whitespace-pre-wrap font-mono">
+                    {{ currentProject.world_rules }}
+                  </div>
+                </div>
+              </div>
+
+              <!-- 最近章节正史回顾 -->
+              <div class="p-4 bg-zinc-900/60 border border-zinc-800 rounded-lg space-y-2">
+                <span class="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
+                  <span>📜</span> 最近已归档正史章节：
+                </span>
+                <div v-if="chapters.length > 0" class="space-y-2">
+                  <div class="p-3 bg-zinc-950 rounded border border-zinc-800 text-xs space-y-1">
+                    <div class="flex justify-between items-center">
+                      <span class="font-bold text-amber-400">第 {{ chapters[chapters.length - 1].chapter_index }} 章：{{ chapters[chapters.length - 1].title }}</span>
+                      <span class="text-zinc-500 font-mono">{{ chapters[chapters.length - 1].word_count }} 字</span>
+                    </div>
+                    <div class="text-zinc-400 text-[11px]">核心对峙：{{ chapters[chapters.length - 1].core_conflict }}</div>
+                    <div class="text-zinc-300 line-clamp-3 text-[11px] font-serif leading-relaxed mt-1">
+                      {{ chapters[chapters.length - 1].content }}
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="text-xs text-zinc-500 p-3 bg-zinc-950 rounded border border-zinc-800/60 text-center">
+                  ✨ 本作品尚未有已归档章节，第 1 章将作为恢弘史诗的开端！
+                </div>
+              </div>
+            </div>
+
+            <!-- 场景 B: 在 Step 2 展现戏剧张力曲线图 -->
+            <div v-show="activeStep === 2" class="flex-1 p-6 overflow-y-auto space-y-6 max-w-4xl">
+              <div class="border-b border-zinc-800 pb-3 flex justify-between items-center">
+                <div>
+                  <h2 class="text-base font-bold text-zinc-100 flex items-center gap-2">
+                    <span>📈</span> 章节戏剧张力曲线与节奏分析 (Tension Pacing)
+                  </h2>
+                  <p class="text-xs text-zinc-400">起承转合因果推演：蓄力压迫 ➔ 试探下套 ➔ 绝地反转 ➔ 章末留钩。</p>
+                </div>
+              </div>
+
+              <!-- 4 阶段张力柱状图 -->
+              <div class="p-6 bg-zinc-900/80 border border-zinc-800 rounded-lg space-y-4">
+                <div class="grid grid-cols-4 gap-4 h-56 items-end pb-4 border-b border-zinc-800">
+                  <div v-for="(beat, bIdx) in workbench.beats" :key="bIdx" class="flex flex-col items-center gap-2 h-full justify-end">
+                    <span :class="tensionTextColor(beat.tension)" class="font-mono font-bold text-xs">{{ beat.tension }}/10</span>
+                    <div class="w-full bg-zinc-800 rounded-t-lg overflow-hidden flex flex-col justify-end" style="height: 180px;">
+                      <div :style="{ height: (beat.tension * 10) + '%' }" :class="tensionBarClass(beat.tension)" class="w-full rounded-t-lg transition-all duration-500 shadow-lg"></div>
+                    </div>
+                    <span class="text-xs font-bold text-zinc-300">{{ beat.phase }}</span>
+                    <span class="text-[10px] text-zinc-500">Beat {{ bIdx + 1 }}</span>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 text-xs text-zinc-400 pt-2">
+                  <div class="p-3 bg-zinc-950 rounded border border-zinc-800/80 space-y-1">
+                    <span class="font-bold text-amber-400">⚡ 黄金读者心理节奏：</span>
+                    <p class="text-[11px] leading-relaxed">前两节拍严密铺垫并让反派占据上风，绝地反转必须由主角物理底牌引发，末尾留钩保证下章留存率。</p>
+                  </div>
+                  <div class="p-3 bg-zinc-950 rounded border border-zinc-800/80 space-y-1">
+                    <span class="font-bold text-emerald-400">⚖️ 因果锁链状态机：</span>
+                    <p class="text-[11px] leading-relaxed">战力变动：<strong class="text-zinc-200">{{ workbench.stateMutation.power_delta || '无' }}</strong>；道具变动：<strong class="text-zinc-200">{{ workbench.stateMutation.inventory_delta || '无' }}</strong>。</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 场景 C: 在 Step 3, 4, 5, 6 展现沉浸式正文编辑器与实时质检视界 -->
+            <div v-show="activeStep >= 3" class="flex-1 flex flex-col overflow-hidden">
+              <!-- 编辑器顶栏 -->
+              <div class="p-3 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/40">
+                <div class="flex items-center gap-3">
+                  <span class="text-sm font-bold text-zinc-200">第 {{ nextChapterIndex }} 章正文</span>
+                  <span class="text-xs font-mono text-zinc-400">
+                    字数：<strong class="text-amber-400">{{ workbench.content.length }}</strong> 字 (阅读约 {{ Math.max(1, Math.ceil(workbench.content.length / 400)) }} 分钟)
+                  </span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button @click="runLinter" class="px-2.5 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded border border-zinc-700 transition cursor-pointer">
+                    🔍 反AI味质检
+                  </button>
+                  <span v-if="reviewResult" class="text-xs px-2 py-0.5 rounded font-mono font-bold" :class="reviewResult.score >= 80 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'">
+                    终审: {{ reviewResult.score }}分 ({{ reviewResult.verdict }})
+                  </span>
+                </div>
+              </div>
+
+              <!-- 正文文本区 -->
+              <div class="flex-1 flex overflow-hidden">
+                <textarea 
+                  v-model="workbench.content" 
+                  @input="runLinter" 
+                  class="flex-1 p-6 bg-zinc-950 text-zinc-200 text-sm leading-relaxed font-serif resize-none focus:outline-none selection:bg-amber-500 selection:text-black" 
+                  placeholder="正在生成或输入本章正文内容..."></textarea>
+              </div>
+            </div>
+
           </div>
         </div>
+
       </div>
 
       <!-- 标签页 2：实体状态机 -->
@@ -512,6 +970,56 @@
           protagonist_name: ''
         });
 
+        // 流程化工步核心状态 (Workflow Stage State)
+        const activeStep = ref(1);
+        const wordsTarget = ref(2000);
+        const rewriteLoopCount = ref(0);
+
+        const workflowSteps = [
+          { id: 1, title: '1. 冲突规划' },
+          { id: 2, title: '2. 因果节拍' },
+          { id: 3, title: '3. 文学渲染' },
+          { id: 4, title: '4. 质检终审' },
+          { id: 5, title: '5. 定向返工' },
+          { id: 6, title: '6. 结算归档' }
+        ];
+
+        const tensionTextColor = (t) => {
+          if (t <= 4) return 'text-emerald-400';
+          if (t <= 6) return 'text-amber-400';
+          if (t <= 8) return 'text-orange-400';
+          return 'text-rose-400';
+        };
+
+        const tensionBarClass = (t) => {
+          if (t <= 4) return 'bg-emerald-500';
+          if (t <= 6) return 'bg-amber-500';
+          if (t <= 8) return 'bg-orange-500';
+          return 'bg-rose-500';
+        };
+
+        const inspirationPresets = [
+          { title: '拍卖截胡', desc: '低买高坑，暗藏乾坤', conflict: '主角在黑市拍卖会发现被掩盖的远古残器，反派欲恶意抬价加害，主角顺水推舟设局反坑反派万两灵石。' },
+          { title: '考核越级', desc: '以弱胜强，众目反转', conflict: '内门考核中反派暗中篡改抽签安排强敌，主角暗藏底牌在众目睽睽下以弱胜强，打破全场轻视。' },
+          { title: '密室反杀', desc: '利用公理，反向栽赃', conflict: '宗门密室内遭死士围剿，主角利用对世界规则的独特理解触发禁制，反向猎杀并栽赃幕后黑手。' },
+          { title: '伏笔收网', desc: '暗线引爆，逆转攻守', conflict: '前序埋伏的暗线被敌方误以为是破绽发起决战，主角瞬间翻开底牌彻底逆转攻守并回收悬念。' }
+        ];
+
+        const setConflictInspiration = (p) => {
+          workbench.value.coreConflict = p.conflict;
+        };
+
+        const activeHooksList = computed(() => {
+          return hooks.value.filter(h => h.status !== 'RESOLVED');
+        });
+
+        const appendHookToConflict = (h) => {
+          const note = `\n[伏笔回收目标: ${h.title} - ${h.details}]`;
+          if (!workbench.value.coreConflict.includes(h.title)) {
+            workbench.value.coreConflict += note;
+          }
+        };
+
         const workbench = ref({
           coreConflict: '',
           beats: [
@@ -539,6 +1047,48 @@
         const isRewriting = ref(false);
 
         const nextChapterIndex = computed(() => chapters.value.length + 1);
+
+        const stepCompleted = computed(() => ({
+          1: !!workbench.value.coreConflict && workbench.value.coreConflict.trim().length > 0,
+          2: workbench.value.beats && workbench.value.beats.some(b => b.action && b.action.trim().length > 0),
+          3: !!workbench.value.content && workbench.value.content.length > 200,
+          4: !!reviewResult.value,
+          5: reviewResult.value && reviewResult.value.verdict === 'ACCEPTED',
+          6: false
+        }));
+
+        const stepBadge = (id) => {
+          if (id === 1) return workbench.value.coreConflict ? '已定' : '';
+          if (id === 2) return (workbench.value.beats && workbench.value.beats.some(b => b.action)) ? '就绪' : '';
+          if (id === 3) return workbench.value.content ? workbench.value.content.length + '字' : '';
+          if (id === 4) return reviewResult.value ? reviewResult.value.score + '分' : '';
+          if (id === 5) return (reviewResult.value && reviewResult.value.verdict === 'REVISION_NEEDED') ? '需修' : '';
+          if (id === 6) return workbench.value.content ? '待结' : '';
+          return '';
+        };
+
+        const stepBadgeClass = (id) => {
+          if (id === 4 && reviewResult.value) {
+            return reviewResult.value.score >= 80 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400';
+          }
+          if (id === 5 && reviewResult.value && reviewResult.value.verdict === 'REVISION_NEEDED') {
+            return 'bg-rose-500/20 text-rose-400';
+          }
+          return 'bg-zinc-800 text-zinc-400';
+        };
+
+        const goToStep = (step) => {
+          if (step === 2 && !workbench.value.beats.some(b => b.action)) {
+            if (!workbench.value.coreConflict) return alert('请先在第 1 步输入核心冲突并推演节拍');
+          }
+          if (step === 3 && !workbench.value.content && !workbench.value.beats.some(b => b.action)) {
+            return alert('请先在第 2 步推演并确认剧情节拍');
+          }
+          if (step >= 4 && !workbench.value.content) {
+            return alert('请先在第 3 步完成文学渲染生成正文');
+          }
+          activeStep.value = step;
+        };
 
         // API 客户端请求封装
         const api = async (endpoint, options = {}) => {
@@ -645,6 +1195,9 @@
 
         const deriveBeats = async () => {
           if (!currentProject.value) return alert('请先选择或新建项目');
+          if (!workbench.value.coreConflict || !workbench.value.coreConflict.trim()) {
+            return alert('请输入本章核心冲突事实');
+          }
           isLoading.value = true;
           try {
             const out = await api('/api/projects/' + currentProject.value.id + '/derive-beats', {
@@ -656,6 +1209,7 @@
             });
             if (out.beats) workbench.value.beats = out.beats;
             if (out.state_mutation) workbench.value.stateMutation = out.state_mutation;
+            activeStep.value = 2;
           } catch (e) {
             alert('推演节拍失败: ' + e.message);
           } finally {
@@ -672,11 +1226,12 @@
               body: JSON.stringify({
                 chapter_index: nextChapterIndex.value,
                 beats: workbench.value.beats,
-                words_target: 2000
+                words_target: wordsTarget.value || 2000
               })
             });
             workbench.value.content = out.content;
             await runLinter();
+            activeStep.value = 3;
           } catch (e) {
             alert('场景渲染失败: ' + e.message);
           } finally {
@@ -710,6 +1265,7 @@
               })
             });
             reviewResult.value = res;
+            activeStep.value = 4;
           } catch (e) {
             alert('主编终审失败: ' + e.message);
           } finally {
@@ -721,6 +1277,7 @@
           if (!currentProject.value || !workbench.value.content || !reviewResult.value) return;
           isRewriting.value = true;
           try {
+            rewriteLoopCount.value++;
             const res = await api('/api/projects/' + currentProject.value.id + '/rewrite-draft', {
               method: 'POST',
               body: JSON.stringify({
@@ -762,7 +1319,7 @@
               body: JSON.stringify({
                 chapter_index: nextChapterIndex.value,
                 core_conflict: workbench.value.coreConflict,
-                words_target: 2000,
+                words_target: wordsTarget.value || 2000,
                 auto_commit: false,
                 max_rewrite_loops: 3
               })
@@ -803,7 +1360,16 @@
                 try {
                   const data = JSON.parse(dataStr);
                   if (eventType === 'progress') {
-                    if (data.phase) pipelineState.value.phase = data.phase;
+                    if (data.phase) {
+                      pipelineState.value.phase = data.phase;
+                      if (data.phase === 'BEATS') activeStep.value = 2;
+                      else if (data.phase === 'DRAFTED') activeStep.value = 3;
+                      else if (data.phase === 'AUDITED') activeStep.value = 4;
+                      else if (data.phase === 'REWRITING') {
+                        activeStep.value = 5;
+                        rewriteLoopCount.value++;
+                      }
+                    }
                     if (data.message) pipelineState.value.message = data.message;
                     if (data.resumed !== undefined) pipelineState.value.resumed = data.resumed;
                     if (data.tokens) pipelineState.value.tokens = data.tokens;
@@ -827,6 +1393,7 @@
               await runLinter();
               pipelineState.value.lastFinished = true;
               pipelineState.value.message = `生产完成！终审评分: ${finalResult.audit?.score || 0} (${finalResult.audit?.verdict || ''})，定向返工: ${finalResult.rewrite_loops || 0} 轮`;
+              activeStep.value = finalResult.audit?.verdict === 'ACCEPTED' ? 6 : 4;
               alert(`⚡ 全流程自主生产完成！\n经历 ${finalResult.rewrite_loops || 0} 轮定向返工修缮，终审评分：${finalResult.audit?.score || 0} 分 (${finalResult.audit?.verdict || ''})`);
             }
           } catch (e) {
@@ -857,10 +1424,19 @@
             if (res.project) {
               currentProject.value = res.project;
             }
-            alert('第 ' + nextChapterIndex.value + ' 章归档成功！状态机已结算！');
+            alert('🎉 第 ' + nextChapterIndex.value + ' 章归档成功！状态机与伏笔已全部结算！');
             workbench.value.content = '';
             workbench.value.coreConflict = '';
+            workbench.value.beats = [
+              { phase: '蓄力压迫', tension: 4, action: '', expectation_broken: '' },
+              { phase: '试探下套', tension: 6, action: '', expectation_broken: '' },
+              { phase: '绝地反转', tension: 9, action: '', expectation_broken: '' },
+              { phase: '章末留钩', tension: 8, action: '', expectation_broken: '' }
+            ];
+            workbench.value.stateMutation = { inventory_delta: '', power_delta: '' };
             reviewResult.value = null;
+            rewriteLoopCount.value = 0;
+            activeStep.value = 1;
             await selectProject(currentProject.value.id);
           } catch (e) {
             alert('归档失败: ' + e.message);
@@ -920,6 +1496,20 @@
           pipelineState,
           pipelinePhaseLabel,
           pipelineCostUSD,
+          activeStep,
+          wordsTarget,
+          rewriteLoopCount,
+          workflowSteps,
+          stepCompleted,
+          stepBadge,
+          stepBadgeClass,
+          tensionTextColor,
+          tensionBarClass,
+          inspirationPresets,
+          setConflictInspiration,
+          activeHooksList,
+          appendHookToConflict,
+          goToStep,
           projects,
           selectedProjectId,
           currentProject,
