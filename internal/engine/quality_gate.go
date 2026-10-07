@@ -56,15 +56,26 @@ func (q *QualityGate) AuditWithHooks(
 	heuristic := q.linter.Analyze(draftText)
 
 	// 2. Prepare LLM reviewer prompt with heuristic findings injected
-	heuristicNotes := "无"
-	if len(heuristic.HitBannedWords) > 0 || heuristic.BurstinessScore < 40 {
-		var hList []string
-		if len(heuristic.HitBannedWords) > 0 {
-			hList = append(hList, fmt.Sprintf("已检出AI模式化套词: %s", strings.Join(heuristic.HitBannedWords, ", ")))
-		}
-		if heuristic.BurstinessScore < 40 {
-			hList = append(hList, fmt.Sprintf("句长节奏过于平缓 (突发度仅 %d/100，易被平台检测)", heuristic.BurstinessScore))
-		}
+	var hList []string
+	if len(heuristic.HitBannedWords) > 0 {
+		hList = append(hList, fmt.Sprintf("已检出AI模式化套词: %s", strings.Join(heuristic.HitBannedWords, ", ")))
+	}
+	if heuristic.BurstinessScore < 40 {
+		hList = append(hList, fmt.Sprintf("句长节奏过于平缓 (突发度仅 %d/100，易被平台反AI检测识别)", heuristic.BurstinessScore))
+	}
+	if IsExclamationExcessive(draftText, heuristic.ExclamationDensity) {
+		hList = append(hList, fmt.Sprintf("感叹号过密 (每千字 %.1f 个，文字显浮夸)", heuristic.ExclamationDensity))
+	}
+	if len(heuristic.TopRepeatedNgrams) > 0 {
+		hList = append(hList, fmt.Sprintf("检出高频重复短语: %s", strings.Join(heuristic.TopRepeatedNgrams, ", ")))
+	}
+	runesCount := len([]rune(draftText))
+	if runesCount >= 300 && (heuristic.DialogueRatio < 0.10 || heuristic.DialogueRatio > 0.65) {
+		hList = append(hList, fmt.Sprintf("对话占比异常 (%.1f%%，建议保持在 15%%-55%% 之间)", heuristic.DialogueRatio*100))
+	}
+
+	heuristicNotes := "各项算法指标优良"
+	if len(hList) > 0 {
 		heuristicNotes = strings.Join(hList, "; ")
 	}
 
@@ -146,33 +157,50 @@ func (q *QualityGate) AuditWithHooks(
 	if heuristic.BurstinessScore < 35 {
 		allIssues = append(allIssues, fmt.Sprintf("句式过于单一平缓 (突发度 %d 分)", heuristic.BurstinessScore))
 	}
+	exclExcessive := IsExclamationExcessive(draftText, heuristic.ExclamationDensity)
+	if exclExcessive {
+		allIssues = append(allIssues, fmt.Sprintf("感叹号严重超标 (每千字 %.1f 个)", heuristic.ExclamationDensity))
+	}
+	if len(heuristic.TopRepeatedNgrams) >= 3 {
+		allIssues = append(allIssues, fmt.Sprintf("机械性重复短语: %s", strings.Join(heuristic.TopRepeatedNgrams, ", ")))
+	}
 	allIssues = append(allIssues, out.Issues...)
 
-	// Heuristic penalty on score if cliches exist
+	// Heuristic penalty on score if cliches or structural anomalies exist
 	finalScore := out.Score
 	if len(heuristic.HitBannedWords) > 0 {
 		finalScore -= len(heuristic.HitBannedWords) * 4
-		if finalScore < 0 {
-			finalScore = 0
-		}
+	}
+	if exclExcessive {
+		finalScore -= 6
+	}
+	if len(heuristic.TopRepeatedNgrams) >= 3 {
+		finalScore -= 4
+	}
+	if finalScore < 0 {
+		finalScore = 0
 	}
 
-	// Verdict check: if cliches or low score, force REVISION_NEEDED
+	// Verdict check: if cliches, low score, or extreme exclamation, force REVISION_NEEDED
 	verdict := out.Verdict
-	if finalScore >= 80 && len(heuristic.HitBannedWords) == 0 {
+	if finalScore >= 80 && len(heuristic.HitBannedWords) == 0 && !exclExcessive {
 		verdict = domain.ReviewVerdictAccepted
 	} else {
 		verdict = domain.ReviewVerdictRevision
 	}
 
 	return &domain.AuditReport{
-		Verdict:         verdict,
-		Score:           finalScore,
-		BurstinessScore: heuristic.BurstinessScore,
-		HitBannedWords:  heuristic.HitBannedWords,
-		Issues:          allIssues,
-		Suggestions:     out.Suggestions,
-		ResolvedHookIDs: out.ResolvedHookIDs,
-		ReviewedAt:      time.Now(),
+		Verdict:            verdict,
+		Score:              finalScore,
+		BurstinessScore:    heuristic.BurstinessScore,
+		HitBannedWords:     heuristic.HitBannedWords,
+		DialogueRatio:      heuristic.DialogueRatio,
+		ParagraphVariance:  heuristic.ParagraphVariance,
+		TopRepeatedNgrams:  heuristic.TopRepeatedNgrams,
+		ExclamationDensity: heuristic.ExclamationDensity,
+		Issues:             allIssues,
+		Suggestions:        out.Suggestions,
+		ResolvedHookIDs:    out.ResolvedHookIDs,
+		ReviewedAt:         time.Now(),
 	}, nil
 }

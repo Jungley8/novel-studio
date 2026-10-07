@@ -110,7 +110,8 @@ func (l *Linter) Analyze(text string) domain.LinterResult {
 	exclDensity := calculateExclamationDensity(text)
 
 	runesLen := len([]rune(text))
-	passed := len(hits) == 0 && burstiness >= 45 && exclDensity <= 4.0
+	exclExcessive := IsExclamationExcessive(text, exclDensity)
+	passed := len(hits) == 0 && burstiness >= 45 && !exclExcessive
 	if runesLen >= 300 {
 		if dialogueRatio > 0.75 || (dialogueRatio < 0.05 && runesLen > 800) {
 			passed = false
@@ -124,7 +125,7 @@ func (l *Linter) Analyze(text string) domain.LinterResult {
 	if burstiness < 45 {
 		parts = append(parts, "句长节奏过于平缓(易被平台反AI检测识别)")
 	}
-	if exclDensity > 4.0 {
+	if exclExcessive {
 		parts = append(parts, fmt.Sprintf("感叹号过密(每千字%.1f个)", exclDensity))
 	}
 	if runesLen >= 300 && dialogueRatio > 0.75 {
@@ -347,4 +348,24 @@ func calculateBurstiness(sentences []string) int {
 		score = 0
 	}
 	return score
+}
+
+// IsExclamationExcessive checks if exclamation marks are overused in the given text.
+func IsExclamationExcessive(text string, density float64) bool {
+	runes := []rune(text)
+	if len(runes) == 0 {
+		return false
+	}
+	count := 0
+	for _, r := range runes {
+		if r == '！' || r == '!' {
+			count++
+		}
+	}
+	// For short text (< 500 characters), only flag if heavily shouting (>= 5 exclamations)
+	if len(runes) < 500 {
+		return count >= 5 && density > 10.0
+	}
+	// For chapter-length text (>= 500 characters), flag if density > 4.0 per 1000 characters
+	return density > 4.0 && count >= 4
 }

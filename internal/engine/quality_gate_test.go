@@ -88,4 +88,12 @@ func TestQualityGate_Audit(t *testing.T) {
 	if !foundClicheIssue {
 		t.Errorf("expected cliché in issues list, got %v", reportCliche.Issues)
 	}
+
+	// 3. Verify structural metrics are populated on clean report
+	if report.BurstinessScore <= 0 {
+		t.Errorf("expected non-zero burstiness score")
+	}
+	if report.ExclamationDensity <= 0 {
+		t.Errorf("expected non-zero exclamation density")
+	}
 }
