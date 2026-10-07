@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,23 +19,32 @@ type LLMClient interface {
 }
 
 type HTTPLLMClient struct {
+	mu         sync.RWMutex
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
 }
 
 func NewHTTPLLMClient(baseURL, apiKey string) *HTTPLLMClient {
-	cleanURL := strings.TrimRight(baseURL, "/")
-	if !strings.HasSuffix(cleanURL, "/v1") && !strings.Contains(cleanURL, "/v1/") {
-		cleanURL += "/v1"
-	}
-	return &HTTPLLMClient{
-		baseURL: cleanURL,
-		apiKey:  apiKey,
+	c := &HTTPLLMClient{
 		httpClient: &http.Client{
 			Timeout: 120 * time.Second,
 		},
 	}
+	c.UpdateCredentials(baseURL, apiKey)
+	return c
+}
+
+func (c *HTTPLLMClient) UpdateCredentials(baseURL, apiKey string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	cleanURL := strings.TrimRight(baseURL, "/")
+	if cleanURL != "" && !strings.HasSuffix(cleanURL, "/v1") && !strings.Contains(cleanURL, "/v1/") {
+		cleanURL += "/v1"
+	}
+	c.baseURL = cleanURL
+	c.apiKey = apiKey
 }
 
 type chatMessage struct {
@@ -61,7 +71,12 @@ type chatResponse struct {
 }
 
 func (c *HTTPLLMClient) ChatCompletion(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (string, error) {
-	if c.apiKey == "" {
+	c.mu.RLock()
+	apiKey := c.apiKey
+	baseURL := c.baseURL
+	c.mu.RUnlock()
+
+	if apiKey == "" {
 		return "", errors.New("missing API key: please configure your API key in settings")
 	}
 
@@ -79,7 +94,7 @@ func (c *HTTPLLMClient) ChatCompletion(ctx context.Context, model string, system
 		return "", fmt.Errorf("marshal request failed: %w", err)
 	}
 
-	endpoint := c.baseURL + "/chat/completions"
+	endpoint := baseURL + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("create request failed: %w", err)
