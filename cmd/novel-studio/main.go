@@ -27,13 +27,15 @@ func main() {
 	}
 	defaultDataDir := filepath.Join(defaultHome, ".novel-studio")
 
-	// 0. 支持直接子命令路由 (service, doctor)
+	// 0. 支持直接子命令路由 (service, doctor, produce)
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "service":
 			os.Exit(service.RunCLI(os.Args[2:], defaultDataDir, 28980))
 		case "doctor":
 			os.Exit(service.RunDoctorCLI(os.Args[2:], defaultDataDir, 28980))
+		case "produce":
+			os.Exit(runProduceCLI(os.Args[2:], defaultDataDir))
 		case "help":
 			printUsage()
 			os.Exit(0)
@@ -138,6 +140,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "NovelStudio (故事工厂) %s - AI 小说工业化创作桌面工作台\n\n", version)
 	fmt.Fprintf(os.Stderr, "用法:\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio [选项]                 直接启动桌面工作台与本地服务\n")
+	fmt.Fprintf(os.Stderr, "  novel-studio produce [选项]         无头命令行一键全流程自主章节生产\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio service <子命令>       macOS launchd 原生常驻后台守护服务\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio doctor                 运行环境依赖、数据库与健康探针自检报告\n\n")
 	fmt.Fprintf(os.Stderr, "服务子命令 (novel-studio service <cmd>):\n")

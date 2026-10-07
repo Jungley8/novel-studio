@@ -93,6 +93,16 @@ Step 6: 【多形态资产导出】 (Export)
 ./novel-studio doctor
 ```
 
+### 3. 无头全流程自主产章 (Produce Pipeline)
+
+```bash
+# 命令行无头直接运行章节工坊 (自动提取3章正史、推演节拍、文学渲染、多轮复审返工并原子归档)
+./novel-studio produce -conflict "拍卖会反派恶意抬价，主角借机设伏反杀"
+
+# 指定作品 ID 与章节序号
+./novel-studio produce -project <project_id> -chapter 5 -conflict "宗门大比首轮遭遇宿敌"
+```
+
 ---
 
 ## 🚀 快速上手 (Quick Start)
