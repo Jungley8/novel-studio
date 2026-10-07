@@ -32,6 +32,23 @@ func (o *Orchestrator) DeriveBeats(
 	coreConflict string,
 	activeHooks []*domain.PlotHook,
 ) (*DeriveBeatsOutput, error) {
+	horizon := &CanonHorizon{
+		Project:          project,
+		TargetChapter:    chapterIndex,
+		RollingCanonText: "(无前序历史)",
+		AllActiveHooks:   activeHooks,
+		ProtagonistState: project.Protagonist,
+		WorldRules:       project.WorldRules,
+	}
+	return o.DeriveBeatsWithHorizon(ctx, reasoningModel, horizon, coreConflict)
+}
+
+func (o *Orchestrator) DeriveBeatsWithHorizon(
+	ctx context.Context,
+	reasoningModel string,
+	horizon *CanonHorizon,
+	coreConflict string,
+) (*DeriveBeatsOutput, error) {
 	systemPrompt := `你是一名网络小说架构与读者心理学总设计师。你严禁输出抒情散文。
 你的任务是根据给定的主角实体状态、世界公理与核心冲突，推演下一章严密的 4 个剧情节拍 (Beats)。
 必须以纯 JSON 格式返回，包含：
@@ -51,14 +68,29 @@ func (o *Orchestrator) DeriveBeats(
 }`
 
 	hooksSummary := "无"
-	if len(activeHooks) > 0 {
+	if len(horizon.AllActiveHooks) > 0 {
 		var hList []string
-		for _, h := range activeHooks {
-			hList = append(hList, fmt.Sprintf("- [%s] %s (目标回收章节: %d)", h.Status, h.Title, h.TargetChapter))
+		for _, h := range horizon.AllActiveHooks {
+			prefix := ""
+			if len(horizon.UrgentHooks) > 0 {
+				for _, uh := range horizon.UrgentHooks {
+					if uh.ID == h.ID {
+						prefix = "【🔥近期临期】"
+						break
+					}
+				}
+			}
+			hList = append(hList, fmt.Sprintf("- %s[%s] %s (目标回收: 第 %d 章)", prefix, h.Status, h.Title, h.TargetChapter))
 		}
 		hooksSummary = strings.Join(hList, "\n")
 	}
 
+	rollingCanon := "(开篇第一章，无前序历史)"
+	if strings.TrimSpace(horizon.RollingCanonText) != "" {
+		rollingCanon = horizon.RollingCanonText
+	}
+
+	project := horizon.Project
 	userPrompt := fmt.Sprintf(`【作品信息】
 书名：《%s》
 目标平台：%s
@@ -72,6 +104,9 @@ func (o *Orchestrator) DeriveBeats(
 随身物品栏：%s
 当前隐秘目标：%s
 
+【前序正史视界 (最近 3 章密封剧情)】
+%s
+
 【当前开放状态的伏笔】
 %s
 
@@ -79,9 +114,10 @@ func (o *Orchestrator) DeriveBeats(
 %s
 
 请推演输出严格合法的 JSON。`,
-		project.Title, project.TargetPlatform, chapterIndex,
-		project.WorldRules,
-		project.Protagonist.NameAndLevel, project.Protagonist.Inventory, project.Protagonist.CoreGoal,
+		project.Title, project.TargetPlatform, horizon.TargetChapter,
+		horizon.WorldRules,
+		horizon.ProtagonistState.NameAndLevel, horizon.ProtagonistState.Inventory, horizon.ProtagonistState.CoreGoal,
+		rollingCanon,
 		hooksSummary,
 		coreConflict,
 	)
