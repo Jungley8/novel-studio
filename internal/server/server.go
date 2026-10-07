@@ -19,22 +19,37 @@ type Server struct {
 	cfg        *config.Config
 	configPath string
 	store      store.Store
+	llmClient  *engine.HTTPLLMClient
+	orch       *engine.Orchestrator
 	linter     *engine.Linter
 	mux        *http.ServeMux
 	fs         fs.FS
 }
 
-func New(cfg *config.Config, configPath string, s store.Store) (*Server, error) {
+func New(
+	cfg *config.Config,
+	configPath string,
+	s store.Store,
+	llmClient *engine.HTTPLLMClient,
+	orch *engine.Orchestrator,
+	linter *engine.Linter,
+) (*Server, error) {
 	webFS, err := web.FS()
 	if err != nil {
 		return nil, fmt.Errorf("load web embed FS failed: %w", err)
+	}
+
+	if linter == nil {
+		linter = engine.NewLinter(nil)
 	}
 
 	srv := &Server{
 		cfg:        cfg,
 		configPath: configPath,
 		store:      s,
-		linter:     engine.NewLinter(nil),
+		llmClient:  llmClient,
+		orch:       orch,
+		linter:     linter,
 		mux:        http.NewServeMux(),
 		fs:         webFS,
 	}
@@ -109,6 +124,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		s.cfg.APIKey = updated.APIKey
 		s.cfg.ReasoningModel = updated.ReasoningModel
 		s.cfg.WriterModel = updated.WriterModel
+		if s.llmClient != nil {
+			s.llmClient.UpdateCredentials(s.cfg.APIBase, s.cfg.APIKey)
+		}
 		if err := s.cfg.Save(s.configPath); err != nil {
 			errorResponse(w, http.StatusInternalServerError, "save config failed: "+err.Error())
 			return
@@ -254,26 +272,19 @@ func (s *Server) handleProjectChapters(w http.ResponseWriter, r *http.Request, p
 		}
 		c.ProjectID = projectID
 		if c.ID == "" {
-			c.ID = fmt.Sprintf("ch_%d_%d", c.ChapterIndex, time.Now().UnixNano())
+			c.ID = fmt.Sprintf("ch_%s_%d", projectID, c.ChapterIndex)
 		}
-		if err := s.store.SaveChapter(ctx, &c); err != nil {
+
+		updatedProj, err := s.store.CommitChapter(ctx, projectID, &c)
+		if err != nil {
 			errorResponse(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
-		// Automatically mutate protagonist state machine if deltas provided
-		p, err := s.store.GetProject(ctx, projectID)
-		if err == nil && (c.StateMutation.InventoryDelta != "" || c.StateMutation.PowerDelta != "") {
-			if c.StateMutation.InventoryDelta != "" {
-				p.Protagonist.Inventory = strings.TrimSpace(p.Protagonist.Inventory + ", " + c.StateMutation.InventoryDelta)
-			}
-			if c.StateMutation.PowerDelta != "" {
-				p.Protagonist.NameAndLevel = strings.TrimSpace(p.Protagonist.NameAndLevel + " (" + c.StateMutation.PowerDelta + ")")
-			}
-			_ = s.store.SaveProject(ctx, p)
-		}
-
-		jsonResponse(w, http.StatusCreated, c)
+		jsonResponse(w, http.StatusCreated, map[string]any{
+			"chapter": c,
+			"project": updatedProj,
+		})
 	default:
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -347,10 +358,12 @@ func (s *Server) handleDeriveBeats(w http.ResponseWriter, r *http.Request, proje
 
 	hooks, _ := s.store.ListPlotHooks(r.Context(), projectID)
 
-	client := engine.NewHTTPLLMClient(s.cfg.APIBase, s.cfg.APIKey)
-	orch := engine.NewOrchestrator(client)
+	if s.orch == nil {
+		errorResponse(w, http.StatusInternalServerError, "narrative orchestrator is not configured")
+		return
+	}
 
-	out, err := orch.DeriveBeats(r.Context(), s.cfg.ReasoningModel, p, req.ChapterIndex, req.CoreConflict, hooks)
+	out, err := s.orch.DeriveBeats(r.Context(), s.cfg.ReasoningModel, p, req.ChapterIndex, req.CoreConflict, hooks)
 	if err != nil {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
@@ -380,10 +393,12 @@ func (s *Server) handleRenderScene(w http.ResponseWriter, r *http.Request, proje
 		return
 	}
 
-	client := engine.NewHTTPLLMClient(s.cfg.APIBase, s.cfg.APIKey)
-	orch := engine.NewOrchestrator(client)
+	if s.orch == nil {
+		errorResponse(w, http.StatusInternalServerError, "narrative orchestrator is not configured")
+		return
+	}
 
-	content, err := orch.RenderScene(r.Context(), s.cfg.WriterModel, p, req.ChapterIndex, req.Beats, req.WordsTarget)
+	content, err := s.orch.RenderScene(r.Context(), s.cfg.WriterModel, p, req.ChapterIndex, req.Beats, req.WordsTarget)
 	if err != nil {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return

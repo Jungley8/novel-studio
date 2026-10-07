@@ -10,6 +10,7 @@ import (
 
 	"github.com/Jungley8/novel-studio/internal/config"
 	"github.com/Jungley8/novel-studio/internal/desktop"
+	"github.com/Jungley8/novel-studio/internal/engine"
 	"github.com/Jungley8/novel-studio/internal/server"
 	"github.com/Jungley8/novel-studio/internal/store"
 )
@@ -63,8 +64,13 @@ func main() {
 	}
 	defer dbStore.Close()
 
-	// 3. 构建 HTTP 服务与内嵌静态资源
-	srvHandler, err := server.New(cfg, configPath, dbStore)
+	// 3. 构建大模型客户端与编排引擎
+	llmClient := engine.NewHTTPLLMClient(cfg.APIBase, cfg.APIKey)
+	orch := engine.NewOrchestrator(llmClient)
+	linter := engine.NewLinter(nil)
+
+	// 4. 构建 HTTP 服务与内嵌静态资源
+	srvHandler, err := server.New(cfg, configPath, dbStore, llmClient, orch, linter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[NovelStudio] 初始化 HTTP 服务失败: %v\n", err)
 		os.Exit(1)
