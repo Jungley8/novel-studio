@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -269,3 +270,57 @@ func TestSQLiteStore_Checkpoint(t *testing.T) {
 		t.Errorf("expected nil checkpoint after clear, got %v", cleared)
 	}
 }
+
+func TestSQLiteStore_NullFrameworkJsonCompatibility(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test_null_fw.db")
+
+	s, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	p := &domain.Project{
+		ID:             "proj-legacy",
+		Title:          "万古旧传",
+		TargetPlatform: "起点仙侠",
+		WorldRules:     "天地不仁",
+		Protagonist: domain.Protagonist{
+			NameAndLevel: "古修士 (金丹期)",
+		},
+	}
+	if err := s.SaveProject(ctx, p); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	// Simulate existing DB where framework_json is NULL
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db failed: %v", err)
+	}
+	if _, err := rawDB.Exec("UPDATE projects SET framework_json = NULL WHERE id = 'proj-legacy';"); err != nil {
+		rawDB.Close()
+		t.Fatalf("raw exec failed: %v", err)
+	}
+	rawDB.Close()
+
+	// Must succeed without "converting NULL to string" error
+	got, err := s.GetProject(ctx, "proj-legacy")
+	if err != nil {
+		t.Fatalf("GetProject with NULL framework_json failed: %v", err)
+	}
+	if got.Framework != nil {
+		t.Errorf("expected nil framework, got %v", got.Framework)
+	}
+
+	list, err := s.ListProjects(ctx)
+	if err != nil {
+		t.Fatalf("ListProjects with NULL framework_json failed: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 project in list, got %d", len(list))
+	}
+}
+

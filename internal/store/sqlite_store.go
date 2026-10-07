@@ -102,6 +102,7 @@ func (s *SQLiteStore) migrate() error {
 	// Backward compatible schema patch for existing DBs
 	_, _ = s.db.Exec(`ALTER TABLE chapters ADD COLUMN review_json TEXT;`)
 	_, _ = s.db.Exec(`ALTER TABLE projects ADD COLUMN framework_json TEXT;`)
+	_, _ = s.db.Exec(`UPDATE projects SET framework_json = '' WHERE framework_json IS NULL;`)
 	return nil
 }
 
@@ -149,7 +150,7 @@ func (s *SQLiteStore) SaveProject(ctx context.Context, p *domain.Project) error 
 }
 
 func (s *SQLiteStore) GetProject(ctx context.Context, id string) (*domain.Project, error) {
-	query := `SELECT id, title, target_platform, world_rules, protagonist_json, framework_json, created_at, updated_at FROM projects WHERE id = ?`
+	query := `SELECT id, title, target_platform, world_rules, protagonist_json, COALESCE(framework_json, ''), created_at, updated_at FROM projects WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, query, id)
 
 	var p domain.Project
@@ -174,7 +175,7 @@ func (s *SQLiteStore) GetProject(ctx context.Context, id string) (*domain.Projec
 }
 
 func (s *SQLiteStore) ListProjects(ctx context.Context) ([]*domain.Project, error) {
-	query := `SELECT id, title, target_platform, world_rules, protagonist_json, framework_json, created_at, updated_at FROM projects ORDER BY updated_at DESC`
+	query := `SELECT id, title, target_platform, world_rules, protagonist_json, COALESCE(framework_json, ''), created_at, updated_at FROM projects ORDER BY updated_at DESC`
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
