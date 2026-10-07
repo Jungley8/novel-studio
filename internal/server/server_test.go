@@ -125,4 +125,18 @@ func TestServer_ConfigAndProjects(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 for index.html, got %d", w.Code)
 	}
+
+	// 6. POST /api/projects/:id/workshop/produce (verify validation & routing)
+	wsPayload := map[string]any{
+		"chapter_index": 1,
+		"core_conflict": "宗门考核受阻",
+	}
+	body, _ = json.Marshal(wsPayload)
+	req = httptest.NewRequest(http.MethodPost, "/api/projects/"+created.ID+"/workshop/produce", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 when mock LLM client cannot reach endpoint, got %d", w.Code)
+	}
 }

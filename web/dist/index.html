@@ -123,9 +123,14 @@
             </div>
           </div>
 
-          <button @click="renderScene" :disabled="isLoading" class="w-full mt-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-black font-bold rounded text-sm disabled:opacity-50 shadow-lg shadow-orange-500/10 transition">
-            {{ isLoading ? '渲染生成中...' : '🚀 启动文学渲染与质检' }}
-          </button>
+          <div class="space-y-2 mt-4">
+            <button @click="produceAutonomous" :disabled="isLoading" class="w-full py-2 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-600 hover:to-orange-700 text-black font-extrabold rounded text-xs disabled:opacity-50 shadow-lg shadow-amber-500/10 transition flex items-center justify-center gap-1.5">
+              <span>⚡</span> {{ isLoading ? '全流程自主生产中...' : '一键全流程自主生产 (Auto-Pipeline)' }}
+            </button>
+            <button @click="renderScene" :disabled="isLoading" class="w-full py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium rounded text-xs disabled:opacity-50 border border-zinc-700 transition">
+              {{ isLoading ? '渲染生成中...' : '🚀 单步文学渲染 (Step Render)' }}
+            </button>
+          </div>
         </div>
 
         <!-- 中间：正文编辑器与实时质检 -->
@@ -613,6 +618,33 @@
           }
         };
 
+        const produceAutonomous = async () => {
+          if (!currentProject.value) return alert('请先选择或新建项目');
+          isLoading.value = true;
+          try {
+            const res = await api('/api/projects/' + currentProject.value.id + '/workshop/produce', {
+              method: 'POST',
+              body: JSON.stringify({
+                chapter_index: nextChapterIndex.value,
+                core_conflict: workbench.value.coreConflict,
+                words_target: 2000,
+                auto_commit: false,
+                max_rewrite_loops: 3
+              })
+            });
+            if (res.beats) workbench.value.beats = res.beats;
+            if (res.state_mutation) workbench.value.stateMutation = res.state_mutation;
+            if (res.content) workbench.value.content = res.content;
+            if (res.audit) reviewResult.value = res.audit;
+            await runLinter();
+            alert(`⚡ 全流程自主生产完成！\n经历 ${res.rewrite_loops} 轮定向返工修缮，终审评分：${res.audit.score} 分 (${res.audit.verdict})`);
+          } catch (e) {
+            alert('自主生产流水线异常: ' + e.message);
+          } finally {
+            isLoading.value = false;
+          }
+        };
+
         const commitChapter = async () => {
           if (!currentProject.value || !workbench.value.content) return;
           try {
@@ -709,6 +741,7 @@
           saveCurrentProject,
           deriveBeats,
           renderScene,
+          produceAutonomous,
           runLinter,
           reviewDraft,
           rewriteDraft,

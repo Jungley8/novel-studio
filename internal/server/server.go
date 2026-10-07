@@ -16,14 +16,17 @@ import (
 )
 
 type Server struct {
-	cfg        *config.Config
-	configPath string
-	store      store.Store
-	llmClient  *engine.HTTPLLMClient
-	orch       *engine.Orchestrator
-	linter     *engine.Linter
-	mux        *http.ServeMux
-	fs         fs.FS
+	cfg         *config.Config
+	configPath  string
+	store       store.Store
+	llmClient   *engine.HTTPLLMClient
+	orch        *engine.Orchestrator
+	linter      *engine.Linter
+	chronicle   *engine.CanonChronicle
+	qualityGate *engine.QualityGate
+	workshop    *engine.ChapterWorkshop
+	mux         *http.ServeMux
+	fs          fs.FS
 }
 
 func New(
@@ -43,15 +46,22 @@ func New(
 		linter = engine.NewLinter(nil)
 	}
 
+	chronicle := engine.NewCanonChronicle(s)
+	qualityGate := engine.NewQualityGate(llmClient, nil)
+	workshop := engine.NewChapterWorkshop(orch, chronicle, qualityGate, s)
+
 	srv := &Server{
-		cfg:        cfg,
-		configPath: configPath,
-		store:      s,
-		llmClient:  llmClient,
-		orch:       orch,
-		linter:     linter,
-		mux:        http.NewServeMux(),
-		fs:         webFS,
+		cfg:         cfg,
+		configPath:  configPath,
+		store:       s,
+		llmClient:   llmClient,
+		orch:        orch,
+		linter:      linter,
+		chronicle:   chronicle,
+		qualityGate: qualityGate,
+		workshop:    workshop,
+		mux:         http.NewServeMux(),
+		fs:          webFS,
 	}
 
 	srv.routes()
@@ -245,6 +255,12 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 		s.handleReviewDraft(w, r, projectID)
 	case "rewrite-draft":
 		s.handleRewriteDraft(w, r, projectID)
+	case "workshop":
+		if len(parts) >= 3 && parts[2] == "produce" {
+			s.handleWorkshopProduce(w, r, projectID)
+			return
+		}
+		errorResponse(w, http.StatusBadRequest, "invalid workshop action")
 	case "export":
 		if len(parts) >= 3 {
 			s.handleProjectExport(w, r, projectID, parts[2])
@@ -355,20 +371,18 @@ func (s *Server) handleDeriveBeats(w http.ResponseWriter, r *http.Request, proje
 		return
 	}
 
-	p, err := s.store.GetProject(r.Context(), projectID)
+	if s.orch == nil || s.chronicle == nil {
+		errorResponse(w, http.StatusInternalServerError, "orchestrator or chronicle is not configured")
+		return
+	}
+
+	horizon, err := s.chronicle.AssembleHorizon(r.Context(), projectID, req.ChapterIndex)
 	if err != nil {
-		errorResponse(w, http.StatusNotFound, "project not found")
+		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	hooks, _ := s.store.ListPlotHooks(r.Context(), projectID)
-
-	if s.orch == nil {
-		errorResponse(w, http.StatusInternalServerError, "narrative orchestrator is not configured")
-		return
-	}
-
-	out, err := s.orch.DeriveBeats(r.Context(), s.cfg.ReasoningModel, p, req.ChapterIndex, req.CoreConflict, hooks)
+	out, err := s.orch.DeriveBeatsWithHorizon(r.Context(), s.cfg.ReasoningModel, horizon, req.CoreConflict)
 	if err != nil {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
@@ -484,12 +498,47 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request, proje
 		return
 	}
 
-	if s.orch == nil {
-		errorResponse(w, http.StatusInternalServerError, "orchestrator not configured")
+	if s.qualityGate == nil {
+		errorResponse(w, http.StatusInternalServerError, "quality gate not configured")
 		return
 	}
 
-	res, err := s.orch.ReviewDraft(r.Context(), s.cfg.ReasoningModel, p, req.ChapterIndex, req.Beats, req.DraftText)
+	audit, err := s.qualityGate.Audit(r.Context(), s.cfg.ReasoningModel, p, req.ChapterIndex, req.Beats, req.DraftText)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, audit.ToReviewResult())
+}
+
+func (s *Server) handleWorkshopProduce(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req engine.WorkshopProduceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.ProjectID = projectID
+	if req.ReasoningModel == "" {
+		req.ReasoningModel = s.cfg.ReasoningModel
+	}
+	if req.WriterModel == "" {
+		req.WriterModel = s.cfg.WriterModel
+	}
+	if req.ReviewerModel == "" {
+		req.ReviewerModel = s.cfg.ReasoningModel
+	}
+
+	if s.workshop == nil {
+		errorResponse(w, http.StatusInternalServerError, "workshop not configured")
+		return
+	}
+
+	res, err := s.workshop.ProduceChapter(r.Context(), req)
 	if err != nil {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
