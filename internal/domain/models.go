@@ -75,10 +75,13 @@ func (p *Project) Validate() error {
 
 // SceneBeat represents an atomic narrative beat within a chapter.
 type SceneBeat struct {
-	Phase             string `json:"phase"`              // e.g. "蓄力压迫", "试探下套", "绝地反杀", "章末留钩"
-	Tension           int    `json:"tension"`            // 1-10
-	Action            string `json:"action"`             // Physical action & fact
-	ExpectationBroken string `json:"expectation_broken"` // Whose expectation is broken
+	Phase             string `json:"phase"`                        // e.g. "蓄力压迫", "试探下套", "绝地反杀", "章末留钩"
+	Tension           int    `json:"tension"`                      // 1-10
+	Action            string `json:"action"`                       // Physical action & fact
+	ExpectationBroken string `json:"expectation_broken"`           // Whose expectation is broken
+	ReaderEmotion     string `json:"reader_emotion,omitempty"`     // 期望读者此刻的情绪: 紧张/好奇/解气/心疼
+	InfoGap           string `json:"info_gap,omitempty"`           // 信息差: 读者知角色不知 / 角色知读者不知
+	HookType          string `json:"hook_type,omitempty"`          // 仅最后一拍: CLIFFHANGER/REVERSAL/MYSTERY/POWER_UP
 }
 
 // StateMutation represents expected changes after a chapter ends.

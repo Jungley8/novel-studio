@@ -58,7 +58,10 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
       "phase": "蓄力压迫 | 试探下套 | 绝地反转 | 章末留钩",
       "tension": 1到10的整数,
       "action": "具体的物理动作事实",
-      "expectation_broken": "谁的心理预期被打破了"
+      "expectation_broken": "谁的心理预期被打破了",
+      "reader_emotion": "期望读者此刻的情绪（如：紧张压抑、好奇期待、大呼解气、心疼揪心）",
+      "info_gap": "信息差（角色知/读者不知，或读者知/角色不知）",
+      "hook_type": "最后一拍必填钩子类型（CLIFFHANGER | REVERSAL | MYSTERY | POWER_UP，前3拍留空）"
     }
   ],
   "state_mutation": {
@@ -152,16 +155,73 @@ func (o *Orchestrator) RenderScene(
 	beats []domain.SceneBeat,
 	wordsTarget int,
 ) (string, error) {
+	horizon := &CanonHorizon{
+		Project:          project,
+		TargetChapter:    chapterIndex,
+		ProtagonistState: project.Protagonist,
+		WorldRules:       project.WorldRules,
+	}
+	return o.RenderSceneWithHorizon(ctx, writerModel, horizon, beats, wordsTarget)
+}
+
+func (o *Orchestrator) RenderSceneWithHorizon(
+	ctx context.Context,
+	writerModel string,
+	horizon *CanonHorizon,
+	beats []domain.SceneBeat,
+	wordsTarget int,
+) (string, error) {
 	if wordsTarget <= 0 {
 		wordsTarget = 2000
 	}
+	project := horizon.Project
+	chapterIndex := horizon.TargetChapter
 
-	systemPrompt := `你是一名冷峻、极具电影镜头感的网络小说名家。
-写作铁律：
-1. 严禁出现以下AI模式化废词：不由得、仿佛、宛若、嘴角勾起、眼神复杂、一时间、殊不知、与此同时、冷哼一声。
+	tensionDirective := buildTensionCurvePrompt(beats)
+	if tensionDirective == "" {
+		tensionDirective = "- 节奏平稳，长短交替推进"
+	}
+	platformDirective := buildPlatformStylePrompt(project.TargetPlatform)
+	dialogueRatioDirective := buildDialogueRatioPrompt(beats)
+
+	systemPrompt := fmt.Sprintf(`你是一名冷峻、极具电影镜头感的网络小说名家。
+
+【声口约束】
+- 每个角色的对话必须有独特口头禅或语言习惯，区分出年龄、阶层、修炼体系差异。
+- 反派不许"哈哈哈"空洞大笑，必须有个性化的得意、阴鸷或蔑视表达。
+
+【五感权重】
+- 战斗场景：听觉 40%% + 触觉 30%% + 视觉 30%%，强调骨骼碎裂声、灵力震荡的皮肤刺痛与腥甜气息。
+- 阴谋场景：嗅觉 30%% + 视觉 40%% + 听觉 30%%，强调汗液腥味、瞳孔微变与衣料摩挲声。
+- 突破场景：触觉 50%% + 视觉 30%% + 听觉 20%%，强调经脉灼烧、丹田翻涌与脏腑雷鸣的体感。
+
+【叙事视角与承前风格】
+- 锁定第三人称限制视角，聚焦主角即时感知。
+- 维持与全书一贯的叙述腔调、文字密度，严禁突然词藻华丽或过于口水化。
+
+【节奏曲线指令 (基于当前场景节拍张力)】
+%s
+
+【目标平台调性】
+%s
+
+【对话与叙述比例】
+%s
+
+【写作铁律】
+1. 严禁出现以下AI模式化废词：不由得、仿佛、宛若、嘴角勾起、眼神复杂、一时间、殊不知、与此同时、冷哼一声、倒吸一口凉气、暗自思忖。
 2. 句长节奏（突发度）：战斗与对峙必须多用 3-6 字短句（可单句成段）；氛围烘托多用感官长句，长短句剧烈交替。
-3. Show, don't tell：严禁直抒胸臆“他很愤怒”，必须通过瞳孔骤缩、指关节泛白、下意识屏住呼吸等微动作体现。
-4. 严格按照提供的 4 个节拍事实展开，不得擅自修改因果大纲。`
+3. Show, don't tell：严禁直抒胸臆“他很愤怒”，必须通过微动作、肌肉紧绷、环境反馈体现。
+4. 严格按照提供的节拍事实展开，不得擅自修改因果大纲。`,
+		tensionDirective,
+		platformDirective,
+		dialogueRatioDirective,
+	)
+
+	var anchorSection string
+	if horizon.TailAnchor != "" {
+		anchorSection = fmt.Sprintf("\n【上章收尾文风锚定 (最后200字，请严格承接此腔调与视角)】\n%s\n", horizon.TailAnchor)
+	}
 
 	beatsJSON, _ := json.MarshalIndent(beats, "", "  ")
 
@@ -170,15 +230,20 @@ func (o *Orchestrator) RenderScene(
 第 %d 章
 目标字数：%d 字左右
 
-【主角状态参考】
-%s | 携带物品：%s
+【世界法则与公理】
+%s
 
-【必须执行的 4 个场景节拍】
+【主角状态参考】
+%s | 携带物品：%s%s
+
+【必须执行的场景节拍 (请严格按节拍顺序与因果展开)】
 %s
 
 请直接输出小说正文内容，无需任何开场白或寒暄。`,
 		project.Title, chapterIndex, wordsTarget,
-		project.Protagonist.NameAndLevel, project.Protagonist.Inventory,
+		horizon.WorldRules,
+		horizon.ProtagonistState.NameAndLevel, horizon.ProtagonistState.Inventory,
+		anchorSection,
 		string(beatsJSON),
 	)
 
@@ -272,11 +337,13 @@ func (o *Orchestrator) RewriteDraft(
 	originalDraft string,
 	review *domain.ReviewResult,
 ) (string, error) {
-	systemPrompt := `你是一名顶级网文精修专家。你的任务是根据主编审（Reviewer）的具体驳回意见，对原草稿进行定向精修与重写。
-规则：
-1. 严格修复主编指出的所有问题，落实整改意见。
-2. 保持优秀句段，重构被指出的机械或违规段落。
-3. 严格遵循 Show, don't tell，杜绝AI套话。直接输出重修后的正文。`
+	systemPrompt := `你是一名顶级网文精修专家。你的任务是根据主编审（Reviewer）的具体驳回意见，对原草稿进行定向精修与差分重构。
+精修与写作铁律：
+1. 严格修复主编指出的所有问题，逐条落实整改意见。
+2. 【差分保护】严禁全盘推翻重写！对于主编没有提出异议的优秀段落和精彩描写，必须原样保留。
+3. 修改比例严格控制在有问题的局部段落（修改内容原则上不得超过全文的 35%），集中火力解决病灶。
+4. 严格遵循 Show, don't tell，杜绝AI套话，严禁出现不由得、仿佛、嘴角勾起等模式化废词。
+5. 直接输出精修重构后的完整正文，无需任何客套寒暄。`
 
 	issuesText := "无明显硬伤"
 	if len(review.Issues) > 0 {
@@ -300,6 +367,61 @@ func (o *Orchestrator) RewriteDraft(
 	)
 
 	return o.client.ChatCompletion(ctx, writerModel, systemPrompt, userPrompt, 0.7)
+}
+
+// buildTensionCurvePrompt dynamically generates rhythm density directives from beat tension values.
+func buildTensionCurvePrompt(beats []domain.SceneBeat) string {
+	if len(beats) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for i, b := range beats {
+		switch {
+		case b.Tension >= 8:
+			sb.WriteString(fmt.Sprintf("- 第%d拍(张力%d): 极密节奏，3-6字短句连射，可单句成段，单段不超2行\n", i+1, b.Tension))
+		case b.Tension >= 5:
+			sb.WriteString(fmt.Sprintf("- 第%d拍(张力%d): 中速推进，长短交替，单段3-5行\n", i+1, b.Tension))
+		default:
+			sb.WriteString(fmt.Sprintf("- 第%d拍(张力%d): 舒缓蓄力，允许感官长句铺陈，单段5-8行\n", i+1, b.Tension))
+		}
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+// buildPlatformStylePrompt injects platform-specific writing style guidance.
+func buildPlatformStylePrompt(platform string) string {
+	switch {
+	case strings.Contains(platform, "番茄"):
+		return "番茄小说读者偏好：\n- 爽感优先，每 800 字至少一个小爽点（打脸/装逼/升级/认输）\n- 章末必须留一个\"明天一定要看\"级别的钩子\n- 段落极短（手机阅读），每段不超 3 行"
+	case strings.Contains(platform, "起点"):
+		return "起点仙侠读者偏好：\n- 战力体系严密，描写战斗时必须报出招式名与灵力层级消耗\n- 允许适度世界观展开描写（不超过本章 15%）\n- 章末可留悬念也可做小闭环"
+	case strings.Contains(platform, "知乎"), strings.Contains(platform, "盐言"):
+		return "知乎盐言读者偏好：\n- 文学性优先，句式高级感，拒绝网文口水话\n- 心理描写细腻深沉，意象隐喻取代直白叙述\n- 段落可长，允许散文化长句"
+	default:
+		return "通用网文风格：爽感与文学性兼顾，长短句交替，段落适中。"
+	}
+}
+
+// buildDialogueRatioPrompt generates dialogue proportion guidance based on scene phases.
+func buildDialogueRatioPrompt(beats []domain.SceneBeat) string {
+	hasFight := false
+	hasIntrigue := false
+	for _, b := range beats {
+		if b.Tension >= 8 {
+			hasFight = true
+		}
+		if strings.Contains(b.Phase, "试探") || strings.Contains(b.Phase, "下套") || strings.Contains(b.Phase, "密谋") {
+			hasIntrigue = true
+		}
+	}
+	switch {
+	case hasFight:
+		return "本章以动作为主，对话占 15-25%，每段对话不超过 2 句。"
+	case hasIntrigue:
+		return "本章对话密集，占 40-55%，通过对话推进信息差和心理博弈。"
+	default:
+		return "本章对话占 30-40%，叙述与对话交替穿插。"
+	}
 }
 
 func extractJSON(s string) string {

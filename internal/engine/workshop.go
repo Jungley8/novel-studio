@@ -200,7 +200,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	// 3. Render Literary Scene Draft (Skip if recovered from checkpoint)
 	if draftText == "" {
 		emit(WorkshopEvent{Phase: PhaseRendering, Message: "正在进行文学高张力渲染..."})
-		rendered, rErr := w.orch.RenderScene(ctx, req.WriterModel, horizon.Project, req.ChapterIndex, beatsOut.Beats, req.WordsTarget)
+		rendered, rErr := w.orch.RenderSceneWithHorizon(ctx, req.WriterModel, horizon, beatsOut.Beats, req.WordsTarget)
 		if rErr != nil {
 			return nil, fmt.Errorf("render scene draft failed: %w", rErr)
 		}

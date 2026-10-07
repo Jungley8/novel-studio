@@ -38,8 +38,8 @@ func (m *mockLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 func TestOrchestrator_DeriveBeats(t *testing.T) {
 	mockJSON := `{
 		"beats": [
-			{"phase": "蓄力压迫", "tension": 5, "action": "反派拦路叫嚣", "expectation_broken": "主角面色平静"},
-			{"phase": "绝地反转", "tension": 9, "action": "主角一剑封喉", "expectation_broken": "反派不可置信"}
+			{"phase": "蓄力压迫", "tension": 5, "action": "反派拦路叫嚣", "expectation_broken": "主角面色平静", "reader_emotion": "紧张压抑", "info_gap": "反派不知主角已突破"},
+			{"phase": "绝地反转", "tension": 9, "action": "主角一剑封喉", "expectation_broken": "反派不可置信", "reader_emotion": "大呼解气", "hook_type": "CLIFFHANGER"}
 		],
 		"state_mutation": {
 			"inventory_delta": "消耗长剑",
@@ -66,6 +66,12 @@ func TestOrchestrator_DeriveBeats(t *testing.T) {
 	if len(out.Beats) != 2 {
 		t.Errorf("expected 2 beats, got %d", len(out.Beats))
 	}
+	if out.Beats[0].ReaderEmotion != "紧张压抑" {
+		t.Errorf("expected reader emotion 紧张压抑, got %s", out.Beats[0].ReaderEmotion)
+	}
+	if out.Beats[1].HookType != "CLIFFHANGER" {
+		t.Errorf("expected hook type CLIFFHANGER, got %s", out.Beats[1].HookType)
+	}
 	if out.StateMutation.InventoryDelta != "消耗长剑" {
 		t.Errorf("unexpected state mutation: %v", out.StateMutation)
 	}
@@ -75,9 +81,9 @@ func TestOrchestrator_RenderScene(t *testing.T) {
 	mock := &mockLLMClient{response: "青云峰上，寒风如刀。陆青抬起眼皮，指尖微屈。"}
 	orch := engine.NewOrchestrator(mock)
 
-	p := &domain.Project{Title: "剑道独尊"}
+	p := &domain.Project{Title: "剑道独尊", TargetPlatform: "知乎盐言"}
 	beats := []domain.SceneBeat{
-		{Phase: "蓄力压迫", Action: "风雪封山"},
+		{Phase: "蓄力压迫", Tension: 8, Action: "风雪封山"},
 	}
 
 	content, err := orch.RenderScene(context.Background(), "deepseek-chat", p, 1, beats, 1500)
@@ -86,6 +92,31 @@ func TestOrchestrator_RenderScene(t *testing.T) {
 	}
 
 	if content != "青云峰上，寒风如刀。陆青抬起眼皮，指尖微屈。" {
+		t.Errorf("unexpected content: %s", content)
+	}
+}
+
+func TestOrchestrator_RenderSceneWithHorizon(t *testing.T) {
+	mock := &mockLLMClient{response: "漫天风雪呼啸。陆青迎风而立。"}
+	orch := engine.NewOrchestrator(mock)
+
+	p := &domain.Project{Title: "剑道独尊", TargetPlatform: "番茄脑洞"}
+	horizon := &engine.CanonHorizon{
+		Project:       p,
+		TargetChapter: 2,
+		TailAnchor:    "寒风卷起漫天飞雪，山门前悄然立着一道冷冽黑影。",
+	}
+	beats := []domain.SceneBeat{
+		{Phase: "蓄力压迫", Tension: 6, Action: "风雪封山"},
+		{Phase: "章末留钩", Tension: 9, Action: "剑气破空", HookType: "CLIFFHANGER"},
+	}
+
+	content, err := orch.RenderSceneWithHorizon(context.Background(), "deepseek-chat", horizon, beats, 2000)
+	if err != nil {
+		t.Fatalf("RenderSceneWithHorizon failed: %v", err)
+	}
+
+	if content != "漫天风雪呼啸。陆青迎风而立。" {
 		t.Errorf("unexpected content: %s", content)
 	}
 }
