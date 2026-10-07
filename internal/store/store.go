@@ -14,7 +14,8 @@ type Store interface {
 	SaveProject(ctx context.Context, project *domain.Project) error
 	DeleteProject(ctx context.Context, id string) error
 
-	// Chapter persistence
+	// Chapter lifecycle & atomic state mutation (Deep Module interface)
+	CommitChapter(ctx context.Context, projectID string, chapter *domain.Chapter) (*domain.Project, error)
 	SaveChapter(ctx context.Context, chapter *domain.Chapter) error
 	GetChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.Chapter, error)
 	ListChapters(ctx context.Context, projectID string) ([]*domain.Chapter, error)

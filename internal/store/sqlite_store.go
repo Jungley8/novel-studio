@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
@@ -163,6 +164,117 @@ func (s *SQLiteStore) ListProjects(ctx context.Context) ([]*domain.Project, erro
 func (s *SQLiteStore) DeleteProject(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id)
 	return err
+}
+
+func (s *SQLiteStore) CommitChapter(ctx context.Context, projectID string, c *domain.Chapter) (*domain.Project, error) {
+	if projectID == "" {
+		return nil, errors.New("projectID cannot be empty")
+	}
+	c.ProjectID = projectID
+	if c.ChapterIndex <= 0 {
+		return nil, errors.New("chapter_index must be greater than 0")
+	}
+	if c.ID == "" {
+		c.ID = fmt.Sprintf("ch_%s_%d", projectID, c.ChapterIndex)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// 1. Fetch current project state
+	var p domain.Project
+	var protagonistJSON string
+	row := tx.QueryRowContext(ctx, `SELECT id, title, target_platform, world_rules, protagonist_json, created_at, updated_at FROM projects WHERE id = ?`, projectID)
+	if err := row.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &protagonistJSON, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errors.New("project not found")
+		}
+		return nil, fmt.Errorf("query project: %w", err)
+	}
+	if err := json.Unmarshal([]byte(protagonistJSON), &p.Protagonist); err != nil {
+		return nil, fmt.Errorf("unmarshal protagonist: %w", err)
+	}
+
+	// 2. Save chapter within transaction
+	beatsJSON, err := json.Marshal(c.Beats)
+	if err != nil {
+		return nil, fmt.Errorf("marshal beats: %w", err)
+	}
+	mutationJSON, err := json.Marshal(c.StateMutation)
+	if err != nil {
+		return nil, fmt.Errorf("marshal state mutation: %w", err)
+	}
+	if c.CreatedAt.IsZero() {
+		c.CreatedAt = time.Now()
+	}
+	c.WordCount = len([]rune(c.Content))
+
+	chapterQuery := `
+	INSERT INTO chapters (
+		id, project_id, chapter_index, title, core_conflict,
+		beats_json, state_mutation_json, content, word_count,
+		burstiness_score, linter_passed, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(project_id, chapter_index) DO UPDATE SET
+		title = excluded.title,
+		core_conflict = excluded.core_conflict,
+		beats_json = excluded.beats_json,
+		state_mutation_json = excluded.state_mutation_json,
+		content = excluded.content,
+		word_count = excluded.word_count,
+		burstiness_score = excluded.burstiness_score,
+		linter_passed = excluded.linter_passed;
+	`
+	if _, err := tx.ExecContext(ctx, chapterQuery,
+		c.ID, c.ProjectID, c.ChapterIndex, c.Title, c.CoreConflict,
+		string(beatsJSON), string(mutationJSON), c.Content, c.WordCount,
+		c.BurstinessScore, c.LinterPassed, c.CreatedAt,
+	); err != nil {
+		return nil, fmt.Errorf("insert chapter in tx: %w", err)
+	}
+
+	// 3. Atomically apply StateMutation to protagonist
+	if c.StateMutation.InventoryDelta != "" {
+		p.Protagonist.Inventory = strings.TrimSpace(p.Protagonist.Inventory + ", " + c.StateMutation.InventoryDelta)
+	}
+	if c.StateMutation.PowerDelta != "" {
+		p.Protagonist.NameAndLevel = strings.TrimSpace(p.Protagonist.NameAndLevel + " (" + c.StateMutation.PowerDelta + ")")
+	}
+	p.UpdatedAt = time.Now()
+
+	newProtagonistJSON, err := json.Marshal(p.Protagonist)
+	if err != nil {
+		return nil, fmt.Errorf("marshal updated protagonist: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE projects SET protagonist_json = ?, updated_at = ? WHERE id = ?`,
+		string(newProtagonistJSON), p.UpdatedAt, p.ID,
+	); err != nil {
+		return nil, fmt.Errorf("update project protagonist in tx: %w", err)
+	}
+
+	// 4. Update plot hooks status if target_chapter <= current chapter
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE plot_hooks SET status = 'FERMENTING' WHERE project_id = ? AND status = 'OPEN' AND target_chapter <= ?`,
+		projectID, c.ChapterIndex,
+	); err != nil {
+		return nil, fmt.Errorf("update plot hooks in tx: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit tx: %w", err)
+	}
+	tx = nil
+
+	return &p, nil
 }
 
 func (s *SQLiteStore) SaveChapter(ctx context.Context, c *domain.Chapter) error {

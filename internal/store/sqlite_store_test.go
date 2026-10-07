@@ -108,3 +108,84 @@ func TestSQLiteStore_CRUD(t *testing.T) {
 		t.Errorf("expected 1 hook, got %d", len(hooks))
 	}
 }
+
+func TestSQLiteStore_CommitChapterAtomic(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "commit_test.db")
+
+	s, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	p := &domain.Project{
+		ID:             "proj-atomic",
+		Title:          "修仙传",
+		TargetPlatform: "番茄",
+		Protagonist: domain.Protagonist{
+			NameAndLevel: "林凡 (练气一层)",
+			Inventory:    "粗布衣",
+		},
+	}
+	if err := s.SaveProject(ctx, p); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	// Add an open hook targeting chapter 2
+	hook := &domain.PlotHook{
+		ID:             "hook-atomic-1",
+		ProjectID:      "proj-atomic",
+		Title:          "药铺怪老头",
+		CreatedChapter: 1,
+		TargetChapter:  2,
+		Status:         domain.HookStatusOpen,
+	}
+	if err := s.SavePlotHook(ctx, hook); err != nil {
+		t.Fatalf("SavePlotHook failed: %v", err)
+	}
+
+	// Commit chapter 2 with state mutations
+	ch2 := &domain.Chapter{
+		ChapterIndex: 2,
+		Title:        "第二章 偶遇奇遇",
+		Content:      "林凡走入药铺，老头神秘一笑，塞给他一颗洗髓丹。",
+		StateMutation: domain.StateMutation{
+			InventoryDelta: "+洗髓丹x1",
+			PowerDelta:     "灵力初醒",
+		},
+	}
+
+	updatedProj, err := s.CommitChapter(ctx, "proj-atomic", ch2)
+	if err != nil {
+		t.Fatalf("CommitChapter failed: %v", err)
+	}
+
+	// 1. Verify updated protagonist
+	if updatedProj.Protagonist.Inventory != "粗布衣, +洗髓丹x1" {
+		t.Errorf("unexpected inventory: %s", updatedProj.Protagonist.Inventory)
+	}
+	if updatedProj.Protagonist.NameAndLevel != "林凡 (练气一层) (灵力初醒)" {
+		t.Errorf("unexpected name and level: %s", updatedProj.Protagonist.NameAndLevel)
+	}
+
+	// 2. Verify chapter was persisted
+	savedCh, err := s.GetChapter(ctx, "proj-atomic", 2)
+	if err != nil {
+		t.Fatalf("GetChapter failed: %v", err)
+	}
+	if savedCh.Title != "第二章 偶遇奇遇" {
+		t.Errorf("expected chapter title 第二章 偶遇奇遇, got %s", savedCh.Title)
+	}
+
+	// 3. Verify hook status was updated to FERMENTING since target_chapter <= 2
+	hooks, err := s.ListPlotHooks(ctx, "proj-atomic")
+	if err != nil {
+		t.Fatalf("ListPlotHooks failed: %v", err)
+	}
+	if len(hooks) != 1 || hooks[0].Status != domain.HookStatusFermenting {
+		t.Errorf("expected hook status FERMENTING, got %v", hooks[0].Status)
+	}
+}
+
