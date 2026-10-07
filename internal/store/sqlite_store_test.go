@@ -163,7 +163,7 @@ func TestSQLiteStore_CommitChapterAtomic(t *testing.T) {
 	}
 
 	// 1. Verify updated protagonist
-	if updatedProj.Protagonist.Inventory != "粗布衣, +洗髓丹x1" {
+	if updatedProj.Protagonist.Inventory != "粗布衣, 洗髓丹x1" {
 		t.Errorf("unexpected inventory: %s", updatedProj.Protagonist.Inventory)
 	}
 	if updatedProj.Protagonist.NameAndLevel != "林凡 (练气一层) (灵力初醒)" {

@@ -97,7 +97,7 @@ func TestServer_ConfigAndProjects(t *testing.T) {
 		Project domain.Project `json:"project"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &commitResp)
-	if commitResp.Project.Protagonist.Inventory != "沉渊古剑, +时空晶石x1" {
+	if commitResp.Project.Protagonist.Inventory != "沉渊古剑, 时空晶石x1" {
 		t.Errorf("unexpected mutated inventory: %s", commitResp.Project.Protagonist.Inventory)
 	}
 

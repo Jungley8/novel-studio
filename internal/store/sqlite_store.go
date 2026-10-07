@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
@@ -253,13 +252,12 @@ func (s *SQLiteStore) CommitChapter(ctx context.Context, projectID string, c *do
 		return nil, fmt.Errorf("insert chapter in tx: %w", err)
 	}
 
-	// 3. Atomically apply StateMutation to protagonist
-	if c.StateMutation.InventoryDelta != "" {
-		p.Protagonist.Inventory = strings.TrimSpace(p.Protagonist.Inventory + ", " + c.StateMutation.InventoryDelta)
+	// 3. Atomically apply StateMutation to protagonist via EntityLedger
+	updatedProtagonist, _, err := domain.ApplyStateMutation(p.Protagonist, c.StateMutation)
+	if err != nil {
+		return nil, fmt.Errorf("apply state mutation in tx: %w", err)
 	}
-	if c.StateMutation.PowerDelta != "" {
-		p.Protagonist.NameAndLevel = strings.TrimSpace(p.Protagonist.NameAndLevel + " (" + c.StateMutation.PowerDelta + ")")
-	}
+	p.Protagonist = updatedProtagonist
 	p.UpdatedAt = time.Now()
 
 	newProtagonistJSON, err := json.Marshal(p.Protagonist)
