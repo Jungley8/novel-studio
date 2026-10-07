@@ -130,6 +130,7 @@ type chatRequest struct {
 	Model         string                 `json:"model"`
 	Messages      []chatMessage          `json:"messages,omitempty"`
 	Input         interface{}            `json:"input,omitempty"`
+	Instructions  string                 `json:"instructions,omitempty"`
 	Temperature   float64                `json:"temperature"`
 	Stream        bool                   `json:"stream,omitempty"`
 	StreamOptions map[string]interface{} `json:"stream_options,omitempty"`
@@ -141,20 +142,97 @@ type chatResponse struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
-	OutputText string `json:"output_text"`
-	Output     []struct {
-		Content string `json:"content"`
-		Text    string `json:"text"`
-	} `json:"output"`
-	Usage *struct {
+	OutputText string          `json:"output_text"`
+	Output     json.RawMessage `json:"output"`
+	Usage      *struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
+		InputTokens      int `json:"input_tokens"`
+		OutputTokens     int `json:"output_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
 	} `json:"error"`
+}
+
+func extractOutputText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var items []map[string]interface{}
+	if err := json.Unmarshal(raw, &items); err == nil {
+		var sb strings.Builder
+		for _, item := range items {
+			if t, ok := item["text"].(string); ok && t != "" {
+				sb.WriteString(t)
+				continue
+			}
+			if c, ok := item["content"].(string); ok && c != "" {
+				sb.WriteString(c)
+				continue
+			}
+			if parts, ok := item["content"].([]interface{}); ok {
+				for _, p := range parts {
+					if pMap, ok := p.(map[string]interface{}); ok {
+						if t, ok := pMap["text"].(string); ok && t != "" {
+							sb.WriteString(t)
+						}
+					}
+				}
+			}
+		}
+		if sb.Len() > 0 {
+			return sb.String()
+		}
+	}
+
+	var single map[string]interface{}
+	if err := json.Unmarshal(raw, &single); err == nil {
+		if t, ok := single["text"].(string); ok && t != "" {
+			return t
+		}
+		if c, ok := single["content"].(string); ok && c != "" {
+			return c
+		}
+	}
+
+	var str string
+	if err := json.Unmarshal(raw, &str); err == nil {
+		return str
+	}
+
+	return ""
+}
+
+func extractTokenUsage(u *struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}) TokenUsage {
+	if u == nil {
+		return TokenUsage{}
+	}
+	prompt := u.PromptTokens
+	if prompt == 0 {
+		prompt = u.InputTokens
+	}
+	comp := u.CompletionTokens
+	if comp == 0 {
+		comp = u.OutputTokens
+	}
+	total := u.TotalTokens
+	if total == 0 {
+		total = prompt + comp
+	}
+	return TokenUsage{
+		PromptTokens:     prompt,
+		CompletionTokens: comp,
+		TotalTokens:      total,
+	}
 }
 
 func (c *HTTPLLMClient) ChatCompletion(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (string, error) {
@@ -174,16 +252,23 @@ func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 	}
 
 	endpoint := c.endpointFor(baseURL)
-	reqBody := chatRequest{
-		Model: model,
-		Messages: []chatMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userPrompt},
-		},
-		Temperature: temperature,
-	}
+	var reqBody chatRequest
 	if strings.HasSuffix(endpoint, "/responses") {
-		reqBody.Input = reqBody.Messages
+		reqBody = chatRequest{
+			Model:        model,
+			Instructions: systemPrompt,
+			Input:        userPrompt,
+			Temperature:  temperature,
+		}
+	} else {
+		reqBody = chatRequest{
+			Model: model,
+			Messages: []chatMessage{
+				{Role: "system", Content: systemPrompt},
+				{Role: "user", Content: userPrompt},
+			},
+			Temperature: temperature,
+		}
 	}
 
 	payload, err := json.Marshal(reqBody)
@@ -227,26 +312,83 @@ func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 		content = chatResp.Choices[0].Message.Content
 	} else if chatResp.OutputText != "" {
 		content = chatResp.OutputText
-	} else if len(chatResp.Output) > 0 {
-		if chatResp.Output[0].Content != "" {
-			content = chatResp.Output[0].Content
-		} else {
-			content = chatResp.Output[0].Text
-		}
+	} else if extracted := extractOutputText(chatResp.Output); extracted != "" {
+		content = extracted
 	} else {
 		return "", zeroUsage, errors.New("LLM returned no choices or output content")
 	}
 
-	var usage TokenUsage
-	if chatResp.Usage != nil {
-		usage = TokenUsage{
-			PromptTokens:     chatResp.Usage.PromptTokens,
-			CompletionTokens: chatResp.Usage.CompletionTokens,
-			TotalTokens:      chatResp.Usage.TotalTokens,
+	usage := extractTokenUsage(chatResp.Usage)
+	return content, usage, nil
+}
+
+func extractStreamDelta(rawMap map[string]interface{}) string {
+	// 1. choices[0].delta.content or text (Standard Chat Completions)
+	if choices, ok := rawMap["choices"].([]interface{}); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]interface{}); ok {
+			if delta, ok := choice["delta"].(map[string]interface{}); ok {
+				if content, ok := delta["content"].(string); ok && content != "" {
+					return content
+				}
+				if text, ok := delta["text"].(string); ok && text != "" {
+					return text
+				}
+			}
 		}
 	}
+	// 2. output_text directly
+	if ot, ok := rawMap["output_text"].(string); ok && ot != "" {
+		return ot
+	}
+	// 3. delta field (OpenAI Responses API emits string in response.output_text.delta or response.text.delta)
+	if deltaRaw, exists := rawMap["delta"]; exists {
+		if dStr, ok := deltaRaw.(string); ok && dStr != "" {
+			return dStr
+		}
+		if dMap, ok := deltaRaw.(map[string]interface{}); ok {
+			if c, ok := dMap["content"].(string); ok && c != "" {
+				return c
+			}
+			if t, ok := dMap["text"].(string); ok && t != "" {
+				return t
+			}
+		}
+	}
+	return ""
+}
 
-	return content, usage, nil
+func extractStreamUsage(rawMap map[string]interface{}) *TokenUsage {
+	usageRaw, ok := rawMap["usage"].(map[string]interface{})
+	if !ok {
+		if respMap, ok := rawMap["response"].(map[string]interface{}); ok {
+			usageRaw, _ = respMap["usage"].(map[string]interface{})
+		}
+	}
+	if usageRaw == nil {
+		return nil
+	}
+	getInt := func(keys ...string) int {
+		for _, k := range keys {
+			if v, ok := usageRaw[k].(float64); ok {
+				return int(v)
+			}
+		}
+		return 0
+	}
+	prompt := getInt("prompt_tokens", "input_tokens")
+	comp := getInt("completion_tokens", "output_tokens")
+	total := getInt("total_tokens")
+	if total == 0 {
+		total = prompt + comp
+	}
+	if prompt == 0 && comp == 0 && total == 0 {
+		return nil
+	}
+	return &TokenUsage{
+		PromptTokens:     prompt,
+		CompletionTokens: comp,
+		TotalTokens:      total,
+	}
 }
 
 func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
@@ -260,17 +402,25 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 	}
 
 	endpoint := c.endpointFor(baseURL)
-	reqBody := chatRequest{
-		Model: model,
-		Messages: []chatMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userPrompt},
-		},
-		Temperature: temperature,
-		Stream:      true,
-	}
+	var reqBody chatRequest
 	if strings.HasSuffix(endpoint, "/responses") {
-		reqBody.Input = reqBody.Messages
+		reqBody = chatRequest{
+			Model:        model,
+			Instructions: systemPrompt,
+			Input:        userPrompt,
+			Temperature:  temperature,
+			Stream:       true,
+		}
+	} else {
+		reqBody = chatRequest{
+			Model: model,
+			Messages: []chatMessage{
+				{Role: "system", Content: systemPrompt},
+				{Role: "user", Content: userPrompt},
+			},
+			Temperature: temperature,
+			Stream:      true,
+		}
 	}
 
 	payload, err := json.Marshal(reqBody)
@@ -327,47 +477,13 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 					return
 				}
 
-				var streamResp struct {
-					Choices []struct {
-						Delta struct {
-							Content string `json:"content"`
-						} `json:"delta"`
-					} `json:"choices"`
-					Delta struct {
-						Content string `json:"content"`
-						Text    string `json:"text"`
-					} `json:"delta"`
-					OutputText string `json:"output_text"`
-					Usage      *struct {
-						PromptTokens     int `json:"prompt_tokens"`
-						CompletionTokens int `json:"completion_tokens"`
-						TotalTokens      int `json:"total_tokens"`
-					} `json:"usage"`
-				}
-
-				if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
+				var rawMap map[string]interface{}
+				if err := json.Unmarshal([]byte(data), &rawMap); err != nil {
 					continue
 				}
 
-				var deltaText string
-				if len(streamResp.Choices) > 0 && streamResp.Choices[0].Delta.Content != "" {
-					deltaText = streamResp.Choices[0].Delta.Content
-				} else if streamResp.Delta.Content != "" {
-					deltaText = streamResp.Delta.Content
-				} else if streamResp.Delta.Text != "" {
-					deltaText = streamResp.Delta.Text
-				} else if streamResp.OutputText != "" {
-					deltaText = streamResp.OutputText
-				}
-
-				var usage *TokenUsage
-				if streamResp.Usage != nil {
-					usage = &TokenUsage{
-						PromptTokens:     streamResp.Usage.PromptTokens,
-						CompletionTokens: streamResp.Usage.CompletionTokens,
-						TotalTokens:      streamResp.Usage.TotalTokens,
-					}
-				}
+				deltaText := extractStreamDelta(rawMap)
+				usage := extractStreamUsage(rawMap)
 
 				if deltaText != "" || usage != nil {
 					out <- StreamChunk{
@@ -385,6 +501,7 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 
 	return out, nil
 }
+
 
 // LLMRouter orchestrates multi-provider role dispatch (Writer, Reasoner, Reviewer)
 // ensuring independent models can review drafts without self-judging bias.
