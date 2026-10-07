@@ -2,6 +2,8 @@ package engine_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/Jungley8/novel-studio/internal/engine"
@@ -54,3 +56,55 @@ func TestLLMRouter_RoleDispatch(t *testing.T) {
 		t.Errorf("expected defaultClient for unconfigured reasoner")
 	}
 }
+
+func TestHTTPLLMClient_OpenCodeAndResponsesCompatibility(t *testing.T) {
+	// 1. Mock server that returns Responses API format (output_text)
+	calledPath := ""
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/zen/go/v1/responses" {
+			// Responses API style response
+			_, _ = w.Write([]byte(`{"output_text":"来自 OpenCode Responses API 的推演正文","usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}`))
+		} else {
+			// Standard Chat Completions style response
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"来自 OpenCode Chat Completions 的正文"}}],"usage":{"prompt_tokens":5,"completion_tokens":15,"total_tokens":20}}`))
+		}
+	}))
+	defer ts.Close()
+
+	ctx := context.Background()
+
+	// Test A: User configures baseURL with /responses
+	clientA := engine.NewHTTPLLMClient(ts.URL+"/zen/go/v1/responses", "test-key")
+	gotA, usageA, errA := clientA.ChatCompletionWithUsage(ctx, "muse-spark-1.3-contributor", "sys", "user", 0.7)
+	if errA != nil {
+		t.Fatalf("ChatCompletionWithUsage with /responses failed: %v", errA)
+	}
+	if calledPath != "/zen/go/v1/responses" {
+		t.Errorf("expected path /zen/go/v1/responses, got %s", calledPath)
+	}
+	if gotA != "来自 OpenCode Responses API 的推演正文" {
+		t.Errorf("unexpected output: %s", gotA)
+	}
+	if usageA.TotalTokens != 30 {
+		t.Errorf("expected 30 total tokens, got %d", usageA.TotalTokens)
+	}
+
+	// Test B: User configures standard BaseURL
+	clientB := engine.NewHTTPLLMClient(ts.URL+"/zen/go/v1", "test-key")
+	gotB, usageB, errB := clientB.ChatCompletionWithUsage(ctx, "muse-spark-1.3-contributor", "sys", "user", 0.7)
+	if errB != nil {
+		t.Fatalf("ChatCompletionWithUsage with base URL failed: %v", errB)
+	}
+	if calledPath != "/zen/go/v1/chat/completions" {
+		t.Errorf("expected path /zen/go/v1/chat/completions, got %s", calledPath)
+	}
+	if gotB != "来自 OpenCode Chat Completions 的正文" {
+		t.Errorf("unexpected output: %s", gotB)
+	}
+	if usageB.TotalTokens != 20 {
+		t.Errorf("expected 20 total tokens, got %d", usageB.TotalTokens)
+	}
+}
+

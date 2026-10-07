@@ -68,12 +68,25 @@ func (c *HTTPLLMClient) UpdateCredentials(baseURL, apiKey string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	cleanURL := strings.TrimRight(baseURL, "/")
-	if cleanURL != "" && !strings.HasSuffix(cleanURL, "/v1") && !strings.Contains(cleanURL, "/v1/") {
-		cleanURL += "/v1"
-	}
+	cleanURL := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	c.baseURL = cleanURL
 	c.apiKey = apiKey
+}
+
+func (c *HTTPLLMClient) endpointFor(baseURL string) string {
+	clean := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if clean == "" {
+		return ""
+	}
+	// Direct path match
+	if strings.HasSuffix(clean, "/chat/completions") || strings.HasSuffix(clean, "/responses") {
+		return clean
+	}
+	// Path with /v1 or /go/v1 or custom gateway version prefix
+	if strings.HasSuffix(clean, "/v1") || strings.Contains(clean, "/v1/") || strings.Contains(clean, "/v1") {
+		return clean + "/chat/completions"
+	}
+	return clean + "/v1/chat/completions"
 }
 
 type chatMessage struct {
@@ -83,7 +96,8 @@ type chatMessage struct {
 
 type chatRequest struct {
 	Model         string                 `json:"model"`
-	Messages      []chatMessage          `json:"messages"`
+	Messages      []chatMessage          `json:"messages,omitempty"`
+	Input         interface{}            `json:"input,omitempty"`
 	Temperature   float64                `json:"temperature"`
 	Stream        bool                   `json:"stream,omitempty"`
 	StreamOptions map[string]interface{} `json:"stream_options,omitempty"`
@@ -95,6 +109,11 @@ type chatResponse struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
+	OutputText string `json:"output_text"`
+	Output     []struct {
+		Content string `json:"content"`
+		Text    string `json:"text"`
+	} `json:"output"`
 	Usage *struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
@@ -122,6 +141,7 @@ func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 		return "", zeroUsage, errors.New("missing API key: please configure your API key in settings")
 	}
 
+	endpoint := c.endpointFor(baseURL)
 	reqBody := chatRequest{
 		Model: model,
 		Messages: []chatMessage{
@@ -130,13 +150,15 @@ func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 		},
 		Temperature: temperature,
 	}
+	if strings.HasSuffix(endpoint, "/responses") {
+		reqBody.Input = reqBody.Messages
+	}
 
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
 		return "", zeroUsage, fmt.Errorf("marshal request failed: %w", err)
 	}
 
-	endpoint := baseURL + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return "", zeroUsage, fmt.Errorf("create request failed: %w", err)
@@ -169,8 +191,19 @@ func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 		return "", zeroUsage, fmt.Errorf("LLM API error: %s", chatResp.Error.Message)
 	}
 
-	if len(chatResp.Choices) == 0 {
-		return "", zeroUsage, errors.New("LLM returned no choices")
+	var content string
+	if len(chatResp.Choices) > 0 && chatResp.Choices[0].Message.Content != "" {
+		content = chatResp.Choices[0].Message.Content
+	} else if chatResp.OutputText != "" {
+		content = chatResp.OutputText
+	} else if len(chatResp.Output) > 0 {
+		if chatResp.Output[0].Content != "" {
+			content = chatResp.Output[0].Content
+		} else {
+			content = chatResp.Output[0].Text
+		}
+	} else {
+		return "", zeroUsage, errors.New("LLM returned no choices or output content")
 	}
 
 	var usage TokenUsage
@@ -182,7 +215,7 @@ func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 		}
 	}
 
-	return chatResp.Choices[0].Message.Content, usage, nil
+	return content, usage, nil
 }
 
 func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
@@ -195,6 +228,7 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 		return nil, errors.New("missing API key: please configure your API key in settings")
 	}
 
+	endpoint := c.endpointFor(baseURL)
 	reqBody := chatRequest{
 		Model: model,
 		Messages: []chatMessage{
@@ -203,9 +237,9 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 		},
 		Temperature: temperature,
 		Stream:      true,
-		StreamOptions: map[string]interface{}{
-			"include_usage": true,
-		},
+	}
+	if strings.HasSuffix(endpoint, "/responses") {
+		reqBody.Input = reqBody.Messages
 	}
 
 	payload, err := json.Marshal(reqBody)
@@ -213,7 +247,6 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 		return nil, fmt.Errorf("marshal stream request: %w", err)
 	}
 
-	endpoint := baseURL + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("create stream request: %w", err)
@@ -270,7 +303,12 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 							Content string `json:"content"`
 						} `json:"delta"`
 					} `json:"choices"`
-					Usage *struct {
+					Delta struct {
+						Content string `json:"content"`
+						Text    string `json:"text"`
+					} `json:"delta"`
+					OutputText string `json:"output_text"`
+					Usage      *struct {
 						PromptTokens     int `json:"prompt_tokens"`
 						CompletionTokens int `json:"completion_tokens"`
 						TotalTokens      int `json:"total_tokens"`
@@ -282,8 +320,14 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 				}
 
 				var deltaText string
-				if len(streamResp.Choices) > 0 {
+				if len(streamResp.Choices) > 0 && streamResp.Choices[0].Delta.Content != "" {
 					deltaText = streamResp.Choices[0].Delta.Content
+				} else if streamResp.Delta.Content != "" {
+					deltaText = streamResp.Delta.Content
+				} else if streamResp.Delta.Text != "" {
+					deltaText = streamResp.Delta.Text
+				} else if streamResp.OutputText != "" {
+					deltaText = streamResp.OutputText
 				}
 
 				var usage *TokenUsage
