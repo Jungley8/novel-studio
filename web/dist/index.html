@@ -137,7 +137,13 @@
             </div>
             <div class="flex items-center gap-2">
               <button @click="runLinter" class="px-2.5 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded border border-zinc-700 transition">
-                🔍 执行反AI味质检
+                🔍 反AI味质检
+              </button>
+              <button @click="reviewDraft" :disabled="!workbench.content || isReviewing" class="px-2.5 py-1 text-xs bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded border border-amber-500/30 font-medium transition disabled:opacity-50">
+                {{ isReviewing ? '主编终审中...' : '🛡️ AI主编终审' }}
+              </button>
+              <button v-if="reviewResult && reviewResult.verdict === 'REVISION_NEEDED'" @click="rewriteDraft" :disabled="isRewriting" class="px-2.5 py-1 text-xs bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 rounded border border-rose-500/40 font-medium transition disabled:opacity-50">
+                {{ isRewriting ? '定向返工中...' : '🔄 定向返工' }}
               </button>
               <button @click="commitChapter" :disabled="!workbench.content" class="px-3 py-1 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded disabled:opacity-50 transition">
                 ✅ 归档本章并更新状态机
@@ -180,6 +186,37 @@
               <div class="p-3 bg-zinc-900 border border-zinc-800 rounded space-y-1">
                 <span class="text-xs text-zinc-400">质检总结：</span>
                 <p class="text-[11px]" :class="linterReport.passed ? 'text-emerald-400' : 'text-amber-400'">{{ linterReport.message }}</p>
+              </div>
+
+              <!-- 主编终审 (Reviewer) 结果面板 -->
+              <div v-if="reviewResult" class="p-3 bg-zinc-900 border rounded space-y-2.5 transition" :class="reviewResult.verdict === 'ACCEPTED' ? 'border-emerald-500/40' : 'border-rose-500/40'">
+                <div class="flex justify-between items-center text-xs">
+                  <span class="font-bold flex items-center gap-1">
+                    <span v-if="reviewResult.verdict === 'ACCEPTED'" class="text-emerald-400">✓ 主编裁决: 通过</span>
+                    <span v-else class="text-rose-400">⚠️ 主编裁决: 需返工</span>
+                  </span>
+                  <span class="px-1.5 py-0.5 rounded text-[11px] font-mono font-bold" :class="reviewResult.score >= 80 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'">
+                    {{ reviewResult.score }} 分
+                  </span>
+                </div>
+
+                <!-- 问题清单 -->
+                <div v-if="reviewResult.issues && reviewResult.issues.length > 0" class="space-y-1">
+                  <div class="text-[10px] text-zinc-400 font-semibold">检出问题点 ({{ reviewResult.issues.length }})：</div>
+                  <ul class="text-[11px] text-rose-300 space-y-1 list-disc list-inside bg-zinc-950/40 p-1.5 rounded border border-zinc-800">
+                    <li v-for="(issue, i) in reviewResult.issues" :key="i">{{ issue }}</li>
+                  </ul>
+                </div>
+
+                <!-- 修改建议 -->
+                <div v-if="reviewResult.suggestions" class="p-2 bg-zinc-950/70 rounded text-[11px] text-zinc-300 space-y-1 border border-zinc-800/80">
+                  <div class="text-[10px] text-zinc-500 font-semibold">修改指示批注：</div>
+                  <div class="leading-relaxed whitespace-pre-wrap text-zinc-300">{{ reviewResult.suggestions }}</div>
+                </div>
+
+                <button v-if="reviewResult.verdict === 'REVISION_NEEDED'" @click="rewriteDraft" :disabled="isRewriting" class="w-full mt-1 py-1.5 text-xs bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded transition font-medium disabled:opacity-50">
+                  {{ isRewriting ? '正在按批注定向重写...' : '🔄 一键定向返工重写' }}
+                </button>
               </div>
             </div>
           </div>
@@ -257,7 +294,12 @@
           <div v-for="c in chapters" :key="c.id" class="p-4 bg-zinc-900 border border-zinc-800 rounded-lg space-y-2">
             <div class="flex justify-between items-center">
               <span class="text-sm font-bold text-amber-400">第 {{ c.chapter_index }} 章：{{ c.title }}</span>
-              <span class="text-xs text-zinc-500 font-mono">{{ c.word_count }} 字 | 突发度 {{ c.burstiness_score }} 分</span>
+              <div class="flex items-center gap-2">
+                <span v-if="c.review" class="text-[10px] px-2 py-0.5 rounded font-mono font-medium" :class="c.review.verdict === 'ACCEPTED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'">
+                  主审: {{ c.review.score }}分 ({{ c.review.verdict }})
+                </span>
+                <span class="text-xs text-zinc-500 font-mono">{{ c.word_count }} 字 | 突发度 {{ c.burstiness_score }} 分</span>
+              </div>
             </div>
             <p class="text-xs text-zinc-400">冲突：{{ c.core_conflict }}</p>
             <div class="text-xs text-zinc-300 bg-zinc-950 p-2.5 rounded border border-zinc-800/80 font-serif line-clamp-3">
@@ -374,6 +416,10 @@
           passed: true,
           message: '就绪'
         });
+
+        const reviewResult = ref(null);
+        const isReviewing = ref(false);
+        const isRewriting = ref(false);
 
         const nextChapterIndex = computed(() => chapters.value.length + 1);
 
@@ -522,6 +568,51 @@
           }
         };
 
+        const reviewDraft = async () => {
+          if (!currentProject.value || !workbench.value.content) return alert('请先生成或输入正文草稿');
+          isReviewing.value = true;
+          try {
+            const res = await api('/api/projects/' + currentProject.value.id + '/review-draft', {
+              method: 'POST',
+              body: JSON.stringify({
+                chapter_index: nextChapterIndex.value,
+                beats: workbench.value.beats,
+                draft_text: workbench.value.content
+              })
+            });
+            reviewResult.value = res;
+          } catch (e) {
+            alert('主编终审失败: ' + e.message);
+          } finally {
+            isReviewing.value = false;
+          }
+        };
+
+        const rewriteDraft = async () => {
+          if (!currentProject.value || !workbench.value.content || !reviewResult.value) return;
+          isRewriting.value = true;
+          try {
+            const res = await api('/api/projects/' + currentProject.value.id + '/rewrite-draft', {
+              method: 'POST',
+              body: JSON.stringify({
+                chapter_index: nextChapterIndex.value,
+                original_draft: workbench.value.content,
+                review: reviewResult.value
+              })
+            });
+            if (res.content) {
+              workbench.value.content = res.content;
+              await runLinter();
+              // 自动触发新一轮复审评估
+              await reviewDraft();
+            }
+          } catch (e) {
+            alert('定向返工重写失败: ' + e.message);
+          } finally {
+            isRewriting.value = false;
+          }
+        };
+
         const commitChapter = async () => {
           if (!currentProject.value || !workbench.value.content) return;
           try {
@@ -535,7 +626,8 @@
                 state_mutation: workbench.value.stateMutation,
                 content: workbench.value.content,
                 burstiness_score: linterReport.value.burstiness_score,
-                linter_passed: linterReport.value.passed
+                linter_passed: linterReport.value.passed,
+                review: reviewResult.value
               })
             });
             if (res.project) {
@@ -544,6 +636,7 @@
             alert('第 ' + nextChapterIndex.value + ' 章归档成功！状态机已结算！');
             workbench.value.content = '';
             workbench.value.coreConflict = '';
+            reviewResult.value = null;
             await selectProject(currentProject.value.id);
           } catch (e) {
             alert('归档失败: ' + e.message);
@@ -607,6 +700,9 @@
           newProjectForm,
           workbench,
           linterReport,
+          reviewResult,
+          isReviewing,
+          isRewriting,
           nextChapterIndex,
           onProjectChange,
           createProject,
@@ -614,6 +710,8 @@
           deriveBeats,
           renderScene,
           runLinter,
+          reviewDraft,
+          rewriteDraft,
           commitChapter,
           createPlotHook,
           updatePlotHook,

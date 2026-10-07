@@ -92,6 +92,23 @@ func (h *PlotHook) Validate() error {
 	return nil
 }
 
+// ReviewVerdict indicates whether a chapter draft passes the editor review.
+type ReviewVerdict string
+
+const (
+	ReviewVerdictAccepted ReviewVerdict = "ACCEPTED"
+	ReviewVerdictRevision ReviewVerdict = "REVISION_NEEDED"
+)
+
+// ReviewResult encapsulates the exact-body editor review output.
+type ReviewResult struct {
+	Verdict     ReviewVerdict `json:"verdict"`
+	Score       int           `json:"score"` // 1-100
+	Issues      []string      `json:"issues"`
+	Suggestions string        `json:"suggestions"`
+	ReviewedAt  time.Time     `json:"reviewed_at"`
+}
+
 // Chapter represents a generated or drafted chapter.
 type Chapter struct {
 	ID              string        `json:"id"`
@@ -105,6 +122,7 @@ type Chapter struct {
 	WordCount       int           `json:"word_count"`
 	BurstinessScore int           `json:"burstiness_score"`
 	LinterPassed    bool          `json:"linter_passed"`
+	Review          *ReviewResult `json:"review,omitempty"`
 	CreatedAt       time.Time     `json:"created_at"`
 }
 

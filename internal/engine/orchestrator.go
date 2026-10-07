@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
 )
@@ -138,6 +139,117 @@ func (o *Orchestrator) RenderScene(
 	)
 
 	return o.client.ChatCompletion(ctx, writerModel, systemPrompt, userPrompt, 0.75)
+}
+
+func (o *Orchestrator) ReviewDraft(
+	ctx context.Context,
+	reviewerModel string,
+	project *domain.Project,
+	chapterIndex int,
+	beats []domain.SceneBeat,
+	draftText string,
+) (*domain.ReviewResult, error) {
+	systemPrompt := `你是一名极其挑剔、拥有十余年网文编辑经验的总编审（Reviewer）。
+你的任务是对送审的裸正文草稿进行严格审查，寻找：
+1. 战力崩坏与设定矛盾：主角是否使用了物品栏中没有的道具？是否违反了世界法则？
+2. 节拍偏差：是否漏掉了规定的核心动作或反转？
+3. 声口与AI套路：是否有AI模式化空洞叙述或情绪悬浮？
+
+输出格式：必须且仅输出标准 JSON：
+{
+  "verdict": "ACCEPTED" 或 "REVISION_NEEDED",
+  "score": 1到100的整数 (80分及以上方可通过),
+  "issues": ["具体问题1", "具体问题2"],
+  "suggestions": "具体的修改整改指令"
+}`
+
+	beatsJSON, _ := json.Marshal(beats)
+
+	userPrompt := fmt.Sprintf(`【送审章节】《%s》 第 %d 章
+【世界法则公理】%s
+【主角当前状态】%s | 物品栏: %s
+【要求履行的节拍】%s
+
+【待审正文草稿】
+%s
+
+请给出你的审阅判决。`,
+		project.Title, chapterIndex,
+		project.WorldRules,
+		project.Protagonist.NameAndLevel, project.Protagonist.Inventory,
+		string(beatsJSON),
+		draftText,
+	)
+
+	resp, err := o.client.ChatCompletion(ctx, reviewerModel, systemPrompt, userPrompt, 0.3)
+	if err != nil {
+		return nil, fmt.Errorf("review draft LLM call failed: %w", err)
+	}
+
+	cleanJSON := extractJSON(resp)
+	var out struct {
+		Verdict     domain.ReviewVerdict `json:"verdict"`
+		Score       int                  `json:"score"`
+		Issues      []string             `json:"issues"`
+		Suggestions string               `json:"suggestions"`
+	}
+	if err := json.Unmarshal([]byte(cleanJSON), &out); err != nil {
+		return nil, fmt.Errorf("parse review JSON failed (raw: %s): %w", resp, err)
+	}
+
+	if out.Verdict != domain.ReviewVerdictAccepted && out.Verdict != domain.ReviewVerdictRevision {
+		if out.Score >= 80 {
+			out.Verdict = domain.ReviewVerdictAccepted
+		} else {
+			out.Verdict = domain.ReviewVerdictRevision
+		}
+	}
+
+	return &domain.ReviewResult{
+		Verdict:     out.Verdict,
+		Score:       out.Score,
+		Issues:      out.Issues,
+		Suggestions: out.Suggestions,
+		ReviewedAt:  time.Now(),
+	}, nil
+}
+
+func (o *Orchestrator) RewriteDraft(
+	ctx context.Context,
+	writerModel string,
+	project *domain.Project,
+	chapterIndex int,
+	originalDraft string,
+	review *domain.ReviewResult,
+) (string, error) {
+	systemPrompt := `你是一名顶级网文精修专家。你的任务是根据主编审（Reviewer）的具体驳回意见，对原草稿进行定向精修与重写。
+规则：
+1. 严格修复主编指出的所有问题，落实整改意见。
+2. 保持优秀句段，重构被指出的机械或违规段落。
+3. 严格遵循 Show, don't tell，杜绝AI套话。直接输出重修后的正文。`
+
+	issuesText := "无明显硬伤"
+	if len(review.Issues) > 0 {
+		issuesText = "- " + strings.Join(review.Issues, "\n- ")
+	}
+
+	userPrompt := fmt.Sprintf(`【重修任务】《%s》 第 %d 章
+【主编评分】%d 分 | 判决: %s
+【审查指出的硬伤】
+%s
+【整改建议】%s
+
+【原始草稿】
+%s
+
+请输出精修重构后的完整正文。`,
+		project.Title, chapterIndex,
+		review.Score, review.Verdict,
+		issuesText, review.Suggestions,
+		originalDraft,
+	)
+
+	return o.client.ChatCompletion(ctx, writerModel, systemPrompt, userPrompt, 0.7)
 }
 
 func extractJSON(s string) string {

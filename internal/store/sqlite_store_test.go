@@ -188,4 +188,3 @@ func TestSQLiteStore_CommitChapterAtomic(t *testing.T) {
 		t.Errorf("expected hook status FERMENTING, got %v", hooks[0].Status)
 	}
 }
-

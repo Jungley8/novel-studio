@@ -74,6 +74,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) routes() {
 	// API routes
+	s.mux.HandleFunc("/api/health", s.handleHealth)
 	s.mux.HandleFunc("/api/config", s.handleConfig)
 	s.mux.HandleFunc("/api/linter/analyze", s.handleLinter)
 	s.mux.HandleFunc("/api/projects", s.handleProjects)
@@ -240,6 +241,10 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 		s.handleDeriveBeats(w, r, projectID)
 	case "render-scene":
 		s.handleRenderScene(w, r, projectID)
+	case "review-draft":
+		s.handleReviewDraft(w, r, projectID)
+	case "rewrite-draft":
+		s.handleRewriteDraft(w, r, projectID)
 	case "export":
 		if len(parts) >= 3 {
 			s.handleProjectExport(w, r, projectID, parts[2])
@@ -448,4 +453,86 @@ func (s *Server) handleProjectExport(w http.ResponseWriter, r *http.Request, pro
 	default:
 		errorResponse(w, http.StatusBadRequest, "unsupported export format")
 	}
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"status":  "ok",
+		"service": "novel-studio",
+		"time":    time.Now().Format(time.RFC3339),
+	})
+}
+
+func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		ChapterIndex int                `json:"chapter_index"`
+		Beats        []domain.SceneBeat `json:"beats"`
+		DraftText    string             `json:"draft_text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	p, err := s.store.GetProject(r.Context(), projectID)
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	if s.orch == nil {
+		errorResponse(w, http.StatusInternalServerError, "orchestrator not configured")
+		return
+	}
+
+	res, err := s.orch.ReviewDraft(r.Context(), s.cfg.ReasoningModel, p, req.ChapterIndex, req.Beats, req.DraftText)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, res)
+}
+
+func (s *Server) handleRewriteDraft(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		ChapterIndex  int                  `json:"chapter_index"`
+		OriginalDraft string               `json:"original_draft"`
+		Review        *domain.ReviewResult `json:"review"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Review == nil {
+		errorResponse(w, http.StatusBadRequest, "review result is required for rewriting")
+		return
+	}
+
+	p, err := s.store.GetProject(r.Context(), projectID)
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	if s.orch == nil {
+		errorResponse(w, http.StatusInternalServerError, "orchestrator not configured")
+		return
+	}
+
+	rewritten, err := s.orch.RewriteDraft(r.Context(), s.cfg.WriterModel, p, req.ChapterIndex, req.OriginalDraft, req.Review)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]string{"content": rewritten})
 }

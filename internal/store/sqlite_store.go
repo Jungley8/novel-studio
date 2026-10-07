@@ -62,6 +62,7 @@ func (s *SQLiteStore) migrate() error {
 		word_count INTEGER DEFAULT 0,
 		burstiness_score INTEGER DEFAULT 0,
 		linter_passed BOOLEAN DEFAULT 0,
+		review_json TEXT,
 		created_at TIMESTAMP NOT NULL,
 		FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
 		UNIQUE(project_id, chapter_index)
@@ -82,8 +83,12 @@ func (s *SQLiteStore) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_chapters_project ON chapters(project_id, chapter_index);
 	CREATE INDEX IF NOT EXISTS idx_hooks_project ON plot_hooks(project_id, status);
 	`
-	_, err := s.db.Exec(schema)
-	return err
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	// Backward compatible schema patch for existing DBs
+	_, _ = s.db.Exec(`ALTER TABLE chapters ADD COLUMN review_json TEXT;`)
+	return nil
 }
 
 func (s *SQLiteStore) SaveProject(ctx context.Context, p *domain.Project) error {
@@ -216,12 +221,19 @@ func (s *SQLiteStore) CommitChapter(ctx context.Context, projectID string, c *do
 	}
 	c.WordCount = len([]rune(c.Content))
 
+	var reviewJSON string
+	if c.Review != nil {
+		if rBytes, err := json.Marshal(c.Review); err == nil {
+			reviewJSON = string(rBytes)
+		}
+	}
+
 	chapterQuery := `
 	INSERT INTO chapters (
 		id, project_id, chapter_index, title, core_conflict,
 		beats_json, state_mutation_json, content, word_count,
-		burstiness_score, linter_passed, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		burstiness_score, linter_passed, review_json, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id, chapter_index) DO UPDATE SET
 		title = excluded.title,
 		core_conflict = excluded.core_conflict,
@@ -230,12 +242,13 @@ func (s *SQLiteStore) CommitChapter(ctx context.Context, projectID string, c *do
 		content = excluded.content,
 		word_count = excluded.word_count,
 		burstiness_score = excluded.burstiness_score,
-		linter_passed = excluded.linter_passed;
+		linter_passed = excluded.linter_passed,
+		review_json = excluded.review_json;
 	`
 	if _, err := tx.ExecContext(ctx, chapterQuery,
 		c.ID, c.ProjectID, c.ChapterIndex, c.Title, c.CoreConflict,
 		string(beatsJSON), string(mutationJSON), c.Content, c.WordCount,
-		c.BurstinessScore, c.LinterPassed, c.CreatedAt,
+		c.BurstinessScore, c.LinterPassed, reviewJSON, c.CreatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("insert chapter in tx: %w", err)
 	}
@@ -299,12 +312,19 @@ func (s *SQLiteStore) SaveChapter(ctx context.Context, c *domain.Chapter) error 
 	}
 	c.WordCount = len([]rune(c.Content))
 
+	var reviewJSON string
+	if c.Review != nil {
+		if rBytes, err := json.Marshal(c.Review); err == nil {
+			reviewJSON = string(rBytes)
+		}
+	}
+
 	query := `
 	INSERT INTO chapters (
 		id, project_id, chapter_index, title, core_conflict,
 		beats_json, state_mutation_json, content, word_count,
-		burstiness_score, linter_passed, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		burstiness_score, linter_passed, review_json, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id, chapter_index) DO UPDATE SET
 		title = excluded.title,
 		core_conflict = excluded.core_conflict,
@@ -313,12 +333,13 @@ func (s *SQLiteStore) SaveChapter(ctx context.Context, c *domain.Chapter) error 
 		content = excluded.content,
 		word_count = excluded.word_count,
 		burstiness_score = excluded.burstiness_score,
-		linter_passed = excluded.linter_passed;
+		linter_passed = excluded.linter_passed,
+		review_json = excluded.review_json;
 	`
 	_, err = s.db.ExecContext(ctx, query,
 		c.ID, c.ProjectID, c.ChapterIndex, c.Title, c.CoreConflict,
 		string(beatsJSON), string(mutationJSON), c.Content, c.WordCount,
-		c.BurstinessScore, c.LinterPassed, c.CreatedAt,
+		c.BurstinessScore, c.LinterPassed, reviewJSON, c.CreatedAt,
 	)
 	return err
 }
@@ -326,17 +347,17 @@ func (s *SQLiteStore) SaveChapter(ctx context.Context, c *domain.Chapter) error 
 func (s *SQLiteStore) GetChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.Chapter, error) {
 	query := `
 	SELECT id, project_id, chapter_index, title, core_conflict, beats_json, state_mutation_json,
-	       content, word_count, burstiness_score, linter_passed, created_at
+	       content, word_count, burstiness_score, linter_passed, COALESCE(review_json, ''), created_at
 	FROM chapters WHERE project_id = ? AND chapter_index = ?;
 	`
 	row := s.db.QueryRowContext(ctx, query, projectID, chapterIndex)
 
 	var c domain.Chapter
-	var beatsJSON, mutationJSON string
+	var beatsJSON, mutationJSON, reviewJSON string
 	if err := row.Scan(
 		&c.ID, &c.ProjectID, &c.ChapterIndex, &c.Title, &c.CoreConflict,
 		&beatsJSON, &mutationJSON, &c.Content, &c.WordCount,
-		&c.BurstinessScore, &c.LinterPassed, &c.CreatedAt,
+		&c.BurstinessScore, &c.LinterPassed, &reviewJSON, &c.CreatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("chapter not found")
@@ -346,13 +367,19 @@ func (s *SQLiteStore) GetChapter(ctx context.Context, projectID string, chapterI
 
 	_ = json.Unmarshal([]byte(beatsJSON), &c.Beats)
 	_ = json.Unmarshal([]byte(mutationJSON), &c.StateMutation)
+	if reviewJSON != "" {
+		var rev domain.ReviewResult
+		if err := json.Unmarshal([]byte(reviewJSON), &rev); err == nil {
+			c.Review = &rev
+		}
+	}
 	return &c, nil
 }
 
 func (s *SQLiteStore) ListChapters(ctx context.Context, projectID string) ([]*domain.Chapter, error) {
 	query := `
 	SELECT id, project_id, chapter_index, title, core_conflict, beats_json, state_mutation_json,
-	       content, word_count, burstiness_score, linter_passed, created_at
+	       content, word_count, burstiness_score, linter_passed, COALESCE(review_json, ''), created_at
 	FROM chapters WHERE project_id = ? ORDER BY chapter_index ASC;
 	`
 	rows, err := s.db.QueryContext(ctx, query, projectID)
@@ -364,16 +391,22 @@ func (s *SQLiteStore) ListChapters(ctx context.Context, projectID string) ([]*do
 	var list []*domain.Chapter
 	for rows.Next() {
 		var c domain.Chapter
-		var beatsJSON, mutationJSON string
+		var beatsJSON, mutationJSON, reviewJSON string
 		if err := rows.Scan(
 			&c.ID, &c.ProjectID, &c.ChapterIndex, &c.Title, &c.CoreConflict,
 			&beatsJSON, &mutationJSON, &c.Content, &c.WordCount,
-			&c.BurstinessScore, &c.LinterPassed, &c.CreatedAt,
+			&c.BurstinessScore, &c.LinterPassed, &reviewJSON, &c.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(beatsJSON), &c.Beats)
 		_ = json.Unmarshal([]byte(mutationJSON), &c.StateMutation)
+		if reviewJSON != "" {
+			var rev domain.ReviewResult
+			if err := json.Unmarshal([]byte(reviewJSON), &rev); err == nil {
+				c.Review = &rev
+			}
+		}
 		list = append(list, &c)
 	}
 	return list, rows.Err()

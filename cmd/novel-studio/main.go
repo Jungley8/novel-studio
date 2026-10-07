@@ -12,6 +12,7 @@ import (
 	"github.com/Jungley8/novel-studio/internal/desktop"
 	"github.com/Jungley8/novel-studio/internal/engine"
 	"github.com/Jungley8/novel-studio/internal/server"
+	"github.com/Jungley8/novel-studio/internal/service"
 	"github.com/Jungley8/novel-studio/internal/store"
 )
 
@@ -26,6 +27,20 @@ func main() {
 	}
 	defaultDataDir := filepath.Join(defaultHome, ".novel-studio")
 
+	// 0. 支持直接子命令路由 (service, doctor)
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "service":
+			os.Exit(service.RunCLI(os.Args[2:], defaultDataDir, 28980))
+		case "doctor":
+			os.Exit(service.RunDoctorCLI(os.Args[2:], defaultDataDir, 28980))
+		case "help":
+			printUsage()
+			os.Exit(0)
+		}
+	}
+
+	flag.Usage = printUsage
 	portFlag := flag.Int("port", 0, "HTTP 服务端口号 (默认读取配置或 28980)")
 	dataDirFlag := flag.String("data-dir", defaultDataDir, "数据与状态机持久化目录")
 	noBrowserFlag := flag.Bool("no-browser", false, "启动后不自动唤起桌面浏览器 (适合服务器或无头模式)")
@@ -117,4 +132,22 @@ func main() {
 		fmt.Fprintf(os.Stderr, "[NovelStudio] 优雅停机超时或异常: %v\n", err)
 	}
 	fmt.Println("[NovelStudio] 服务已安全关闭。")
+}
+
+func printUsage() {
+	fmt.Fprintf(os.Stderr, "NovelStudio (故事工厂) %s - AI 小说工业化创作桌面工作台\n\n", version)
+	fmt.Fprintf(os.Stderr, "用法:\n")
+	fmt.Fprintf(os.Stderr, "  novel-studio [选项]                 直接启动桌面工作台与本地服务\n")
+	fmt.Fprintf(os.Stderr, "  novel-studio service <子命令>       macOS launchd 原生常驻后台守护服务\n")
+	fmt.Fprintf(os.Stderr, "  novel-studio doctor                 运行环境依赖、数据库与健康探针自检报告\n\n")
+	fmt.Fprintf(os.Stderr, "服务子命令 (novel-studio service <cmd>):\n")
+	fmt.Fprintf(os.Stderr, "  install    注册并加载 LaunchAgent 后台守护服务 (开机自启)\n")
+	fmt.Fprintf(os.Stderr, "  uninstall  注销并移除后台服务\n")
+	fmt.Fprintf(os.Stderr, "  start      启动后台服务\n")
+	fmt.Fprintf(os.Stderr, "  stop       停止后台服务\n")
+	fmt.Fprintf(os.Stderr, "  status     检查后台服务存活与健康探针状态\n")
+	fmt.Fprintf(os.Stderr, "  open       打开浏览器访问运行看板\n")
+	fmt.Fprintf(os.Stderr, "  logs       查看最近的标准与错误日志\n\n")
+	fmt.Fprintf(os.Stderr, "选项:\n")
+	flag.PrintDefaults()
 }

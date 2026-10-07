@@ -74,3 +74,52 @@ func TestOrchestrator_RenderScene(t *testing.T) {
 		t.Errorf("unexpected content: %s", content)
 	}
 }
+
+func TestOrchestrator_ReviewDraft(t *testing.T) {
+	mockJSON := `{
+		"verdict": "REVISION_NEEDED",
+		"score": 72,
+		"issues": ["主角未携带玄重尺却施展了该兵器技能"],
+		"suggestions": "改为徒手拳法"
+	}`
+	mock := &mockLLMClient{response: mockJSON}
+	orch := engine.NewOrchestrator(mock)
+
+	p := &domain.Project{Title: "斗破苍穹"}
+	rev, err := orch.ReviewDraft(context.Background(), "deepseek-reasoner", p, 1, nil, "草稿正文...")
+	if err != nil {
+		t.Fatalf("ReviewDraft failed: %v", err)
+	}
+
+	if rev.Verdict != domain.ReviewVerdictRevision {
+		t.Errorf("expected REVISION_NEEDED, got %s", rev.Verdict)
+	}
+	if rev.Score != 72 {
+		t.Errorf("expected score 72, got %d", rev.Score)
+	}
+	if len(rev.Issues) != 1 {
+		t.Errorf("expected 1 issue, got %d", len(rev.Issues))
+	}
+}
+
+func TestOrchestrator_RewriteDraft(t *testing.T) {
+	mock := &mockLLMClient{response: "重修后的正文：陆青翻掌成印，呼啸破风。"}
+	orch := engine.NewOrchestrator(mock)
+
+	p := &domain.Project{Title: "斗破苍穹"}
+	rev := &domain.ReviewResult{
+		Verdict:     domain.ReviewVerdictRevision,
+		Score:       70,
+		Issues:      []string{"需增加拳法动作"},
+		Suggestions: "改为八极崩",
+	}
+
+	rewritten, err := orch.RewriteDraft(context.Background(), "deepseek-chat", p, 1, "旧草稿", rev)
+	if err != nil {
+		t.Fatalf("RewriteDraft failed: %v", err)
+	}
+
+	if rewritten != "重修后的正文：陆青翻掌成印，呼啸破风。" {
+		t.Errorf("unexpected rewritten text: %s", rewritten)
+	}
+}
