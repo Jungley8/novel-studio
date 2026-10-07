@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -98,6 +99,20 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 		callbacksText = "\n\n" + horizon.HistoricalCallbacks
 	}
 
+	var volumeContext string
+	if horizon.CurrentVolume != nil {
+		volumeContext = fmt.Sprintf("\n【当前分卷主线任务】\n第 %d 卷：《%s》\n- 卷核心主线目标：%s\n- 卷终极大高潮：%s\n本章必须严格服务于本卷主线因果推进。\n",
+			horizon.CurrentVolume.VolumeIndex, horizon.CurrentVolume.Title,
+			horizon.CurrentVolume.CoreGoal, horizon.CurrentVolume.Climax)
+	}
+
+	var powerContext string
+	if horizon.ActivePowerTier != nil {
+		powerContext = fmt.Sprintf("\n【当前战力境界法则】\n- 境界：%s (%s)\n- 升级瓶颈：%s\n- 天道代价：%s\n",
+			horizon.ActivePowerTier.Realm, horizon.ActivePowerTier.Description,
+			horizon.ActivePowerTier.Bottleneck, horizon.ActivePowerTier.Drawback)
+	}
+
 	project := horizon.Project
 	userPrompt := fmt.Sprintf(`【作品信息】
 书名：《%s》
@@ -105,7 +120,7 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 当前章节序号：第 %d 章
 
 【世界公理与不可违背法则】
-%s
+%s%s%s
 
 【主角当前状态机】
 姓名与等级：%s
@@ -123,7 +138,7 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 
 请推演输出严格合法的 JSON。`,
 		project.Title, project.TargetPlatform, horizon.TargetChapter,
-		horizon.WorldRules,
+		horizon.WorldRules, volumeContext, powerContext,
 		horizon.ProtagonistState.NameAndLevel, horizon.ProtagonistState.Inventory, horizon.ProtagonistState.CoreGoal,
 		rollingCanon, callbacksText,
 		hooksSummary,
@@ -434,4 +449,115 @@ func extractJSON(s string) string {
 		return s[start : end+1]
 	}
 	return s
+}
+
+// FrameworkBootstrapRequest encapsulates inputs required to deduce a comprehensive macro framework.
+type FrameworkBootstrapRequest struct {
+	Title          string `json:"title"`
+	TargetPlatform string `json:"target_platform"`
+	CoreConcept    string `json:"core_concept"`
+}
+
+// BootstrapFramework prompts the reasoning engine to deduce the entire world bible,
+// power ladder, factions, dramatis personae, volume arcs, and seed plot hooks.
+func (o *Orchestrator) BootstrapFramework(
+	ctx context.Context,
+	reasoningModel string,
+	req FrameworkBootstrapRequest,
+) (*domain.ProjectFramework, error) {
+	if strings.TrimSpace(req.Title) == "" {
+		return nil, errors.New("title cannot be empty")
+	}
+	platform := req.TargetPlatform
+	if strings.TrimSpace(platform) == "" {
+		platform = "通用网文"
+	}
+
+	systemPrompt := `你是一名网络小说白金级架构总策划兼世界观架构大师。
+你的任务是根据作者提供的书名、目标平台与核心灵感，推演并构建出一套宏大、自洽、严密且极具商业与文学张力的全书顶层架构总纲（Project Framework）。
+
+推演法则：
+1. 核心立意与世界公理 (World Axioms)：提炼 3-5 条底层不可逆的世界运转公理与天道真相（反乌托邦/克苏鲁/假仙真魔/因果宿命）。
+2. 战力阶梯 (Power Ladder)：设计 6-9 个严密境界，详细定义每个境界的能力、突破瓶颈与反噬代价（拒绝廉价数值堆砌）。
+3. 核心势力 (Factions)：设计 3-4 个主要势力宗门，明确其立场、核心主张、独门手段与威胁级别。
+4. 关键人物谱系 (Key Characters)：设计 3-5 位与主角命运交织的关键角色（引路导师、宿敌死仇、亦正亦邪同盟、远古残魂）。
+5. 分卷宏观大纲 (Volume Arcs)：设计前 3-4 卷的大纲，每卷包含：卷序号、卷名、卷主题、核心主线目标、终极大高潮情节、预估章数与核心回收伏笔。
+6. 开局种子伏笔 (Seed Hooks)：设计 3-5 个开局前 3 章埋下的长线伏笔（包含目标回收章节 10-60 章）。
+
+输出格式：必须且仅输出标准合法的纯 JSON 格式：
+{
+  "theme_premise": "核心主旨一句话描述",
+  "world_axioms": ["世界公理1", "世界公理2", "天道残酷真相3"],
+  "power_ladder": [
+    {
+      "realm": "境界名，如：练气期",
+      "description": "境界能力特征",
+      "bottleneck": "突破门槛与关卡",
+      "drawback": "突破代价或天道反噬"
+    }
+  ],
+  "factions": [
+    {
+      "name": "势力名称",
+      "alignment": "阵营立场",
+      "doctrine": "核心功法主张与手段",
+      "threat_level": "威胁级别：中等/极高/灭顶之灾"
+    }
+  ],
+  "key_characters": [
+    {
+      "name": "姓名",
+      "role": "领路人/宿敌/同盟",
+      "realm": "初始境界",
+      "goal": "核心动机",
+      "fate_arc": "宿命悲剧或终局"
+    }
+  ],
+  "volume_arcs": [
+    {
+      "volume_index": 1,
+      "title": "卷名",
+      "theme": "卷主题",
+      "core_goal": "本卷必须达成的核心目标",
+      "climax": "本卷终极大高潮情节",
+      "estimated_chapters": 40,
+      "key_payoffs": ["本卷回收的伏笔1"]
+    }
+  ],
+  "seed_hooks": [
+    {
+      "title": "伏笔标题",
+      "details": "伏笔具体细节与暗线线索",
+      "created_chapter": 1,
+      "target_chapter": 20,
+      "status": "OPEN"
+    }
+  ]
+}`
+
+	userPrompt := fmt.Sprintf(`【创世输入】
+书名：《%s》
+目标平台：%s
+核心脑洞与题材灵感：%s
+
+请推演并输出全书宏观创世总纲 JSON。`,
+		req.Title, platform, req.CoreConcept,
+	)
+
+	resp, err := o.client.ChatCompletion(ctx, reasoningModel, systemPrompt, userPrompt, 0.5)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap framework LLM call failed: %w", err)
+	}
+
+	cleanJSON, err := ExtractAndCleanJSON(resp)
+	if err != nil {
+		cleanJSON = extractJSON(resp)
+	}
+
+	var fw domain.ProjectFramework
+	if err := json.Unmarshal([]byte(cleanJSON), &fw); err != nil {
+		return nil, fmt.Errorf("parse framework JSON failed (raw: %s): %w", resp, err)
+	}
+
+	return &fw, nil
 }

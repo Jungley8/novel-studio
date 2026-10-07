@@ -99,6 +99,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/health", s.handleHealth)
 	s.mux.HandleFunc("/api/config", s.handleConfig)
 	s.mux.HandleFunc("/api/linter/analyze", s.handleLinter)
+	s.mux.HandleFunc("/api/projects/bootstrap", s.handleBootstrapProject)
 	s.mux.HandleFunc("/api/projects", s.handleProjects)
 	s.mux.HandleFunc("/api/projects/", s.handleProjectRoutes)
 	s.mux.HandleFunc("/api/hooks/", s.handleHookDelete)
@@ -345,6 +346,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 		s.handleReviewDraft(w, r, projectID)
 	case "rewrite-draft":
 		s.handleRewriteDraft(w, r, projectID)
+	case "framework":
+		s.handleProjectFramework(w, r, projectID, parts)
 	case "workshop":
 		if len(parts) >= 3 && parts[2] == "produce" {
 			s.handleWorkshopProduce(w, r, projectID)
@@ -712,4 +715,183 @@ func (s *Server) handleRewriteDraft(w http.ResponseWriter, r *http.Request, proj
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]string{"content": rewritten})
+}
+
+type BootstrapProjectRequest struct {
+	Title          string `json:"title"`
+	TargetPlatform string `json:"target_platform"`
+	Concept        string `json:"concept"`
+	ReasoningModel string `json:"reasoning_model,omitempty"`
+}
+
+func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+	var req BootstrapProjectRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Title) == "" {
+		errorResponse(w, http.StatusBadRequest, "project title cannot be empty")
+		return
+	}
+	reasoningModel := req.ReasoningModel
+	if reasoningModel == "" {
+		reasoningModel = s.cfg.ReasoningModel
+	}
+
+	fw, err := s.orch.BootstrapFramework(r.Context(), reasoningModel, engine.FrameworkBootstrapRequest{
+		Title:          req.Title,
+		TargetPlatform: req.TargetPlatform,
+		CoreConcept:    req.Concept,
+	})
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, "bootstrap framework failed: "+err.Error())
+		return
+	}
+
+	projectID := fmt.Sprintf("proj_%d", time.Now().UnixNano())
+	var worldRules strings.Builder
+	worldRules.WriteString("【天道法则与核心世界公理】\n")
+	for i, axiom := range fw.WorldAxioms {
+		worldRules.WriteString(fmt.Sprintf("%d. %s\n", i+1, axiom))
+	}
+	if len(fw.PowerLadder) > 0 {
+		worldRules.WriteString("\n【战力阶梯与突破反噬】\n")
+		for _, tier := range fw.PowerLadder {
+			worldRules.WriteString(fmt.Sprintf("- %s: 关隘[%s] | 代价[%s]\n", tier.Realm, tier.Bottleneck, tier.Drawback))
+		}
+	}
+
+	initialRealm := "练气一层"
+	if len(fw.PowerLadder) > 0 {
+		initialRealm = fw.PowerLadder[0].Realm
+	}
+	proj := &domain.Project{
+		ID:             projectID,
+		Title:          req.Title,
+		TargetPlatform: req.TargetPlatform,
+		WorldRules:     strings.TrimSpace(worldRules.String()),
+		Protagonist: domain.Protagonist{
+			NameAndLevel: fmt.Sprintf("主角 (%s)", initialRealm),
+			Inventory:    "残破黑铁, 粗布短衫",
+			CoreGoal:     fw.ThemePremise,
+			HealthStatus: "良好",
+		},
+		Framework: fw,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	if err := s.store.SaveProject(r.Context(), proj); err != nil {
+		errorResponse(w, http.StatusInternalServerError, "save project failed: "+err.Error())
+		return
+	}
+
+	// Auto-seed initial plot hooks into plot_hooks store
+	for i, sh := range fw.SeedHooks {
+		hook := &domain.PlotHook{
+			ID:             fmt.Sprintf("hook_%s_%d", projectID, i+1),
+			ProjectID:      projectID,
+			Title:          sh.Title,
+			Details:        sh.Details,
+			CreatedChapter: sh.CreatedChapter,
+			TargetChapter:  sh.TargetChapter,
+			Status:         domain.HookStatusOpen,
+			CreatedAt:      time.Now(),
+		}
+		_ = s.store.SavePlotHook(r.Context(), hook)
+	}
+
+	jsonResponse(w, http.StatusCreated, proj)
+}
+
+func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, projectID string, parts []string) {
+	ctx := r.Context()
+	p, err := s.store.GetProject(ctx, projectID)
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	// POST /api/projects/:id/framework/bootstrap
+	if len(parts) >= 3 && parts[2] == "bootstrap" {
+		if r.Method != http.MethodPost {
+			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var req struct {
+			Concept        string `json:"concept"`
+			ReasoningModel string `json:"reasoning_model,omitempty"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		concept := req.Concept
+		if concept == "" {
+			concept = p.WorldRules
+		}
+		model := req.ReasoningModel
+		if model == "" {
+			model = s.cfg.ReasoningModel
+		}
+
+		fw, bErr := s.orch.BootstrapFramework(ctx, model, engine.FrameworkBootstrapRequest{
+			Title:          p.Title,
+			TargetPlatform: p.TargetPlatform,
+			CoreConcept:    concept,
+		})
+		if bErr != nil {
+			errorResponse(w, http.StatusInternalServerError, "bootstrap framework failed: "+bErr.Error())
+			return
+		}
+
+		p.Framework = fw
+		if err := s.store.SaveProject(ctx, p); err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// Seed hooks
+		for i, sh := range fw.SeedHooks {
+			hook := &domain.PlotHook{
+				ID:             fmt.Sprintf("hook_%s_fw_%d", projectID, i+1),
+				ProjectID:      projectID,
+				Title:          sh.Title,
+				Details:        sh.Details,
+				CreatedChapter: sh.CreatedChapter,
+				TargetChapter:  sh.TargetChapter,
+				Status:         domain.HookStatusOpen,
+				CreatedAt:      time.Now(),
+			}
+			_ = s.store.SavePlotHook(ctx, hook)
+		}
+		jsonResponse(w, http.StatusOK, p)
+		return
+	}
+
+	// GET or PUT /api/projects/:id/framework
+	switch r.Method {
+	case http.MethodGet:
+		if p.Framework == nil {
+			jsonResponse(w, http.StatusOK, map[string]any{"framework": nil, "message": "总纲尚未推演生成"})
+			return
+		}
+		jsonResponse(w, http.StatusOK, p.Framework)
+	case http.MethodPut:
+		var fw domain.ProjectFramework
+		if err := json.NewDecoder(r.Body).Decode(&fw); err != nil {
+			errorResponse(w, http.StatusBadRequest, "invalid framework JSON: "+err.Error())
+			return
+		}
+		p.Framework = &fw
+		if err := s.store.SaveProject(ctx, p); err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, p.Framework)
+	default:
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }

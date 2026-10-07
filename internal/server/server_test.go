@@ -165,4 +165,25 @@ func TestServer_ConfigAndProjects(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 when mock LLM client cannot reach endpoint, got %d", w.Code)
 	}
+
+	// 7. GET /api/projects/:id/framework (initially empty)
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+created.ID+"/framework", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for framework get, got %d", w.Code)
+	}
+
+	// 8. PUT /api/projects/:id/framework
+	fwPayload := domain.ProjectFramework{
+		ThemePremise: "凡人逆修弑神",
+		WorldAxioms:  []string{"天道实为寄生真魔"},
+	}
+	body, _ = json.Marshal(fwPayload)
+	req = httptest.NewRequest(http.MethodPut, "/api/projects/"+created.ID+"/framework", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for framework put, got %d", w.Code)
+	}
 }

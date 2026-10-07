@@ -46,6 +46,7 @@ func (s *SQLiteStore) migrate() error {
 		target_platform TEXT NOT NULL,
 		world_rules TEXT,
 		protagonist_json TEXT,
+		framework_json TEXT,
 		created_at TIMESTAMP NOT NULL,
 		updated_at TIMESTAMP NOT NULL
 	);
@@ -100,6 +101,7 @@ func (s *SQLiteStore) migrate() error {
 	}
 	// Backward compatible schema patch for existing DBs
 	_, _ = s.db.Exec(`ALTER TABLE chapters ADD COLUMN review_json TEXT;`)
+	_, _ = s.db.Exec(`ALTER TABLE projects ADD COLUMN framework_json TEXT;`)
 	return nil
 }
 
@@ -122,29 +124,37 @@ func (s *SQLiteStore) SaveProject(ctx context.Context, p *domain.Project) error 
 		return fmt.Errorf("marshal protagonist: %w", err)
 	}
 
+	var frameworkJSON string
+	if p.Framework != nil {
+		if fb, ferr := json.Marshal(p.Framework); ferr == nil {
+			frameworkJSON = string(fb)
+		}
+	}
+
 	query := `
-	INSERT INTO projects (id, title, target_platform, world_rules, protagonist_json, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO projects (id, title, target_platform, world_rules, protagonist_json, framework_json, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		title = excluded.title,
 		target_platform = excluded.target_platform,
 		world_rules = excluded.world_rules,
 		protagonist_json = excluded.protagonist_json,
+		framework_json = excluded.framework_json,
 		updated_at = excluded.updated_at;
 	`
 	_, err = s.db.ExecContext(ctx, query,
-		p.ID, p.Title, p.TargetPlatform, p.WorldRules, string(protagonistJSON), p.CreatedAt, p.UpdatedAt,
+		p.ID, p.Title, p.TargetPlatform, p.WorldRules, string(protagonistJSON), frameworkJSON, p.CreatedAt, p.UpdatedAt,
 	)
 	return err
 }
 
 func (s *SQLiteStore) GetProject(ctx context.Context, id string) (*domain.Project, error) {
-	query := `SELECT id, title, target_platform, world_rules, protagonist_json, created_at, updated_at FROM projects WHERE id = ?`
+	query := `SELECT id, title, target_platform, world_rules, protagonist_json, framework_json, created_at, updated_at FROM projects WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, query, id)
 
 	var p domain.Project
-	var protagonistJSON string
-	if err := row.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &protagonistJSON, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	var protagonistJSON, frameworkJSON string
+	if err := row.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &protagonistJSON, &frameworkJSON, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("project not found")
 		}
@@ -154,11 +164,17 @@ func (s *SQLiteStore) GetProject(ctx context.Context, id string) (*domain.Projec
 	if err := json.Unmarshal([]byte(protagonistJSON), &p.Protagonist); err != nil {
 		return nil, fmt.Errorf("unmarshal protagonist: %w", err)
 	}
+	if strings.TrimSpace(frameworkJSON) != "" {
+		var fw domain.ProjectFramework
+		if err := json.Unmarshal([]byte(frameworkJSON), &fw); err == nil {
+			p.Framework = &fw
+		}
+	}
 	return &p, nil
 }
 
 func (s *SQLiteStore) ListProjects(ctx context.Context) ([]*domain.Project, error) {
-	query := `SELECT id, title, target_platform, world_rules, protagonist_json, created_at, updated_at FROM projects ORDER BY updated_at DESC`
+	query := `SELECT id, title, target_platform, world_rules, protagonist_json, framework_json, created_at, updated_at FROM projects ORDER BY updated_at DESC`
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -168,11 +184,17 @@ func (s *SQLiteStore) ListProjects(ctx context.Context) ([]*domain.Project, erro
 	var list []*domain.Project
 	for rows.Next() {
 		var p domain.Project
-		var protagonistJSON string
-		if err := rows.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &protagonistJSON, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		var protagonistJSON, frameworkJSON string
+		if err := rows.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &protagonistJSON, &frameworkJSON, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(protagonistJSON), &p.Protagonist)
+		if strings.TrimSpace(frameworkJSON) != "" {
+			var fw domain.ProjectFramework
+			if err := json.Unmarshal([]byte(frameworkJSON), &fw); err == nil {
+				p.Framework = &fw
+			}
+		}
 		list = append(list, &p)
 	}
 	return list, rows.Err()

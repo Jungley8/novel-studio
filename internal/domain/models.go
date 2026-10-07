@@ -50,15 +50,63 @@ type Protagonist struct {
 	StructuredItems []InventoryItem `json:"structured_items,omitempty"`
 }
 
+// PowerLadderTier represents a single cultivation realm with breakthrough requirements and drawbacks.
+type PowerLadderTier struct {
+	Realm       string `json:"realm"`
+	Description string `json:"description"`
+	Bottleneck  string `json:"bottleneck"`
+	Drawback    string `json:"drawback"` // 突破代价或天道反噬
+}
+
+// Faction represents a sect, clan, or political force.
+type Faction struct {
+	Name        string `json:"name"`
+	Alignment   string `json:"alignment"` // 正道/魔道/隐世/皇朝
+	Doctrine    string `json:"doctrine"`  // 核心主张与功法
+	ThreatLevel string `json:"threat_level"`
+}
+
+// CharacterProfile represents a key dramatic character in the ensemble.
+type CharacterProfile struct {
+	Name    string `json:"name"`
+	Role    string `json:"role"` // 领路人/宿敌/同盟/异教首领
+	Realm   string `json:"realm"`
+	Goal    string `json:"goal"`
+	FateArc string `json:"fate_arc"` // 宿命终局
+}
+
+// VolumeArc represents a high-level book volume / arc questline outline.
+type VolumeArc struct {
+	VolumeIndex       int      `json:"volume_index"`
+	Title             string   `json:"title"`
+	Theme             string   `json:"theme"`
+	CoreGoal          string   `json:"core_goal"`          // 卷核心主线任务
+	Climax            string   `json:"climax"`             // 卷终极大高潮
+	EstimatedChapters int      `json:"estimated_chapters"` // 预估章数
+	KeyPayoffs        []string `json:"key_payoffs"`        // 本卷回收的伏笔
+}
+
+// ProjectFramework encapsulates the macro architecture, lore, power scale, and volume questlines.
+type ProjectFramework struct {
+	ThemePremise  string             `json:"theme_premise"`
+	WorldAxioms   []string           `json:"world_axioms"`
+	PowerLadder   []PowerLadderTier  `json:"power_ladder"`
+	Factions      []Faction          `json:"factions"`
+	KeyCharacters []CharacterProfile `json:"key_characters"`
+	VolumeArcs    []VolumeArc        `json:"volume_arcs"`
+	SeedHooks     []PlotHook         `json:"seed_hooks,omitempty"`
+}
+
 // Project represents a novel book project.
 type Project struct {
-	ID             string      `json:"id"`
-	Title          string      `json:"title"`
-	TargetPlatform string      `json:"target_platform"` // e.g. "番茄脑洞", "起点仙侠", "知乎盐言"
-	WorldRules     string      `json:"world_rules"`
-	Protagonist    Protagonist `json:"protagonist"`
-	CreatedAt      time.Time   `json:"created_at"`
-	UpdatedAt      time.Time   `json:"updated_at"`
+	ID             string            `json:"id"`
+	Title          string            `json:"title"`
+	TargetPlatform string            `json:"target_platform"` // e.g. "番茄脑洞", "起点仙侠", "知乎盐言"
+	WorldRules     string            `json:"world_rules"`
+	Protagonist    Protagonist       `json:"protagonist"`
+	Framework      *ProjectFramework `json:"framework,omitempty"`
+	CreatedAt      time.Time         `json:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
 }
 
 func (p *Project) Validate() error {
@@ -75,13 +123,13 @@ func (p *Project) Validate() error {
 
 // SceneBeat represents an atomic narrative beat within a chapter.
 type SceneBeat struct {
-	Phase             string `json:"phase"`                        // e.g. "蓄力压迫", "试探下套", "绝地反杀", "章末留钩"
-	Tension           int    `json:"tension"`                      // 1-10
-	Action            string `json:"action"`                       // Physical action & fact
-	ExpectationBroken string `json:"expectation_broken"`           // Whose expectation is broken
-	ReaderEmotion     string `json:"reader_emotion,omitempty"`     // 期望读者此刻的情绪: 紧张/好奇/解气/心疼
-	InfoGap           string `json:"info_gap,omitempty"`           // 信息差: 读者知角色不知 / 角色知读者不知
-	HookType          string `json:"hook_type,omitempty"`          // 仅最后一拍: CLIFFHANGER/REVERSAL/MYSTERY/POWER_UP
+	Phase             string `json:"phase"`                    // e.g. "蓄力压迫", "试探下套", "绝地反杀", "章末留钩"
+	Tension           int    `json:"tension"`                  // 1-10
+	Action            string `json:"action"`                   // Physical action & fact
+	ExpectationBroken string `json:"expectation_broken"`       // Whose expectation is broken
+	ReaderEmotion     string `json:"reader_emotion,omitempty"` // 期望读者此刻的情绪: 紧张/好奇/解气/心疼
+	InfoGap           string `json:"info_gap,omitempty"`       // 信息差: 读者知角色不知 / 角色知读者不知
+	HookType          string `json:"hook_type,omitempty"`      // 仅最后一拍: CLIFFHANGER/REVERSAL/MYSTERY/POWER_UP
 }
 
 // StateMutation represents expected changes after a chapter ends.

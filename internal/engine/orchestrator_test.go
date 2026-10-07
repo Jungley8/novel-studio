@@ -169,3 +169,70 @@ func TestOrchestrator_RewriteDraft(t *testing.T) {
 		t.Errorf("unexpected rewritten text: %s", rewritten)
 	}
 }
+
+func TestOrchestrator_BootstrapFramework(t *testing.T) {
+	mockJSON := `{
+		"theme_premise": "万古三千年修真界沉浮，凡人逆修弑神，天道实为寄生真魔",
+		"world_axioms": ["天地以众生为鼎炉", "飞升实为献祭"],
+		"power_ladder": [
+			{"realm": "练气期", "description": "引气入体", "bottleneck": "开辟经脉", "drawback": "灵气微毒"},
+			{"realm": "筑基期", "description": "铸造道基", "bottleneck": "筑基丹真伪", "drawback": "寿元绑定天道"}
+		],
+		"factions": [
+			{"name": "青云正宗", "alignment": "天道走狗", "doctrine": "顺天承命", "threat_level": "极高"}
+		],
+		"key_characters": [
+			{"name": "白发剑尊", "role": "引路残魂", "realm": "大乘残魂", "goal": "寻觅传人弑天", "fate_arc": "魂飞魄散"}
+		],
+		"volume_arcs": [
+			{
+				"volume_index": 1,
+				"title": "第一卷：边陲残灵与破局逃亡",
+				"theme": "生存与觉醒",
+				"core_goal": "打破宗门死劫并筑基逃生",
+				"climax": "斩杀外门执事血祭破界",
+				"estimated_chapters": 30,
+				"key_payoffs": ["丹田黑铁觉醒"]
+			}
+		],
+		"seed_hooks": [
+			{
+				"title": "丹田深处的锈迹黑铁",
+				"details": "无法炼化的古朴铁片，遇血会散发灼热",
+				"created_chapter": 1,
+				"target_chapter": 20,
+				"status": "OPEN"
+			}
+		]
+	}`
+
+	mock := &mockLLMClient{response: mockJSON}
+	orch := engine.NewOrchestrator(mock)
+
+	req := engine.FrameworkBootstrapRequest{
+		Title:          "凡人弑神录",
+		TargetPlatform: "起点仙侠",
+		CoreConcept:    "三千年修真沉浮，天道是寄生真魔",
+	}
+
+	fw, err := orch.BootstrapFramework(context.Background(), "deepseek-reasoner", req)
+	if err != nil {
+		t.Fatalf("BootstrapFramework failed: %v", err)
+	}
+
+	if fw.ThemePremise != "万古三千年修真界沉浮，凡人逆修弑神，天道实为寄生真魔" {
+		t.Errorf("unexpected theme premise: %s", fw.ThemePremise)
+	}
+	if len(fw.WorldAxioms) != 2 {
+		t.Errorf("expected 2 axioms, got %d", len(fw.WorldAxioms))
+	}
+	if len(fw.PowerLadder) != 2 {
+		t.Errorf("expected 2 power tiers, got %d", len(fw.PowerLadder))
+	}
+	if len(fw.VolumeArcs) != 1 {
+		t.Errorf("expected 1 volume arc, got %d", len(fw.VolumeArcs))
+	}
+	if len(fw.SeedHooks) != 1 {
+		t.Errorf("expected 1 seed hook, got %d", len(fw.SeedHooks))
+	}
+}

@@ -58,6 +58,9 @@
           <button @click="currentTab = 'workbench'" :class="currentTab === 'workbench' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:bg-zinc-800/50'" class="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition">
             <span>✍️</span> 生产车间 (Workbench)
           </button>
+          <button @click="currentTab = 'framework'" :class="currentTab === 'framework' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:bg-zinc-800/50'" class="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition">
+            <span>🏛️</span> 创世总纲 (Framework)
+          </button>
           <button @click="currentTab = 'statemachine'" :class="currentTab === 'statemachine' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:bg-zinc-800/50'" class="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition">
             <span>🛡️</span> 实体状态机 (State Machine)
           </button>
@@ -91,10 +94,16 @@
 
       <!-- 顶栏状态指示 -->
       <header class="h-12 border-b border-zinc-800 px-6 flex items-center justify-between bg-zinc-900/40">
-        <div class="flex items-center gap-3" v-if="currentProject">
+        <div class="flex items-center gap-2.5" v-if="currentProject">
           <span class="text-sm font-semibold text-zinc-200">作品：</span>
           <span class="font-bold text-amber-400">{{ currentProject.title }}</span>
           <span class="text-xs px-2 py-0.5 bg-zinc-800 text-zinc-400 rounded">{{ currentProject.target_platform }}</span>
+          <span v-if="currentVolume" class="text-[11px] px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/30 rounded font-medium">
+            第{{ currentVolume.volume }}卷 · {{ currentVolume.title }}
+          </span>
+          <span v-if="currentPowerTier" class="text-[11px] px-2 py-0.5 bg-purple-500/10 text-purple-300 border border-purple-500/30 rounded font-medium">
+            战力: {{ currentPowerTier.tier_name }}
+          </span>
         </div>
         <div class="flex items-center gap-4 text-xs text-zinc-400" v-if="currentProject">
           <div>已归档章节：<span class="font-mono text-zinc-200">{{ chapters.length }} 章</span></div>
@@ -187,6 +196,22 @@
                   <span class="text-[11px] text-zinc-500">第 {{ nextChapterIndex }} 章</span>
                 </div>
                 <p class="text-xs text-zinc-400 mt-1">明确戏剧核心对峙事实与打破预期的切入点。</p>
+              </div>
+
+              <!-- 宏观总纲视界锚定 (Volume & Power Anchor) -->
+              <div v-if="currentVolume || currentPowerTier" class="p-2.5 bg-zinc-950/80 border border-amber-500/20 rounded-lg text-xs space-y-1.5">
+                <div v-if="currentVolume" class="space-y-1">
+                  <div class="flex items-center justify-between text-amber-400 font-bold text-[11px]">
+                    <span>📜 分卷锚定：第 {{ currentVolume.volume }} 卷 · {{ currentVolume.title }}</span>
+                    <span class="text-[10px] text-zinc-500 font-mono">第 {{ currentVolume.start_chapter }} - {{ currentVolume.end_chapter }} 章</span>
+                  </div>
+                  <p class="text-[11px] text-zinc-300 leading-snug"><span class="text-zinc-500">本卷使命：</span>{{ currentVolume.core_goal }}</p>
+                  <p class="text-[11px] text-amber-300/80 leading-snug"><span class="text-zinc-500">终局高潮：</span>{{ currentVolume.climax_event }}</p>
+                </div>
+                <div v-if="currentPowerTier" class="pt-1.5 border-t border-zinc-800 flex items-center justify-between text-[11px]">
+                  <span class="text-purple-300 font-semibold">⚡ 当前境界: {{ currentPowerTier.tier_name }}</span>
+                  <span class="text-rose-400/90 text-[10px] truncate max-w-[190px]" :title="currentPowerTier.drawback">⚠️ 代价: {{ currentPowerTier.drawback }}</span>
+                </div>
               </div>
 
               <div>
@@ -716,6 +741,217 @@
 
       </div>
 
+      <!-- 标签页：宏观创世总纲 (Genesis Framework Bible) -->
+      <div v-show="currentTab === 'framework'" class="flex-1 p-6 overflow-y-auto space-y-6" v-if="currentProject">
+        <div class="flex justify-between items-center border-b border-zinc-800 pb-4">
+          <div>
+            <h2 class="text-lg font-bold text-zinc-100 flex items-center gap-2">
+              <span>🏛️</span> 宏观创世总纲 (Genesis Framework Bible)
+            </h2>
+            <p class="text-xs text-zinc-400">万字长篇宏观骨架：天道法则、严谨战力阶梯、分卷任务链与暗线势力谱系。</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button @click="bootstrapCurrentFramework" :disabled="isLoading" class="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-amber-400 font-semibold rounded text-xs border border-zinc-700 transition flex items-center gap-1 cursor-pointer">
+              <span>⚡</span> {{ isLoading ? 'AI 推演中...' : '重新 AI 创世推演' }}
+            </button>
+            <button @click="saveFramework" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-black font-bold rounded text-xs transition cursor-pointer">
+              💾 保存总纲修改
+            </button>
+          </div>
+        </div>
+
+        <!-- 空状态提醒 -->
+        <div v-if="!currentProject.framework" class="p-8 text-center bg-zinc-900 border border-dashed border-zinc-800 rounded-xl space-y-4">
+          <div class="text-3xl">🌌</div>
+          <h3 class="text-sm font-bold text-zinc-200">本作品尚未构建宏观创世总纲</h3>
+          <p class="text-xs text-zinc-500 max-w-md mx-auto">
+            缺乏宏观总纲的长篇极易中途战力崩坏、主线迷失。建议启动 AI 宏观推演，自动建构天道物理公理、10级代价晋升天梯、分卷大纲与对抗势力。
+          </p>
+          <button @click="bootstrapCurrentFramework" class="px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-black font-bold text-xs rounded-lg shadow-md transition cursor-pointer">
+            🌌 立即启动 AI 宏观创世推演
+          </button>
+        </div>
+
+        <div v-else class="space-y-6">
+          <!-- 1. 核心高概念与主角创世档案 -->
+          <div class="grid grid-cols-3 gap-6">
+            <!-- 核心概念 -->
+            <div class="p-4 bg-zinc-900 border border-zinc-800 rounded-lg space-y-2 col-span-1">
+              <h3 class="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                <span>💡</span> 核心高概念 (Core Concept)
+              </h3>
+              <textarea v-model="currentProject.framework.core_concept" rows="6" class="w-full bg-zinc-800 border border-zinc-750 rounded p-2 text-xs text-zinc-200 focus:outline-none focus:border-amber-500 leading-relaxed" placeholder="输入全书核心设定与灵感..."></textarea>
+            </div>
+
+            <!-- 主角创世建档 -->
+            <div class="p-4 bg-zinc-900 border border-zinc-800 rounded-lg space-y-3 col-span-2" v-if="currentProject.framework.protagonist">
+              <h3 class="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                <span>👤</span> 主角创世档案 (Protagonist Genesis Profile)
+              </h3>
+              <div class="grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <label class="text-zinc-400 text-[11px]">主角姓名：</label>
+                  <input v-model="currentProject.framework.protagonist.name" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1 text-xs text-zinc-200 font-bold">
+                </div>
+                <div>
+                  <label class="text-zinc-400 text-[11px]">初始境界阶梯：</label>
+                  <input v-model="currentProject.framework.protagonist.initial_realm" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1 text-xs text-purple-300">
+                </div>
+                <div>
+                  <label class="text-zinc-400 text-[11px]">核心内在驱动力 (Core Drive)：</label>
+                  <input v-model="currentProject.framework.protagonist.core_drive" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1 text-xs text-zinc-200">
+                </div>
+                <div>
+                  <label class="text-zinc-400 text-[11px]">致命性格缺陷 / 逆鳞 (Fatal Flaw)：</label>
+                  <input v-model="currentProject.framework.protagonist.fatal_flaw" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1 text-xs text-rose-300">
+                </div>
+                <div class="col-span-2">
+                  <label class="text-zinc-400 text-[11px]">金手指 / 弑神契机 (Special Trait / Hook)：</label>
+                  <input v-model="currentProject.framework.protagonist.special_trait" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1 text-xs text-amber-300 font-mono">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. 天道法则与世界公理 (World Axioms) -->
+          <div class="p-4 bg-zinc-900 border border-zinc-800 rounded-lg space-y-3">
+            <div class="flex justify-between items-center">
+              <div>
+                <h3 class="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                  <span>⚖️</span> 天道法则与世界公理 (World Axioms - 物理铁律，绝对不可违背)
+                </h3>
+                <p class="text-[11px] text-zinc-500">推演节拍和渲染章节时强制作为公理约束，避免天马行空违背世界观。</p>
+              </div>
+              <button @click="addFrameworkAxiom" class="text-xs text-amber-400 hover:text-amber-300 font-medium">+ 添加天道公理</button>
+            </div>
+            <div class="space-y-2">
+              <div v-for="(axiom, aIdx) in currentProject.framework.world_axioms" :key="aIdx" class="flex items-center gap-2 bg-zinc-950 p-2 rounded border border-zinc-800/80">
+                <span class="text-amber-500/80 font-mono text-xs w-6 shrink-0">{{ aIdx + 1 }}.</span>
+                <input v-model="currentProject.framework.world_axioms[aIdx]" class="flex-1 bg-transparent text-xs text-zinc-200 focus:outline-none">
+                <button @click="removeFrameworkAxiom(aIdx)" class="text-zinc-600 hover:text-rose-400 text-xs px-1">✕</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. 严谨战力阶梯与代价体系 (Power Ladder) -->
+          <div class="p-4 bg-zinc-900 border border-zinc-800 rounded-lg space-y-3">
+            <div class="flex justify-between items-center">
+              <div>
+                <h3 class="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                  <span>🪜</span> 战力晋升阶梯与代价天平 (Power Ladder - 杜绝战力膨胀与无脑越级)
+                </h3>
+                <p class="text-[11px] text-zinc-500">每阶必须具备破坏力表征、突破瓶颈与不可逆的代价反噬，形成严谨的力量闭环。</p>
+              </div>
+              <button @click="addFrameworkTier" class="text-xs text-amber-400 hover:text-amber-300 font-medium">+ 添加境界阶梯</button>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr class="border-b border-zinc-800 text-zinc-400 text-[11px]">
+                    <th class="py-2 px-2 w-12 font-mono text-center">阶</th>
+                    <th class="py-2 px-3 w-32">境界名称</th>
+                    <th class="py-2 px-3">破坏力与感知表征</th>
+                    <th class="py-2 px-3">突破瓶颈 (顿悟/机缘)</th>
+                    <th class="py-2 px-3">道途代价 / 命格反噬</th>
+                    <th class="py-2 px-2 w-10 text-center">操作</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-zinc-800/60 font-sans">
+                  <tr v-for="(tier, tIdx) in currentProject.framework.power_ladder" :key="tIdx" class="hover:bg-zinc-850/50">
+                    <td class="py-2 px-2 font-mono text-amber-500 font-bold text-center">{{ tier.tier }}</td>
+                    <td class="py-2 px-3">
+                      <input v-model="tier.tier_name" class="w-full bg-zinc-800 border border-zinc-700/80 rounded px-2 py-1 text-xs text-purple-300 font-semibold">
+                    </td>
+                    <td class="py-2 px-3">
+                      <input v-model="tier.features" class="w-full bg-zinc-800 border border-zinc-700/80 rounded px-2 py-1 text-xs text-zinc-200">
+                    </td>
+                    <td class="py-2 px-3">
+                      <input v-model="tier.bottleneck" class="w-full bg-zinc-800 border border-zinc-700/80 rounded px-2 py-1 text-xs text-zinc-300">
+                    </td>
+                    <td class="py-2 px-3">
+                      <input v-model="tier.drawback" class="w-full bg-zinc-800 border border-zinc-700/80 rounded px-2 py-1 text-xs text-rose-300">
+                    </td>
+                    <td class="py-2 px-2 text-center">
+                      <button @click="removeFrameworkTier(tIdx)" class="text-zinc-600 hover:text-rose-400 text-xs">✕</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 4. 分卷大纲与主线任务链 (Volume Arcs) -->
+          <div class="p-4 bg-zinc-900 border border-zinc-800 rounded-lg space-y-3">
+            <div class="flex justify-between items-center">
+              <div>
+                <h3 class="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                  <span>📜</span> 分卷大纲与主线任务链 (Volume Arcs - 长篇宏观节奏控制器)
+                </h3>
+                <p class="text-[11px] text-zinc-500">每卷设定明确章节跨度、阶段使命与终局高潮，生成章节时自动映射本卷终局目标。</p>
+              </div>
+              <button @click="addFrameworkVolume" class="text-xs text-amber-400 hover:text-amber-300 font-medium">+ 添加分卷规划</button>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div v-for="(vol, vIdx) in currentProject.framework.volume_arcs" :key="vIdx" class="p-3.5 bg-zinc-950 border border-zinc-800 rounded-lg space-y-2.5 relative">
+                <button @click="removeFrameworkVolume(vIdx)" class="absolute top-2 right-2 text-zinc-600 hover:text-rose-400 text-xs">✕</button>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-mono font-bold text-amber-400">第 {{ vol.volume }} 卷</span>
+                  <input v-model="vol.title" class="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 font-bold" placeholder="分卷标题">
+                  <div class="flex items-center gap-1 text-[11px] text-zinc-400">
+                    <span>第</span>
+                    <input v-model.number="vol.start_chapter" type="number" class="w-12 bg-zinc-800 border border-zinc-700 rounded px-1 py-0.5 text-center text-xs text-zinc-200">
+                    <span>-</span>
+                    <input v-model.number="vol.end_chapter" type="number" class="w-12 bg-zinc-800 border border-zinc-700 rounded px-1 py-0.5 text-center text-xs text-zinc-200">
+                    <span>章</span>
+                  </div>
+                </div>
+                <div>
+                  <label class="text-[10px] text-zinc-400">本卷核心使命 / 主线破局点：</label>
+                  <textarea v-model="vol.core_goal" rows="2" class="w-full mt-0.5 bg-zinc-850 border border-zinc-700 rounded p-1.5 text-xs text-zinc-200 focus:outline-none"></textarea>
+                </div>
+                <div>
+                  <label class="text-[10px] text-amber-400/80">卷终高潮爆发点 (Climax Event)：</label>
+                  <textarea v-model="vol.climax_event" rows="2" class="w-full mt-0.5 bg-zinc-850 border border-zinc-700 rounded p-1.5 text-xs text-amber-200 focus:outline-none"></textarea>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. 势力谱系与利益冲突暗线 (Factions & Agendas) -->
+          <div class="p-4 bg-zinc-900 border border-zinc-800 rounded-lg space-y-3">
+            <div class="flex justify-between items-center">
+              <div>
+                <h3 class="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                  <span>⚔️</span> 势力谱系与利益冲突暗线 (Factions & Secret Agendas)
+                </h3>
+                <p class="text-[11px] text-zinc-500">多方势力各自为战并具备隐秘诉求，杜绝脸谱化降智反派。</p>
+              </div>
+              <button @click="addFrameworkFaction" class="text-xs text-amber-400 hover:text-amber-300 font-medium">+ 添加势力</button>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div v-for="(fac, fIdx) in currentProject.framework.factions" :key="fIdx" class="p-3.5 bg-zinc-950 border border-zinc-800 rounded-lg space-y-2 relative">
+                <button @click="removeFrameworkFaction(fIdx)" class="absolute top-2 right-2 text-zinc-600 hover:text-rose-400 text-xs">✕</button>
+                <div class="flex items-center gap-2">
+                  <input v-model="fac.name" class="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 font-bold" placeholder="势力名称">
+                  <input v-model="fac.stance" class="w-24 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-amber-400 font-mono text-center" placeholder="立场">
+                </div>
+                <div>
+                  <label class="text-[10px] text-zinc-400">权力根基与底蕴：</label>
+                  <input v-model="fac.power_base" class="w-full mt-0.5 bg-zinc-850 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200">
+                </div>
+                <div>
+                  <label class="text-[10px] text-rose-400/80">核心诉求与暗线阴谋 (Secret Agenda)：</label>
+                  <textarea v-model="fac.secret_agenda" rows="2" class="w-full mt-0.5 bg-zinc-850 border border-zinc-700 rounded p-1.5 text-xs text-rose-200 focus:outline-none"></textarea>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 标签页 2：实体状态机 -->
       <div v-show="currentTab === 'statemachine'" class="flex-1 p-6 overflow-y-auto space-y-6" v-if="currentProject">
         <div class="flex justify-between items-center border-b border-zinc-800 pb-4">
@@ -881,28 +1117,73 @@
 
     <!-- 新建项目弹窗 -->
     <div v-if="showNewProjectModal" class="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-      <div class="bg-zinc-900 border border-zinc-800 rounded-lg p-6 max-w-md w-full space-y-4">
-        <h3 class="text-base font-bold text-zinc-100">新建小说项目</h3>
+      <div class="bg-zinc-900 border border-zinc-800 rounded-lg p-6 max-w-lg w-full space-y-4">
+        <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
+          <h3 class="text-base font-bold text-zinc-100 flex items-center gap-2">
+            <span>✨</span> 新建小说工程
+          </h3>
+          <div class="flex bg-zinc-800 p-0.5 rounded-lg text-xs">
+            <button 
+              @click="newProjectForm.genesis_mode = true" 
+              :class="newProjectForm.genesis_mode ? 'bg-amber-500 text-black font-bold shadow' : 'text-zinc-400 hover:text-zinc-200'"
+              class="px-2.5 py-1 rounded-md transition cursor-pointer">
+              🌌 AI 宏观创世推演
+            </button>
+            <button 
+              @click="newProjectForm.genesis_mode = false" 
+              :class="!newProjectForm.genesis_mode ? 'bg-zinc-700 text-zinc-100 font-bold' : 'text-zinc-400 hover:text-zinc-200'"
+              class="px-2.5 py-1 rounded-md transition cursor-pointer">
+              📝 基础快速建书
+            </button>
+          </div>
+        </div>
+
         <div>
           <label class="text-xs text-zinc-400">书名：</label>
-          <input v-model="newProjectForm.title" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded p-1.5 text-xs text-zinc-200" placeholder="例如：极道天魔">
+          <input v-model="newProjectForm.title" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded p-2 text-xs text-zinc-200 font-bold focus:outline-none focus:border-amber-500" placeholder="例如：凡人弑神录：万古三千年修真界沉浮长卷">
         </div>
+
         <div>
-          <label class="text-xs text-zinc-400">目标平台：</label>
-          <select v-model="newProjectForm.target_platform" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded p-1.5 text-xs text-zinc-200">
-            <option value="番茄脑洞">番茄脑洞 (快节奏/爽点密集)</option>
-            <option value="知乎盐言">知乎盐言 (第一人称/反转复仇)</option>
-            <option value="起点仙侠">起点仙侠 (严谨战力/厚重世界观)</option>
-            <option value="海外短剧">海外短剧 (ReelShort/高概念冲突)</option>
+          <label class="text-xs text-zinc-400">目标平台定位：</label>
+          <select v-model="newProjectForm.target_platform" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded p-2 text-xs text-zinc-200 focus:outline-none focus:border-amber-500">
+            <option value="起点仙侠">起点仙侠 (严谨战力/厚重世界观/克系修仙)</option>
+            <option value="番茄脑洞">番茄脑洞 (快节奏/爽点密集/系统逆袭)</option>
+            <option value="知乎盐言">知乎盐言 (第一人称/反转复仇/高压悬疑)</option>
+            <option value="海外短剧">海外短剧 (ReelShort/高概念冲突/狼人豪门)</option>
           </select>
         </div>
-        <div>
-          <label class="text-xs text-zinc-400">主角初始姓名与等级：</label>
-          <input v-model="newProjectForm.protagonist_name" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded p-1.5 text-xs text-zinc-200" placeholder="例如：林越 (练气一层)">
+
+        <!-- 模式 A：AI 宏观创世推演 -->
+        <div v-if="newProjectForm.genesis_mode" class="space-y-2">
+          <label class="text-xs text-amber-400 font-semibold flex items-center justify-between">
+            <span>核心灵感与创世概念 (Core Concept)：</span>
+            <span class="text-[10px] text-zinc-500 font-normal">支持简短灵感或详细梗概</span>
+          </label>
+          <textarea 
+            v-model="newProjectForm.concept" 
+            rows="5" 
+            class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-xs text-zinc-200 focus:outline-none focus:border-amber-500 leading-relaxed font-sans" 
+            placeholder="例如：凡人无灵根，天道被不可名状的神明寄生；修士飞升实为充当神明祭品；主角偶然获得一枚能吞噬神明诅咒的凡骨铁印，在三千年宗门血腥秩序下隐忍弑神..."></textarea>
+          <p class="text-[11px] text-zinc-500">
+            💡 AI 将自动深度推演：天道绝对公理、10级代价晋升天梯、四大对抗势力暗线、1~4卷分卷主线任务链，并自动播种开局伏笔池。
+          </p>
         </div>
-        <div class="flex justify-end gap-2 pt-2">
-          <button @click="showNewProjectModal = false" class="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-300 rounded">取消</button>
-          <button @click="createProject" class="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-black font-bold text-xs rounded">立即创建</button>
+
+        <!-- 模式 B：基础快速创建 -->
+        <div v-else>
+          <label class="text-xs text-zinc-400">主角初始姓名与等级：</label>
+          <input v-model="newProjectForm.protagonist_name" class="w-full mt-1 bg-zinc-800 border border-zinc-700 rounded p-2 text-xs text-zinc-200" placeholder="例如：顾渊 (凡人胎骨)">
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t border-zinc-800">
+          <button @click="showNewProjectModal = false" :disabled="isLoading" class="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-300 rounded cursor-pointer">取消</button>
+          <button 
+            @click="createProject" 
+            :disabled="isLoading" 
+            class="px-4 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-black font-extrabold text-xs rounded shadow transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50">
+            <span v-if="isLoading" class="inline-block w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin"></span>
+            <span>{{ isLoading ? 'AI 正在推演创世总纲中...' : (newProjectForm.genesis_mode ? '🌌 立即启动 AI 宏观推演' : '创建空白项目') }}</span>
+          </button>
         </div>
       </div>
     </div>
@@ -966,8 +1247,26 @@
 
         const newProjectForm = ref({
           title: '',
-          target_platform: '番茄脑洞',
-          protagonist_name: ''
+          target_platform: '起点仙侠',
+          protagonist_name: '',
+          concept: '',
+          genesis_mode: true
+        });
+
+        const currentVolume = computed(() => {
+          if (!currentProject.value || !currentProject.value.framework || !currentProject.value.framework.volume_arcs) return null;
+          const ch = nextChapterIndex.value;
+          return currentProject.value.framework.volume_arcs.find(v => ch >= v.start_chapter && ch <= v.end_chapter) 
+            || currentProject.value.framework.volume_arcs[0];
+        });
+
+        const currentPowerTier = computed(() => {
+          if (!currentProject.value || !currentProject.value.framework || !currentProject.value.framework.power_ladder) return null;
+          const realm = currentProject.value.protagonist ? (currentProject.value.protagonist.name_and_level || '') : '';
+          for (const tier of currentProject.value.framework.power_ladder) {
+            if (realm.includes(tier.tier_name)) return tier;
+          }
+          return currentProject.value.framework.power_ladder[0];
         });
 
         // 流程化工步核心状态 (Workflow Stage State)
@@ -1160,26 +1459,44 @@
 
         const createProject = async () => {
           if (!newProjectForm.value.title) return alert('请输入书名');
+          isLoading.value = true;
           try {
-            const created = await api('/api/projects', {
-              method: 'POST',
-              body: JSON.stringify({
-                title: newProjectForm.value.title,
-                target_platform: newProjectForm.value.target_platform,
-                world_rules: '1. 修真境界不可越级强行碾压；\n2. 违背天地因果必遭反噬。',
-                protagonist: {
-                  name_and_level: newProjectForm.value.protagonist_name || '主角 (练气一层)',
-                  inventory: '粗布衣袍, 基础功法',
-                  core_goal: '破除宗门危机'
-                }
-              })
-            });
+            let created;
+            if (newProjectForm.value.genesis_mode) {
+              created = await api('/api/projects/bootstrap', {
+                method: 'POST',
+                body: JSON.stringify({
+                  title: newProjectForm.value.title,
+                  target_platform: newProjectForm.value.target_platform,
+                  concept: newProjectForm.value.concept
+                })
+              });
+            } else {
+              created = await api('/api/projects', {
+                method: 'POST',
+                body: JSON.stringify({
+                  title: newProjectForm.value.title,
+                  target_platform: newProjectForm.value.target_platform,
+                  world_rules: '1. 修真境界不可越级强行碾压；\n2. 违背天地因果必遭反噬。',
+                  protagonist: {
+                    name_and_level: newProjectForm.value.protagonist_name || '主角 (凡人胎骨)',
+                    inventory: '粗布衣袍, 基础功法',
+                    core_goal: '破除宗门危机'
+                  }
+                })
+              });
+            }
             showNewProjectModal.value = false;
             await loadProjects();
             selectedProjectId.value = created.id;
             await selectProject(created.id);
+            if (newProjectForm.value.genesis_mode) {
+              currentTab.value = 'framework';
+            }
           } catch (e) {
             alert('创建项目失败: ' + e.message);
+          } finally {
+            isLoading.value = false;
           }
         };
 
@@ -1191,6 +1508,108 @@
           } catch (e) {
             alert('保存项目失败: ' + e.message);
           }
+        };
+
+        const saveFramework = async () => {
+          if (!currentProject.value || !currentProject.value.framework) return;
+          try {
+            const updated = await api('/api/projects/' + currentProject.value.id + '/framework', {
+              method: 'PUT',
+              body: JSON.stringify(currentProject.value.framework)
+            });
+            currentProject.value.framework = updated;
+            alert('创世总纲已成功保存！');
+          } catch (e) {
+            alert('保存创世总纲失败: ' + e.message);
+          }
+        };
+
+        const bootstrapCurrentFramework = async () => {
+          if (!currentProject.value) return;
+          const concept = prompt('请输入针对本作品的创世推演灵感或调整方向：', currentProject.value.framework?.core_concept || currentProject.value.world_rules || '');
+          if (concept === null) return;
+          isLoading.value = true;
+          try {
+            const updated = await api('/api/projects/' + currentProject.value.id + '/framework/bootstrap', {
+              method: 'POST',
+              body: JSON.stringify({ concept: concept })
+            });
+            currentProject.value.framework = updated;
+            await selectProject(currentProject.value.id);
+            alert('AI 创世总纲推演完成并已应用！');
+          } catch (e) {
+            alert('推演总纲失败: ' + e.message);
+          } finally {
+            isLoading.value = false;
+          }
+        };
+
+        const addFrameworkAxiom = () => {
+          if (!currentProject.value?.framework) return;
+          if (!currentProject.value.framework.world_axioms) currentProject.value.framework.world_axioms = [];
+          currentProject.value.framework.world_axioms.push('新天道法则');
+        };
+
+        const removeFrameworkAxiom = (index) => {
+          if (!currentProject.value?.framework?.world_axioms) return;
+          currentProject.value.framework.world_axioms.splice(index, 1);
+        };
+
+        const addFrameworkTier = () => {
+          if (!currentProject.value?.framework) return;
+          if (!currentProject.value.framework.power_ladder) currentProject.value.framework.power_ladder = [];
+          const nextTier = currentProject.value.framework.power_ladder.length + 1;
+          currentProject.value.framework.power_ladder.push({
+            tier: nextTier,
+            tier_name: '新境界',
+            features: '破坏力与能力表征',
+            bottleneck: '突破瓶颈',
+            drawback: '代价或反噬'
+          });
+        };
+
+        const removeFrameworkTier = (index) => {
+          if (!currentProject.value?.framework?.power_ladder) return;
+          currentProject.value.framework.power_ladder.splice(index, 1);
+        };
+
+        const addFrameworkVolume = () => {
+          if (!currentProject.value?.framework) return;
+          if (!currentProject.value.framework.volume_arcs) currentProject.value.framework.volume_arcs = [];
+          const nextVol = currentProject.value.framework.volume_arcs.length + 1;
+          const lastVol = currentProject.value.framework.volume_arcs[currentProject.value.framework.volume_arcs.length - 1];
+          const startCh = lastVol ? (lastVol.end_chapter + 1) : 1;
+          currentProject.value.framework.volume_arcs.push({
+            volume: nextVol,
+            title: '第' + nextVol + '卷',
+            start_chapter: startCh,
+            end_chapter: startCh + 30,
+            core_goal: '本卷核心目标',
+            climax_event: '本卷高潮爆发事件',
+            active_factions: []
+          });
+        };
+
+        const removeFrameworkVolume = (index) => {
+          if (!currentProject.value?.framework?.volume_arcs) return;
+          currentProject.value.framework.volume_arcs.splice(index, 1);
+        };
+
+        const addFrameworkFaction = () => {
+          if (!currentProject.value?.framework) return;
+          if (!currentProject.value.framework.factions) currentProject.value.framework.factions = [];
+          currentProject.value.framework.factions.push({
+            id: 'fac_' + Date.now(),
+            name: '新势力',
+            stance: '中立',
+            power_base: '势力根基与掌管资源',
+            secret_agenda: '暗线图谋与诉求'
+          });
+        };
+
+        const removeFrameworkFaction = (index) => {
+          if (!currentProject.value?.framework?.factions) return;
+          currentProject.value.framework.factions.splice(index, 1);
         };
 
         const deriveBeats = async () => {
@@ -1523,6 +1942,18 @@
           isRewriting,
           nextChapterIndex,
           onProjectChange,
+          currentVolume,
+          currentPowerTier,
+          saveFramework,
+          bootstrapCurrentFramework,
+          addFrameworkAxiom,
+          removeFrameworkAxiom,
+          addFrameworkTier,
+          removeFrameworkTier,
+          addFrameworkVolume,
+          removeFrameworkVolume,
+          addFrameworkFaction,
+          removeFrameworkFaction,
           createProject,
           saveCurrentProject,
           deriveBeats,

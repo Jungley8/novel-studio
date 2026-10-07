@@ -120,3 +120,35 @@
 | **读者心理建模** | 纯动作节拍 | 纯动作节拍 | 纯动作节拍 | **情绪预期 + 信息差博弈 + 章末钩子结构化** |
 | **返工精修模式** | 全文推翻重写 | 全文推翻重写 | 全文推翻重写 | **≤35% 局部差分靶向清创保护** |
 | **构建与分发** | 零 CGO 单二进制 | 零 CGO 单二进制 | 零 CGO 单二进制 | **零 CGO 单二进制 (v1.0.0, 31MB 内嵌全套 UI)** |
+
+---
+
+## 宏观创世架构升级 (Genesis Architecture Upgrade - Phase 0 宏观骨架体系)
+
+为了解决传统 AI 写作"缺乏宏观蓝图、盲目落笔第一章导致中途崩盘、战力通胀、主线迷失"的根本性缺陷，完成宏观创世系统 (Phase 0 Genesis) 全闭环建设：
+
+1. **宏观领域模型扩充 (`internal/domain/models.go`)**：
+   - 增加 `PowerLadderTier`（阶数、境界名、能力表征、突破瓶颈、反噬代价）；
+   - 增加 `Faction`（势力名、立场、权力根基、暗线阴谋）；
+   - 增加 `CharacterProfile`（姓名、初始境界、核心驱动、致命缺陷、弑神/金手指契机）；
+   - 增加 `VolumeArc`（卷序、卷名、章节起止跨度、本卷核心破局使命、卷终高潮爆发点、活跃势力）；
+   - 增加 `ProjectFramework` 创世总纲，挂载至 `Project`。
+2. **SQLite 存储零停机迁移 (`internal/store/sqlite_store.go`)**：
+   - 自动迁移新增 `framework_json TEXT` 字段；
+   - `SaveProject` / `GetProject` / `ListProjects` 完整闭环序列化与反序列化。
+3. **分卷视界与境界代价动态装配 (`internal/engine/chronicle.go`)**：
+   - `CanonHorizon` 挂载 `CurrentVolume` 与 `ActivePowerTier`；
+   - `AssembleHorizon` 依据当前生产的 `targetChapter`，自动判定所属分卷区间，注入当前卷终极使命，并根据主角境界匹配战力反噬代价。
+4. **因果推演与双向对齐 (`internal/engine/orchestrator.go`)**：
+   - `DeriveBeatsWithHorizon` 将分卷终极目标与战力代价铁律作为第一性约束注入 Reasoning 模型，杜绝偏离主线；
+   - 新增 `BootstrapFramework(ctx, reasoningModel, req)` 宏观创世推演核心，由因果推理模型一键生成完整总纲。
+5. **REST API 与自动化播种 (`internal/server/server.go`)**：
+   - `POST /api/projects/bootstrap`：输入书名与灵感，一键推演总纲并在 SQLite 自动播种开篇种子伏笔池；
+   - `GET /api/projects/:id/framework`、`PUT /api/projects/:id/framework`、`POST /api/projects/:id/framework/bootstrap` 支持随时查看、手工微调与再次 AI 推演。
+6. **CLI 命令行创世工具 (`cmd/novel-studio/genesis.go`)**：
+   - `novel-studio genesis -title "书名" -platform "平台" -concept "灵感"` 终端一行命令推演创世总纲。
+7. **桌面工作台全流程打通 (`web/dist/index.html`)**：
+   - 新增侧边栏 **创世总纲 (Framework Bible)** 专属面板，支持可视化编辑天道公理、战力天梯、分卷任务卡片与势力暗线谱系；
+   - 新建项目弹窗升级为双模式，支持一键 "AI 宏观创世推演"；
+   - 生产车间 (Workbench) 实时动态显示当前分卷使命与当前境界代价，全程锚定宏观视界。
+

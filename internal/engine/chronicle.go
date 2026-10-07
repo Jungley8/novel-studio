@@ -16,17 +16,19 @@ import (
 // Layer 2: Rolling 3-chapter high-fidelity sealed canon
 // Layer 3: Cross-volume callbacks & active/urgent plot hooks
 type CanonHorizon struct {
-	Project             *domain.Project    `json:"project"`
-	TargetChapter       int                `json:"target_chapter"`
-	GlobalSummary       string             `json:"global_summary"`
-	RollingCanonText    string             `json:"rolling_canon_text"`
-	TailAnchor          string             `json:"tail_anchor,omitempty"`
-	HistoricalCallbacks string             `json:"historical_callbacks,omitempty"`
-	RecentChapters      []*domain.Chapter  `json:"recent_chapters"`
-	UrgentHooks         []*domain.PlotHook `json:"urgent_hooks"`
-	AllActiveHooks      []*domain.PlotHook `json:"all_active_hooks"`
-	ProtagonistState    domain.Protagonist `json:"protagonist_state"`
-	WorldRules          string             `json:"world_rules"`
+	Project             *domain.Project         `json:"project"`
+	TargetChapter       int                     `json:"target_chapter"`
+	GlobalSummary       string                  `json:"global_summary"`
+	CurrentVolume       *domain.VolumeArc       `json:"current_volume,omitempty"`
+	ActivePowerTier     *domain.PowerLadderTier `json:"active_power_tier,omitempty"`
+	RollingCanonText    string                  `json:"rolling_canon_text"`
+	TailAnchor          string                  `json:"tail_anchor,omitempty"`
+	HistoricalCallbacks string                  `json:"historical_callbacks,omitempty"`
+	RecentChapters      []*domain.Chapter       `json:"recent_chapters"`
+	UrgentHooks         []*domain.PlotHook      `json:"urgent_hooks"`
+	AllActiveHooks      []*domain.PlotHook      `json:"all_active_hooks"`
+	ProtagonistState    domain.Protagonist      `json:"protagonist_state"`
+	WorldRules          string                  `json:"world_rules"`
 }
 
 // CanonChronicle acts as the deep context assembler and horizon keeper.
@@ -73,6 +75,39 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 	// Layer 1: Global Summary
 	globalSummary := fmt.Sprintf("书名：《%s》 | 目标平台：%s | 全书当前进度：已归档 %d 章，正向第 %d 章推进。\n核心世界法则：%s",
 		project.Title, project.TargetPlatform, len(preceding), targetChapter, project.WorldRules)
+
+	var currentVolume *domain.VolumeArc
+	var activeTier *domain.PowerLadderTier
+	if project.Framework != nil {
+		accChapters := 0
+		for i := range project.Framework.VolumeArcs {
+			arc := project.Framework.VolumeArcs[i]
+			est := arc.EstimatedChapters
+			if est <= 0 {
+				est = 40
+			}
+			if targetChapter > accChapters && targetChapter <= accChapters+est {
+				currentVolume = &arc
+				break
+			}
+			accChapters += est
+		}
+		if currentVolume == nil && len(project.Framework.VolumeArcs) > 0 {
+			currentVolume = &project.Framework.VolumeArcs[len(project.Framework.VolumeArcs)-1]
+		}
+		if currentVolume != nil {
+			globalSummary += fmt.Sprintf("\n【当前分卷总纲】第 %d 卷：《%s》 | 卷主线：%s | 卷大高潮：%s",
+				currentVolume.VolumeIndex, currentVolume.Title, currentVolume.CoreGoal, currentVolume.Climax)
+		}
+
+		for i := range project.Framework.PowerLadder {
+			tier := project.Framework.PowerLadder[i]
+			if strings.Contains(project.Protagonist.NameAndLevel, tier.Realm) {
+				activeTier = &tier
+				break
+			}
+		}
+	}
 
 	// Layer 2: Rolling 3-Chapter Window
 	windowSize := 3
@@ -170,6 +205,8 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 		Project:             project,
 		TargetChapter:       targetChapter,
 		GlobalSummary:       globalSummary,
+		CurrentVolume:       currentVolume,
+		ActivePowerTier:     activeTier,
 		RollingCanonText:    strings.TrimSpace(sb.String()),
 		TailAnchor:          tailAnchor,
 		HistoricalCallbacks: strings.TrimSpace(cbSb.String()),

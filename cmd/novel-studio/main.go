@@ -36,6 +36,8 @@ func main() {
 			os.Exit(service.RunDoctorCLI(os.Args[2:], defaultDataDir, 28980))
 		case "produce":
 			os.Exit(runProduceCLI(os.Args[2:], defaultDataDir))
+		case "genesis":
+			os.Exit(runGenesisCLI(os.Args[2:], defaultDataDir))
 		case "version", "--version", "-v":
 			fmt.Printf("NovelStudio %s\n", version)
 			os.Exit(0)
@@ -143,6 +145,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "NovelStudio (故事工厂) %s - AI 小说工业化创作桌面工作台\n\n", version)
 	fmt.Fprintf(os.Stderr, "用法:\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio [选项]                 直接启动桌面工作台与本地服务\n")
+	fmt.Fprintf(os.Stderr, "  novel-studio genesis [选项]         一键推演全书宏观创世总纲与分卷设定集\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio produce [选项]         无头命令行一键全流程自主章节生产\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio service <子命令>       macOS launchd 原生常驻后台守护服务\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio doctor                 运行环境依赖、数据库与健康探针自检报告\n\n")

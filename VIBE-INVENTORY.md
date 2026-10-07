@@ -27,12 +27,13 @@
 ## 精炼总进度 (Refinement Status)
 
 - 🟢 已完成深度精炼: 10/10 模块 (100%)
+- 宏观创世系统 (Phase 0): `ProjectFramework` 创世总纲、天道公理物理门禁、10级严谨战力天梯与代价天平、分卷大纲任务链 (`VolumeArcs`)、四大势力暗线谱系与开篇伏笔池自动播种
 - 状态机不变量: `EntityLedger` 结构化转移，严禁消耗未拥有道具
-- 上下文连续性: `CanonChronicle` 3 章密封滚动视界 + 前章 200 字正史尾段文风锚定 (`TailAnchor`)
+- 上下文连续性: `CanonChronicle` 3 章密封滚动视界 + 前章 200 字正史尾段文风锚定 (`TailAnchor`) + 分卷宏观使命锚定 (`CurrentVolume`)
 - 算法质检纵深: `QualityGate` 突发度 + 60+ 分层套词 + 对话占比 + 段落方差 + 重复短语 + 感叹号密度
 - 读者心理模型: `SceneBeat` 扩展读者情绪期望 (`ReaderEmotion`)、信息差 (`InfoGap`)、章末钩子 (`HookType`)
 - 深度文学 Prompt: `RenderScene` 声口个性约束、五感权重分层、张力曲线节奏指令、目标平台定制 (番茄/起点/知乎)
 - 差分返工保护: `RewriteDraft` 严格限制精修幅度 ≤35%，原样保留未受异议的精彩描写
 - 全自主流水线: `ChapterWorkshop` 支持最大 3 轮自主定向返工闭环与断点自愈
 - 测试验证: 26 个测试用例全部通过，带 `-race` 竞态检测与 0 泄漏
-- 分发就绪: 零 CGO 单二进制构建验证完成 (`novel-studio v1.0.0`)
+- 分发就绪: 零 CGO 单二进制构建验证完成 (`novel-studio v1.0.0`)，支持 CLI `genesis` / `produce` 与 Web 全功能操控
