@@ -109,6 +109,30 @@ type ReviewResult struct {
 	ReviewedAt  time.Time     `json:"reviewed_at"`
 }
 
+// AuditReport unifies statistical heuristic metrics and semantic editor review verdicts into a single seam.
+type AuditReport struct {
+	Verdict         ReviewVerdict `json:"verdict"`
+	Score           int           `json:"score"` // 1-100
+	BurstinessScore int           `json:"burstiness_score"`
+	HitBannedWords  []string      `json:"hit_banned_words"`
+	Issues          []string      `json:"issues"`
+	Suggestions     string        `json:"suggestions"`
+	ReviewedAt      time.Time     `json:"reviewed_at"`
+}
+
+func (a *AuditReport) ToReviewResult() *ReviewResult {
+	if a == nil {
+		return nil
+	}
+	return &ReviewResult{
+		Verdict:     a.Verdict,
+		Score:       a.Score,
+		Issues:      a.Issues,
+		Suggestions: a.Suggestions,
+		ReviewedAt:  a.ReviewedAt,
+	}
+}
+
 // Chapter represents a generated or drafted chapter.
 type Chapter struct {
 	ID              string        `json:"id"`
