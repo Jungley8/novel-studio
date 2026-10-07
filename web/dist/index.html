@@ -525,7 +525,7 @@
         const commitChapter = async () => {
           if (!currentProject.value || !workbench.value.content) return;
           try {
-            await api('/api/projects/' + currentProject.value.id + '/chapters', {
+            const res = await api('/api/projects/' + currentProject.value.id + '/chapters', {
               method: 'POST',
               body: JSON.stringify({
                 chapter_index: nextChapterIndex.value,
@@ -538,6 +538,9 @@
                 linter_passed: linterReport.value.passed
               })
             });
+            if (res.project) {
+              currentProject.value = res.project;
+            }
             alert('第 ' + nextChapterIndex.value + ' 章归档成功！状态机已结算！');
             workbench.value.content = '';
             workbench.value.coreConflict = '';
