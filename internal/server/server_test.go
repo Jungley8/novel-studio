@@ -608,3 +608,73 @@ func TestServer_CheckpointLifecycle(t *testing.T) {
 		t.Errorf("expected null after delete, got %s", w.Body.String())
 	}
 }
+
+func TestServer_ChapterUncommit(t *testing.T) {
+	srv, s, _ := setupTestServer(t)
+	ctx := context.Background()
+
+	// 1. Create project & commit chapter 1
+	p := &domain.Project{
+		ID:             "proj-uncommit-srv",
+		Title:          "撤回草稿测试作品",
+		TargetPlatform: "通用网文",
+		Protagonist: domain.Protagonist{
+			NameAndLevel: "陆青玄 (练气一层)",
+			Inventory:    "新手木剑",
+		},
+	}
+	_ = s.SaveProject(ctx, p)
+
+	chap := &domain.Chapter{
+		ID:           "ch_uncommit_srv_1",
+		ProjectID:    p.ID,
+		ChapterIndex: 1,
+		Title:        "第 1 章 青萍微末",
+		Content:      "细雨湿流光，芳草年年与恨长...",
+		Review: &domain.ReviewResult{
+			Verdict: domain.ReviewVerdictAccepted,
+			Score:   90,
+		},
+	}
+	if _, err := s.CommitChapter(ctx, p.ID, chap); err != nil {
+		t.Fatalf("CommitChapter failed: %v", err)
+	}
+
+	// 2. POST /api/projects/:id/chapters/1/uncommit
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+p.ID+"/chapters/1/uncommit", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Status     string                    `json:"status"`
+		Message    string                    `json:"message"`
+		Checkpoint *domain.ChapterCheckpoint `json:"checkpoint"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response failed: %v", err)
+	}
+	if resp.Status != "uncommitted" || resp.Checkpoint == nil || resp.Checkpoint.DraftText != chap.Content {
+		t.Errorf("unexpected uncommit response: %+v", resp)
+	}
+
+	// 3. Verify chapter is gone from chapters list
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+p.ID+"/chapters", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	var chs []*domain.Chapter
+	_ = json.Unmarshal(w.Body.Bytes(), &chs)
+	if len(chs) != 0 {
+		t.Errorf("expected 0 chapters, got %d", len(chs))
+	}
+
+	// 4. Verify checkpoint is available via GET checkpoint
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+p.ID+"/checkpoint?chapter_index=1", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 on get checkpoint, got %d", w.Code)
+	}
+}

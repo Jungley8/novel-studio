@@ -92,6 +92,10 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 	action := parts[1]
 	switch action {
 	case "chapters":
+		if len(parts) >= 3 {
+			s.handleProjectChapterSub(w, r, projectID, parts[2:])
+			return
+		}
 		s.handleProjectChapters(w, r, projectID)
 	case "hooks":
 		s.handleProjectHooks(w, r, projectID)
@@ -186,6 +190,74 @@ func (s *Server) handleProjectChapters(w http.ResponseWriter, r *http.Request, p
 		jsonResponse(w, http.StatusCreated, map[string]any{
 			"chapter": c,
 			"project": updatedProj,
+		})
+	default:
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleProjectChapterSub(w http.ResponseWriter, r *http.Request, projectID string, subParts []string) {
+	chapterIndex, err := strconv.Atoi(subParts[0])
+	if err != nil || chapterIndex <= 0 {
+		errorResponse(w, http.StatusBadRequest, "invalid chapter index")
+		return
+	}
+
+	ctx := r.Context()
+
+	// 1. /api/projects/:id/chapters/:index/uncommit (POST)
+	if len(subParts) >= 2 && (subParts[1] == "uncommit" || subParts[1] == "revert-draft") {
+		if r.Method != http.MethodPost {
+			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		cp, updatedProj, err := s.store.UncommitChapter(ctx, projectID, chapterIndex)
+		if err != nil {
+			errorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"status":     "uncommitted",
+			"message":    fmt.Sprintf("第 %d 章已成功从正史撤回为草稿", chapterIndex),
+			"checkpoint": cp,
+			"project":    updatedProj,
+		})
+		return
+	}
+
+	// 2. /api/projects/:id/chapters/:index (GET / DELETE)
+	switch r.Method {
+	case http.MethodGet:
+		chapter, err := s.store.GetChapter(ctx, projectID, chapterIndex)
+		if err != nil {
+			errorResponse(w, http.StatusNotFound, "chapter not found")
+			return
+		}
+		jsonResponse(w, http.StatusOK, chapter)
+	case http.MethodDelete:
+		toDraft := r.URL.Query().Get("to_draft") == "true"
+		if toDraft {
+			cp, updatedProj, err := s.store.UncommitChapter(ctx, projectID, chapterIndex)
+			if err != nil {
+				errorResponse(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			jsonResponse(w, http.StatusOK, map[string]any{
+				"status":     "uncommitted",
+				"message":    fmt.Sprintf("第 %d 章已成功撤回为草稿", chapterIndex),
+				"checkpoint": cp,
+				"project":    updatedProj,
+			})
+			return
+		}
+
+		if err := s.store.DeleteChapter(ctx, projectID, chapterIndex); err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"status":  "deleted",
+			"message": fmt.Sprintf("第 %d 章已成功删除", chapterIndex),
 		})
 	default:
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
