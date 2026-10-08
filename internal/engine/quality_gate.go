@@ -73,6 +73,9 @@ func (q *QualityGate) AuditWithHooks(
 	if runesCount >= 300 && (heuristic.DialogueRatio < 0.10 || heuristic.DialogueRatio > 0.65) {
 		hList = append(hList, fmt.Sprintf("对话占比异常 (%.1f%%，建议保持在 15%%-55%% 之间)", heuristic.DialogueRatio*100))
 	}
+	if isTele, teleMsg := DetectTelegraphicFragmentation(draftText); isTele {
+		hList = append(hList, fmt.Sprintf("严重警告: %s。严禁写成残缺不全的电报式碎词短语，必须驳回并要求补齐完整主谓宾！", teleMsg))
+	}
 
 	heuristicNotes := "各项算法指标优良"
 	if len(hList) > 0 {

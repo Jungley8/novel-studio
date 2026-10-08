@@ -122,7 +122,11 @@ func (l *Linter) Analyze(text string) domain.LinterResult {
 
 	runesLen := len([]rune(text))
 	exclExcessive := IsExclamationExcessive(text, exclDensity)
-	passed := len(hits) == 0 && burstiness >= 45 && !exclExcessive
+	isTele, teleMsg := DetectTelegraphicFragmentation(text)
+	if isTele {
+		hits = append(hits, teleMsg)
+	}
+	passed := len(hits) == 0 && burstiness >= 45 && !exclExcessive && !isTele
 	if runesLen >= 300 {
 		if dialogueRatio > 0.75 || (dialogueRatio < 0.05 && runesLen > 800) {
 			passed = false
@@ -131,10 +135,13 @@ func (l *Linter) Analyze(text string) domain.LinterResult {
 
 	var parts []string
 	if len(hits) > 0 {
-		parts = append(parts, "命中AI高频套词")
+		parts = append(parts, "命中AI高频套词或句式硬伤")
 	}
 	if burstiness < 45 {
 		parts = append(parts, "句长节奏过于平缓(易被平台反AI检测识别)")
+	}
+	if isTele {
+		parts = append(parts, teleMsg)
 	}
 	if exclExcessive {
 		parts = append(parts, fmt.Sprintf("感叹号过密(每千字%.1f个)", exclDensity))
@@ -394,3 +401,65 @@ func CountSimileClichés(text string) int {
 	return count
 }
 
+// DetectTelegraphicFragmentation checks if text suffers from broken telegraphic sentences
+// (e.g. subject/predicate/object omitted, lines degraded into 1-4 character isolated fragments,
+// or game combat stats announced in dialogue).
+func DetectTelegraphicFragmentation(text string) (bool, string) {
+	lines := strings.Split(text, "\n")
+	nonEmptyLines := 0
+	ultraShortLines := 0
+	consecutiveUltraShort := 0
+	maxConsecutiveUltraShort := 0
+	singleWordLines := 0
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			consecutiveUltraShort = 0
+			continue
+		}
+		nonEmptyLines++
+		runes := []rune(trimmed)
+		runeLen := len(runes)
+
+		// Line with <= 2 runes (e.g. "响。", "咔。", "烫。")
+		if runeLen <= 2 {
+			singleWordLines++
+		}
+
+		if runeLen <= 4 {
+			ultraShortLines++
+			consecutiveUltraShort++
+			if consecutiveUltraShort > maxConsecutiveUltraShort {
+				maxConsecutiveUltraShort = consecutiveUltraShort
+			}
+		} else {
+			consecutiveUltraShort = 0
+		}
+	}
+
+	if nonEmptyLines >= 5 {
+		// Rule 1: 3 or more consecutive ultra-short lines (e.g. "一滴。\n砸桌。\n响。")
+		if maxConsecutiveUltraShort >= 3 {
+			return true, fmt.Sprintf("存在连续%d行电报式残疾断句(单字单词孤立成行，缺失主谓宾完整结构)", maxConsecutiveUltraShort)
+		}
+
+		// Rule 2: Over 25% ultra-short lines
+		ratio := float64(ultraShortLines) / float64(nonEmptyLines)
+		if ratio > 0.25 && ultraShortLines >= 4 {
+			return true, fmt.Sprintf("电报式碎片短行占比过高(%.1f%%，缺失主谓宾自然结构)", ratio*100)
+		}
+
+		// Rule 3: Multiple 1-2 character isolated lines
+		if singleWordLines >= 2 {
+			return true, fmt.Sprintf("出现%d处单字独行成句(如'响。'、'烫。')，行文严重失真", singleWordLines)
+		}
+	}
+
+	// Rule 4: Game skill announcement patterns in quotes or standalone
+	if strings.Contains(text, "耗香火") || strings.Contains(text, "耗香灰") || strings.Contains(text, "炼气三层，耗") {
+		return true, "出现游戏数值式技能战报台词(如'耗香火三缕')，破坏沉浸式小说叙事"
+	}
+
+	return false, ""
+}

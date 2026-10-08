@@ -104,3 +104,57 @@ func TestLinter_ExclamationDensityAndNgrams(t *testing.T) {
 		t.Errorf("expected '天地玄黄' in repeated ngrams, got %v", resRep.TopRepeatedNgrams)
 	}
 }
+
+func TestLinter_DetectTelegraphicFragmentation(t *testing.T) {
+	l := engine.NewLinter(nil)
+
+	// Case 1: Extreme telegraphic fragmentation like the user's snippet
+	teleText := `子时。
+庙门开。
+冷风灌颈。
+灯火绿。
+一滴。
+砸桌。
+响。
+又一滴。
+砸灰。
+响。
+赵老六盘坐蒲团。
+“土神压顶咒。”
+“炼气三层，耗香火三缕。”`
+
+	isTele, msg := engine.DetectTelegraphicFragmentation(teleText)
+	if !isTele {
+		t.Fatalf("expected telegraphic fragmentation to be detected")
+	}
+	if msg == "" {
+		t.Fatalf("expected meaningful error message for telegraphic fragmentation")
+	}
+
+	res := l.Analyze(teleText)
+	if res.Passed {
+		t.Errorf("expected telegraphic text to fail linting")
+	}
+	foundHit := false
+	for _, hit := range res.HitBannedWords {
+		if strings.Contains(hit, "电报式") || strings.Contains(hit, "游戏") {
+			foundHit = true
+			break
+		}
+	}
+	if !foundHit {
+		t.Errorf("expected telegraphic or game error in HitBannedWords, got %v", res.HitBannedWords)
+	}
+
+	// Case 2: Natural prose with varied sentence length should PASS
+	normalProse := `腊月二十九，天光未亮，厚重的白霜沉沉压在土墙上。
+叶凌川蹲在圈口，盘在手心的杀猪绳又冷又硬，粗粝的麻刺扎得掌肉生疼。
+黑毛野猪正拱着食槽，两根森白獠牙刮擦生铁，发出刺耳的钝响。
+圈外站着的几个闲汉缩着脖子，鞋底在冻得坚硬的泥地上蹭来蹭去。
+「老六，这猪要是按老规矩办，可得先交庙里过道符。」王麻子吸溜了一下鼻涕，声音在冷风里打颤。`
+
+	isTele2, _ := engine.DetectTelegraphicFragmentation(normalProse)
+	if isTele2 {
+		t.Errorf("normal prose should not be flagged as telegraphic fragmentation")
+	}
+}
