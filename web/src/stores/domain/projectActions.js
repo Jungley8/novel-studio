@@ -111,5 +111,52 @@ export function createProjectActions(state, notify, helpers) {
         notify('删除伏笔失败', e.message, 'error');
       }
     },
+
+    async revertChapterToDraft(chapterIndex) {
+      if (!state.currentProject) return;
+      if (!confirm(`确定将第 ${chapterIndex} 章撤回为草稿吗？\n\n该操作将：\n1. 从全本已归档正史中移出该章\n2. 回滚本章对主角战力与背包物品的变迁账本\n3. 将本章成稿与因果节拍恢复为工坊草稿\n4. 还原在途质检报告供重新返工打磨`)) {
+        return;
+      }
+      state.isLoading = true;
+      try {
+        const res = await api.uncommitChapter(state.currentProject.id, chapterIndex);
+        state.chapters = await api.listChapters(state.currentProject.id);
+        state.hooks = await api.listHooks(state.currentProject.id);
+        state.currentProject = await api.getProject(state.currentProject.id);
+
+        if (res.checkpoint) {
+          state.workbench.content = res.checkpoint.draft_text || '';
+          state.workbench.beats = res.checkpoint.beats || [];
+          state.workbench.coreConflict = res.checkpoint.core_conflict || '';
+          state.workbench.stateMutation = res.checkpoint.state_mutation || { inventory_delta: '', power_delta: '' };
+          state.reviewResult = res.checkpoint.audit_report || null;
+          if (res.checkpoint.audit_report?.linter) {
+            state.linterReport = res.checkpoint.audit_report.linter;
+          }
+        }
+        state.editingChapterIndex = chapterIndex;
+        state.activeTab = 'workbench';
+        state.activeStep = state.reviewResult ? 5 : 3;
+        notify('已撤回为草稿', `第 ${chapterIndex} 章已移出正史并恢复为工作台草稿`, 'success');
+      } catch (e) {
+        console.error('revert chapter to draft error:', e);
+        notify('撤回归档失败', e.message, 'error');
+      } finally {
+        state.isLoading = false;
+      }
+    },
+
+    loadChapterToWorkbench(chapter) {
+      if (!chapter) return;
+      state.workbench.content = chapter.content || '';
+      state.workbench.beats = chapter.beats || [];
+      state.workbench.coreConflict = chapter.core_conflict || '';
+      state.workbench.stateMutation = chapter.state_mutation || { inventory_delta: '', power_delta: '' };
+      state.reviewResult = chapter.review || null;
+      state.editingChapterIndex = chapter.chapter_index;
+      state.activeTab = 'workbench';
+      state.activeStep = chapter.review ? 5 : 3;
+      notify('已载入工作台', `第 ${chapter.chapter_index} 章成稿已填入画布`, 'success');
+    },
   };
 }

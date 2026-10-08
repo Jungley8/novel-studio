@@ -53,6 +53,7 @@ export const state = reactive({
 
   // Workbench Execution State
   activeStep: 1,
+  editingChapterIndex: null,
   wordsTarget: 2000,
   narrativeStyle: 'hardboiled',
   rewriteLoopCount: 0,
@@ -113,6 +114,7 @@ export const state = reactive({
 
 export const computedState = {
   nextChapterIndex: computed(() => state.chapters.length + 1),
+  currentWorkingChapterIndex: computed(() => state.editingChapterIndex || (state.chapters.length + 1)),
   activeHooksList: computed(() => state.hooks.filter(h => h.status !== 'RESOLVED')),
   characterCodexList: computed(() => state.codexEntries.filter(e => e.category === 'CHARACTER')),
   filteredCodexEntries: computed(() => {

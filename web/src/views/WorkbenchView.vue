@@ -58,7 +58,7 @@
             <span class="text-xs font-bold text-ink-100 font-serif">生产流水线</span>
           </div>
           <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-atelier-800 text-brand-amber border border-atelier-700">
-            第 {{ computedState.nextChapterIndex.value }} 章
+            第 {{ computedState.currentWorkingChapterIndex.value }} 章
           </span>
         </div>
 
@@ -92,7 +92,7 @@
                 <Target class="w-3.5 h-3.5" />
                 <span>Step 1: 核心冲突与动机</span>
               </span>
-              <span class="text-[10px] font-mono text-ink-400">第 {{ computedState.nextChapterIndex.value }} 章</span>
+              <span class="text-[10px] font-mono text-ink-400">第 {{ computedState.currentWorkingChapterIndex.value }} 章</span>
             </div>
             <p class="text-[11px] text-ink-400 mt-1">确立本章的核心戏剧钩子、物理阻碍与高光反转目标。</p>
           </div>
@@ -405,7 +405,7 @@
             :disabled="!state.workbench.content.trim()"
             class="w-full py-2.5 bg-brand-emerald hover:bg-emerald-500 text-atelier-950 font-bold text-xs rounded-lg shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
             <Check class="w-4 h-4" />
-            <span>提交并原子封存第 {{ computedState.nextChapterIndex.value }} 章</span>
+            <span>提交并原子封存第 {{ computedState.currentWorkingChapterIndex.value }} 章</span>
           </button>
         </div>
       </div>
@@ -414,6 +414,21 @@
     <!-- 中栏：文学手稿画布 (弹性自适应排版空间) -->
     <div class="flex-1 flex flex-col min-w-0 overflow-hidden bg-atelier-950">
       
+      <!-- 撤回草稿 / 历史章节精修提示条 -->
+      <div 
+        v-if="state.editingChapterIndex" 
+        class="px-5 py-2 bg-brand-amber/10 border-b border-brand-amber/25 flex items-center justify-between text-xs text-brand-amber select-none shrink-0">
+        <div class="flex items-center gap-2">
+          <RotateCcw class="w-3.5 h-3.5 shrink-0" />
+          <span>正在精修 <strong>第 {{ state.editingChapterIndex }} 章</strong> 草稿（提交封存将覆盖该章节）</span>
+        </div>
+        <button 
+          @click="resetToNewChapter" 
+          class="px-2 py-0.5 rounded bg-brand-amber/20 hover:bg-brand-amber/30 text-[11px] font-medium transition cursor-pointer">
+          放弃精修，创作新章节
+        </button>
+      </div>
+
       <!-- 手稿顶栏状态与字数计量 -->
       <div class="h-11 px-5 border-b border-atelier-750 flex items-center justify-between bg-atelier-900/30 shrink-0 select-none">
         <div class="flex items-center gap-3 min-w-0">
@@ -428,7 +443,7 @@
           </button>
 
           <span class="text-xs font-bold font-serif text-ink-100 truncate">
-            第 {{ computedState.nextChapterIndex.value }} 章手稿
+            第 {{ computedState.currentWorkingChapterIndex.value }} 章手稿
           </span>
           <span class="text-[11px] font-mono text-ink-400 shrink-0">
             <strong class="text-brand-amber font-semibold">{{ state.workbench.content.length }}</strong> 字 · 约 {{ Math.max(1, Math.ceil(state.workbench.content.length / 400)) }} 分钟读完
@@ -734,7 +749,7 @@ async function handleDeriveBeats() {
   state.isGeneratingBeats = true;
   try {
     const res = await api.deriveBeats(state.currentProject.id, {
-      chapter_index: computedState.nextChapterIndex.value,
+      chapter_index: computedState.currentWorkingChapterIndex.value,
       core_conflict: state.workbench.coreConflict,
     });
     if (res.beats && res.beats.length) {
@@ -758,7 +773,7 @@ async function handleRenderScene() {
   state.isRenderingScene = true;
   try {
     const res = await api.renderScene(state.currentProject.id, {
-      chapter_index: computedState.nextChapterIndex.value,
+      chapter_index: computedState.currentWorkingChapterIndex.value,
       beats: state.workbench.beats,
       words_target: state.wordsTarget || 2000,
       narrative_style: state.narrativeStyle || 'hardboiled',
@@ -780,7 +795,7 @@ async function handleReviewDraft() {
   state.isReviewing = true;
   try {
     const res = await api.reviewDraft(state.currentProject.id, {
-      chapter_index: computedState.nextChapterIndex.value,
+      chapter_index: computedState.currentWorkingChapterIndex.value,
       content: state.workbench.content,
       beats: state.workbench.beats,
     });
@@ -806,7 +821,7 @@ async function handleRewriteDraft() {
       || '请重塑叙事节奏，补齐主谓宾完整结构，消除机械断句与模式化废词。';
 
     const res = await api.rewriteDraft(state.currentProject.id, {
-      chapter_index: computedState.nextChapterIndex.value,
+      chapter_index: computedState.currentWorkingChapterIndex.value,
       original_draft: state.workbench.content,
       content: state.workbench.content,
       issues: issues,
@@ -835,11 +850,12 @@ async function handleRewriteDraft() {
 // 提交归档
 async function handleCommitChapter() {
   if (!state.currentProject || !state.workbench.content.trim()) return;
+  const targetIndex = computedState.currentWorkingChapterIndex.value;
   try {
     const titleMatch = state.workbench.coreConflict.match(/^[^\n，。！？]+/);
-    const title = titleMatch ? titleMatch[0].trim() : `第 ${computedState.nextChapterIndex.value} 章`;
+    const title = titleMatch ? titleMatch[0].trim() : `第 ${targetIndex} 章`;
     await api.commitChapter(state.currentProject.id, {
-      chapter_index: computedState.nextChapterIndex.value,
+      chapter_index: targetIndex,
       title: title,
       content: state.workbench.content,
       beats: state.workbench.beats,
@@ -848,9 +864,10 @@ async function handleCommitChapter() {
       word_count: state.workbench.content.length,
     });
     try {
-      await api.clearCheckpoint(state.currentProject.id, computedState.nextChapterIndex.value);
+      await api.clearCheckpoint(state.currentProject.id, targetIndex);
     } catch (_) {}
-    notify('章节已成功封存归档', `第 ${computedState.nextChapterIndex.value} 章已记录入正史与状态账本`, 'success');
+    notify('章节已成功封存归档', `第 ${targetIndex} 章已记录入正史与状态账本`, 'success');
+    state.editingChapterIndex = null;
     await actions.selectProject(state.currentProject.id);
     state.workbench.content = '';
     state.workbench.coreConflict = '';
@@ -859,6 +876,21 @@ async function handleCommitChapter() {
   } catch (e) {
     notify('归档失败', e.message, 'error');
   }
+}
+
+function resetToNewChapter() {
+  state.editingChapterIndex = null;
+  state.workbench.content = '';
+  state.workbench.coreConflict = '';
+  state.workbench.beats = [
+    { phase: '蓄力压迫', tension: 4, action: '', expectation_broken: '' },
+    { phase: '试探下套', tension: 6, action: '', expectation_broken: '' },
+    { phase: '绝地反转', tension: 9, action: '', expectation_broken: '' },
+    { phase: '章末留钩', tension: 8, action: '', expectation_broken: '' },
+  ];
+  state.reviewResult = null;
+  state.activeStep = 1;
+  notify('已切换', '已重置画布为创作最新章节', 'info');
 }
 
 // 划词 Inline Actions
@@ -930,7 +962,7 @@ function openHumanTouchesModal() {
 
 onMounted(() => {
   if (actions.restoreCheckpoint) {
-    actions.restoreCheckpoint(computedState.nextChapterIndex.value);
+    actions.restoreCheckpoint(computedState.currentWorkingChapterIndex.value);
   }
 });
 </script>

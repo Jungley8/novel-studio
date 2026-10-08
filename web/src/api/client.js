@@ -48,6 +48,8 @@ export const api = {
   // Chapters & Hooks
   listChapters: (projectId) => apiFetch(`/api/projects/${projectId}/chapters`),
   commitChapter: (projectId, data) => apiFetch(`/api/projects/${projectId}/chapters`, { method: 'POST', body: JSON.stringify(data) }),
+  uncommitChapter: (projectId, chapterIndex) => apiFetch(`/api/projects/${projectId}/chapters/${chapterIndex}/uncommit`, { method: 'POST' }),
+  deleteChapter: (projectId, chapterIndex) => apiFetch(`/api/projects/${projectId}/chapters/${chapterIndex}`, { method: 'DELETE' }),
   listHooks: (projectId) => apiFetch(`/api/projects/${projectId}/hooks`),
   createHook: (projectId, data) => apiFetch(`/api/projects/${projectId}/hooks`, { method: 'POST', body: JSON.stringify(data) }),
   updateHook: (projectId, data) => apiFetch(`/api/projects/${projectId}/hooks`, { method: 'POST', body: JSON.stringify(data) }),

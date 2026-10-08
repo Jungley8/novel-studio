@@ -27,7 +27,7 @@ export function createWorkbenchActions(state, notify, helpers) {
       state.pipelineState.tokens = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
       state.pipelineState.lastFinished = false;
 
-      const nextIndex = state.chapters.length + 1;
+      const nextIndex = state.editingChapterIndex || (state.chapters.length + 1);
       let conflict = state.workbench.coreConflict?.trim();
       if (!conflict) {
         conflict = `第 ${nextIndex} 章高潮突围与世界法则冲突，主角面临因果阻碍与强敌制衡。`;
@@ -136,6 +136,7 @@ export function createWorkbenchActions(state, notify, helpers) {
         if (helpers && helpers.selectProject) {
           await helpers.selectProject(state.currentProject.id);
         }
+        state.editingChapterIndex = null;
         state.pipelineState.lastFinished = true;
       } catch (err) {
         console.error('runAutonomousPipeline error:', err);
@@ -149,11 +150,12 @@ export function createWorkbenchActions(state, notify, helpers) {
     async restoreCheckpoint(targetIndex) {
       if (!state.currentProject) return;
       if (state.workbench.content && state.workbench.content.trim()) return;
-      const idx = targetIndex || (state.chapters ? state.chapters.length + 1 : 1);
+      const idx = targetIndex || state.editingChapterIndex || (state.chapters ? state.chapters.length + 1 : 1);
       try {
         const cp = await api.getCheckpoint(state.currentProject.id, idx);
         if (cp && cp.draft_text) {
           state.workbench.content = cp.draft_text;
+          state.editingChapterIndex = cp.chapter_index;
           if (cp.core_conflict && !state.workbench.coreConflict) {
             state.workbench.coreConflict = cp.core_conflict;
           }
@@ -191,11 +193,12 @@ export function createWorkbenchActions(state, notify, helpers) {
 
     async discardCheckpoint(targetIndex) {
       if (!state.currentProject) return;
-      const idx = targetIndex || (state.chapters ? state.chapters.length + 1 : 1);
+      const idx = targetIndex || state.editingChapterIndex || (state.chapters ? state.chapters.length + 1 : 1);
       try {
         await api.clearCheckpoint(state.currentProject.id, idx);
         state.workbench.content = '';
         state.reviewResult = null;
+        state.editingChapterIndex = null;
         state.activeStep = 1;
         notify('草稿断点已废弃', `第 ${idx} 章在途草稿已清除`, 'info');
       } catch (err) {

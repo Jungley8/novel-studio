@@ -206,6 +206,24 @@
               <span>{{ copied ? '已复制' : '复制正文' }}</span>
             </button>
 
+            <!-- 载入工坊精修 -->
+            <button 
+              @click="handleLoadToWorkbench(currentSelectedChapter)"
+              class="px-2.5 py-1 text-xs bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-750 rounded-md transition flex items-center gap-1 cursor-pointer"
+              title="载入故事工坊画布进行精修">
+              <FileEdit class="w-3.5 h-3.5 text-brand-amber" />
+              <span>载入工坊</span>
+            </button>
+
+            <!-- 撤回归档为草稿 -->
+            <button 
+              @click="handleRevertToDraft(currentSelectedChapter.chapter_index)"
+              class="px-2.5 py-1 text-xs bg-brand-rose/10 hover:bg-brand-rose/20 text-brand-rose border border-brand-rose/30 rounded-md transition flex items-center gap-1 cursor-pointer"
+              title="将本章从正史移出，回滚主角账本，恢复为在途草稿">
+              <RotateCcw class="w-3.5 h-3.5" />
+              <span>撤回归档为草稿</span>
+            </button>
+
             <!-- 字体大小缩放 -->
             <div class="flex items-center bg-atelier-850 rounded border border-atelier-750 text-xs">
               <button 
@@ -416,14 +434,30 @@
           {{ c.content }}
         </div>
 
-        <div class="flex justify-between items-center text-xs text-ink-400 pt-1">
+        <div class="flex flex-col sm:flex-row justify-between sm:items-center text-xs text-ink-400 pt-2 border-t border-atelier-800/60 gap-2">
           <span class="text-[10px] font-mono">归档时间: {{ formatDate(c.created_at) }}</span>
-          <button 
-            @click="toggleExpand(c.id)" 
-            class="text-brand-amber hover:text-brand-amber-hover flex items-center gap-1 font-medium transition cursor-pointer">
-            <span>{{ expandedMap[c.id] ? '收起正文' : '展开阅读完整章节' }}</span>
-            <ChevronDown class="w-3.5 h-3.5 transition-transform" :class="expandedMap[c.id] ? 'rotate-180' : ''" />
-          </button>
+          <div class="flex items-center gap-3">
+            <button 
+              @click="handleLoadToWorkbench(c)" 
+              class="text-ink-300 hover:text-brand-amber flex items-center gap-1 font-medium transition cursor-pointer"
+              title="载入故事工坊画布进行精修">
+              <FileEdit class="w-3.5 h-3.5 text-brand-amber" />
+              <span>载入工坊</span>
+            </button>
+            <button 
+              @click="handleRevertToDraft(c.chapter_index)" 
+              class="text-ink-400 hover:text-brand-rose flex items-center gap-1 font-medium transition cursor-pointer"
+              title="将本章从正史移出，回滚主角账本，恢复为在途草稿">
+              <RotateCcw class="w-3.5 h-3.5" />
+              <span>撤回为草稿</span>
+            </button>
+            <button 
+              @click="toggleExpand(c.id)" 
+              class="text-brand-amber hover:text-brand-amber-hover flex items-center gap-1 font-medium transition cursor-pointer">
+              <span>{{ expandedMap[c.id] ? '收起正文' : '展开阅读完整章节' }}</span>
+              <ChevronDown class="w-3.5 h-3.5 transition-transform" :class="expandedMap[c.id] ? 'rotate-180' : ''" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -432,7 +466,7 @@
 
 <script setup>
 import { reactive, computed, ref, watch } from 'vue';
-import { state } from '../stores/appState';
+import { state, actions } from '../stores/appState';
 import { 
   Archive, 
   ChevronDown, 
@@ -450,7 +484,9 @@ import {
   ListTree, 
   LayoutGrid, 
   Search, 
-  PenTool 
+  PenTool,
+  RotateCcw,
+  FileEdit
 } from 'lucide-vue-next';
 
 // 视图模式: 'tree' (树形目录) 或 'cards' (瀑布卡片)
@@ -608,5 +644,15 @@ function formatDate(isoStr) {
   } catch {
     return isoStr;
   }
+}
+
+function handleLoadToWorkbench(chapter) {
+  if (!chapter) return;
+  actions.loadChapterToWorkbench(chapter);
+}
+
+async function handleRevertToDraft(chapterIndex) {
+  if (!chapterIndex) return;
+  await actions.revertChapterToDraft(chapterIndex);
 }
 </script>
