@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=NovelStudio
+Comment=工业级 AI 网络小说创作桌面工作台
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/novel-studio %u
+Terminal=false
+Type=Application
+Icon=novel-studio
+Categories=Utility;
+StartupWMClass=novel-studio
+
+ 

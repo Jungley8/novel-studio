@@ -107,21 +107,31 @@ Step 6: 【多形态资产导出】 (Export)
 
 ## 🚀 快速上手 (Quick Start)
 
-### 1. 源码编译
+### 1. 源码编译与桌面原生应用运行
 
 ```bash
 # 克隆仓库
 git clone https://github.com/Jungley8/novel-studio.git
 cd novel-studio
 
-# 编译为单二进制执行文件
+# 编译为单二进制执行文件 (包含 Wails v3 原生桌面引擎 + SQLite + Web 资源)
 go build -o novel-studio ./cmd/novel-studio
 
-# 运行桌面服务 (自动唤起浏览器)
+# 运行桌面原生工作台 (默认自动打开 macOS 原生毛玻璃窗口)
 ./novel-studio
 ```
 
-### 2. 常用启动参数
+### 2. 原生安装包打包 (macOS .app / .dmg)
+
+```bash
+# 打包为 macOS 原生应用程序包 (bin/novel-studio.app)
+wails3 task package
+
+# 一键生成带背景与图标的 macOS 独立安装镜像 (bin/novel-studio.dmg)
+wails3 task package:dmg
+```
+
+### 3. 常用启动参数
 
 ```bash
 # 指定自定义端口
@@ -130,7 +140,9 @@ go build -o novel-studio ./cmd/novel-studio
 # 指定数据存储目录 (默认为 ~/.novel-studio)
 ./novel-studio -data-dir /path/to/custom/data
 
-# 无头/服务器模式运行 (不自动打开浏览器)
+# 纯服务器/无头模式运行 (不打开原生桌面窗口，仅启动后台 HTTP API)
+./novel-studio -server
+# 或
 ./novel-studio -no-browser
 ```
 

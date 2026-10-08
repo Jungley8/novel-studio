@@ -27,3 +27,9 @@ Thumbs.db
 node_modules/
 web/node_modules/
 
+# Wails / Task cache
+.task/
+*.app/
+web/bindings/
+
+

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net/http"
@@ -21,6 +22,9 @@ var (
 )
 
 func main() {
+	// 0a. 自动维护 CLI 软链接到 ~/.local/bin，确保开源及桌面启动后终端随时可直接调用
+	desktop.EnsureCLIInPATH()
+
 	defaultHome, err := os.UserHomeDir()
 	if err != nil {
 		defaultHome = "."
@@ -32,7 +36,7 @@ func main() {
 		switch os.Args[1] {
 		case "service":
 			os.Exit(service.RunCLI(os.Args[2:], defaultDataDir, 28980))
-		case "doctor":
+		case "doctor", "health":
 			os.Exit(service.RunDoctorCLI(os.Args[2:], defaultDataDir, 28980))
 		case "produce":
 			os.Exit(runProduceCLI(os.Args[2:], defaultDataDir))
@@ -51,6 +55,7 @@ func main() {
 	portFlag := flag.Int("port", 0, "HTTP 服务端口号 (默认读取配置或 28980)")
 	dataDirFlag := flag.String("data-dir", defaultDataDir, "数据与状态机持久化目录")
 	noBrowserFlag := flag.Bool("no-browser", false, "启动后不自动唤起桌面浏览器 (适合服务器或无头模式)")
+	serverFlag := flag.Bool("server", false, "以纯服务器模式运行 (不启动原生桌面窗口)")
 	versionFlag := flag.Bool("version", false, "显示版本号")
 	flag.Parse()
 
@@ -58,6 +63,9 @@ func main() {
 		fmt.Printf("NovelStudio %s\n", version)
 		os.Exit(0)
 	}
+
+	// 0b. 自动维护 CLI 软链接到 ~/.local/bin，确保开源及桌面启动后终端随时可调用
+	desktop.EnsureCLIInPATH()
 
 	// 1. 确保数据目录存在
 	dataDir := *dataDirFlag
@@ -100,43 +108,63 @@ func main() {
 
 	addr := fmt.Sprintf("127.0.0.1:%d", cfg.ServerPort)
 	httpServer := &http.Server{
-		Addr:         addr,
-		Handler:      srvHandler,
-		ReadTimeout:  120 * time.Second,
-		WriteTimeout: 120 * time.Second,
+		Addr:              addr,
+		Handler:           srvHandler,
+		ReadHeaderTimeout: 30 * time.Second,
+		IdleTimeout:       300 * time.Second,
+		// WriteTimeout is intentionally 0 (disabled) to support long-lived Server-Sent Events (SSE) chapter pipelines
 	}
 
 	appURL := fmt.Sprintf("http://%s", addr)
 
 	fmt.Println("==================================================================")
 	fmt.Printf("  NovelStudio (故事工厂) %s - AI 小说工业化创作桌面工作台\n", version)
-	fmt.Printf("  ● 本地持久化数据库: %s\n", dbPath)
-	fmt.Printf("  ● 配置文件:         %s\n", configPath)
-	fmt.Printf("  ● 桌面访问地址:     %s\n", appURL)
-	fmt.Println("  ● 退出快捷键:       按 Ctrl+C 即可安全退出")
+	fmt.Printf("  ● 本地持久化数据库:   %s\n", dbPath)
+	fmt.Printf("  ● 配置文件:           %s\n", configPath)
+	fmt.Printf("  ● 本地接口与网络地址: %s\n", appURL)
+	if *serverFlag || *noBrowserFlag {
+		fmt.Println("  ● 运行模式:           服务器/无头守护模式")
+		fmt.Println("  ● 退出快捷键:         按 Ctrl+C 即可安全退出")
+	} else {
+		fmt.Println("  ● 运行模式:           Wails v3 原生桌面工作台")
+		fmt.Println("  ● 退出方式:           关闭原生窗口或按 Cmd+Q 即可退出")
+	}
 	fmt.Println("==================================================================")
 
-	// 4. 自动唤起系统浏览器
-	if !*noBrowserFlag && cfg.AutoOpenBrowser {
-		go func() {
-			time.Sleep(300 * time.Millisecond)
-			if err := desktop.OpenBrowser(appURL); err != nil {
-				fmt.Printf("[NovelStudio] 自动打开浏览器失败 (请手动访问 %s): %v\n", appURL, err)
-			}
-		}()
-	}
-
-	// 5. 启动服务监听
+	// 5. 启动后台 HTTP 服务监听 (供本地接口、健康检查与守护调用)
 	go func() {
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Fprintf(os.Stderr, "[NovelStudio] HTTP 服务异常退出: %v\n", err)
-			os.Exit(1)
+			if *serverFlag || *noBrowserFlag {
+				fmt.Fprintf(os.Stderr, "[NovelStudio] HTTP 服务异常退出: %v\n", err)
+				os.Exit(1)
+			} else {
+				// GUI 模式下，本地端口即使已被后台守护服务占用，原生桌面窗口依然基于内存直接通信，不退出
+				fmt.Fprintf(os.Stderr, "[NovelStudio] 本地端口 %d 监听提示 (%v)，原生桌面窗口继续正常启动\n", cfg.ServerPort, err)
+			}
 		}
 	}()
 
-	// 6. 捕获系统退出信号，优雅停机
-	if err := desktop.WaitForShutdown(httpServer); err != nil {
-		fmt.Fprintf(os.Stderr, "[NovelStudio] 优雅停机超时或异常: %v\n", err)
+	// 6. 根据模式选择启动原生桌面窗口或无头守护监听
+	if *serverFlag || *noBrowserFlag {
+		if err := desktop.WaitForShutdown(httpServer); err != nil {
+			fmt.Fprintf(os.Stderr, "[NovelStudio] 优雅停机超时或异常: %v\n", err)
+		}
+	} else {
+		err := desktop.RunDesktop(desktop.DesktopOptions{
+			Title:   fmt.Sprintf("NovelStudio (故事工厂) %s", version),
+			Width:   1440,
+			Height:  900,
+			Handler: srvHandler,
+			OnExit: func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = httpServer.Shutdown(ctx)
+			},
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[NovelStudio] 原生桌面应用运行异常: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	fmt.Println("[NovelStudio] 服务已安全关闭。")
 }
