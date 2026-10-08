@@ -54,6 +54,7 @@ export const state = reactive({
   // Workbench Execution State
   activeStep: 1,
   wordsTarget: 2000,
+  narrativeStyle: 'hardboiled',
   rewriteLoopCount: 0,
   isGeneratingBeats: false,
   isRenderingScene: false,

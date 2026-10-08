@@ -226,6 +226,28 @@
             </div>
           </div>
 
+          <!-- 叙事口吻腔调设定 -->
+          <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 space-y-2">
+            <label class="block text-[11px] text-ink-300 font-medium">叙事口吻与声口风格：</label>
+            <div class="space-y-1.5">
+              <button 
+                v-for="tone in [
+                  { id: 'hardboiled', name: '冷峻白描', desc: '硬派克制 · 物理物态' },
+                  { id: 'high_tension', name: '热血张力', desc: '暴风骤雨 · 极强冲突' },
+                  { id: 'classical', name: '古典志怪', desc: '青灯夜话 · 诡谲苍凉' },
+                  { id: 'vernacular', name: '市井烟火', desc: '粗粝鲜活 · 地气充盈' },
+                  { id: 'cinematic', name: '电影全景', desc: '蒙太奇景深 · 恢弘画卷' }
+                ]"
+                :key="tone.id"
+                @click="state.narrativeStyle = tone.id"
+                class="w-full py-1.5 px-2.5 text-[11px] rounded border transition cursor-pointer text-left flex items-center justify-between"
+                :class="state.narrativeStyle === tone.id ? 'bg-brand-amber/15 text-brand-amber border-brand-amber/40 font-bold' : 'bg-atelier-850 text-ink-300 border-atelier-750 hover:bg-atelier-800'">
+                <span>{{ tone.name }}</span>
+                <span class="text-[10px] opacity-75 font-sans">{{ tone.desc }}</span>
+              </button>
+            </div>
+          </div>
+
           <button 
             @click="handleRenderScene"
             :disabled="state.isRenderingScene"
@@ -413,6 +435,32 @@
           </span>
         </div>
 
+        <!-- 口吻与字数预算快捷切换器 -->
+        <div class="hidden lg:flex items-center gap-2 bg-atelier-850 px-2.5 py-1 rounded-md border border-atelier-750 text-xs">
+          <span class="text-[10px] font-mono text-ink-400">口吻:</span>
+          <select 
+            v-model="state.narrativeStyle" 
+            class="bg-transparent text-[11px] text-brand-amber font-medium focus:outline-none cursor-pointer">
+            <option value="hardboiled" class="bg-atelier-900 text-ink-100">冷峻白描 (硬派克制)</option>
+            <option value="high_tension" class="bg-atelier-900 text-ink-100">热血张力 (高压对抗)</option>
+            <option value="classical" class="bg-atelier-900 text-ink-100">古典志怪 (诡谲苍凉)</option>
+            <option value="vernacular" class="bg-atelier-900 text-ink-100">市井烟火 (粗粝鲜活)</option>
+            <option value="cinematic" class="bg-atelier-900 text-ink-100">电影全景 (景深画卷)</option>
+          </select>
+
+          <span class="text-atelier-700">|</span>
+
+          <span class="text-[10px] font-mono text-ink-400">预算:</span>
+          <select 
+            v-model="state.wordsTarget" 
+            class="bg-transparent text-[11px] text-brand-amber font-medium focus:outline-none cursor-pointer">
+            <option :value="1500" class="bg-atelier-900 text-ink-100">1500 字</option>
+            <option :value="2000" class="bg-atelier-900 text-ink-100">2000 字 (标准)</option>
+            <option :value="2500" class="bg-atelier-900 text-ink-100">2500 字 (丰满)</option>
+            <option :value="3000" class="bg-atelier-900 text-ink-100">3000 字 (大章)</option>
+          </select>
+        </div>
+
         <div class="flex items-center gap-1.5 shrink-0">
           <button 
             @click="actions.runLinter" 
@@ -507,7 +555,7 @@
 
       <!-- 纯净排版正文文本框 (呼吸感居中稿纸) -->
       <div class="flex-1 flex overflow-y-auto p-4 md:p-8 justify-center">
-        <div class="w-full max-w-3xl flex flex-col h-full bg-atelier-900/20 rounded-xl p-4 md:p-6 border border-atelier-800/40 shadow-inner">
+        <div class="w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl flex flex-col h-full bg-atelier-900/20 rounded-xl p-4 md:p-8 border border-atelier-800/40 shadow-inner transition-all">
           <textarea 
             id="prose-textarea"
             v-model="state.workbench.content"
@@ -713,6 +761,7 @@ async function handleRenderScene() {
       chapter_index: computedState.nextChapterIndex.value,
       beats: state.workbench.beats,
       words_target: state.wordsTarget || 2000,
+      narrative_style: state.narrativeStyle || 'hardboiled',
     });
     state.workbench.content = res.content || '';
     state.activeStep = 3;
@@ -762,6 +811,8 @@ async function handleRewriteDraft() {
       content: state.workbench.content,
       issues: issues,
       suggestions: suggestions,
+      words_target: state.wordsTarget || 2000,
+      narrative_style: state.narrativeStyle || 'hardboiled',
       review: {
         verdict: 'REVISION_NEEDED',
         score: state.reviewResult?.score || 70,
