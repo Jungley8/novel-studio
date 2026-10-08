@@ -12,12 +12,23 @@
         </div>
       </div>
 
-      <button 
-        @click="actions.saveConfig" 
-        class="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-md shadow transition cursor-pointer">
-        <Save class="w-3.5 h-3.5" />
-        <span>保存系统配置</span>
-      </button>
+      <div class="flex items-center gap-2.5">
+        <button 
+          @click="actions.testConfigConnection('default')" 
+          :disabled="state.configTestStatus?.default?.loading"
+          class="flex items-center gap-1.5 px-3 py-2 bg-atelier-800 hover:bg-atelier-700 text-ink-200 hover:text-white border border-atelier-700 font-medium text-xs rounded-md shadow transition cursor-pointer disabled:opacity-50">
+          <Loader2 v-if="state.configTestStatus?.default?.loading" class="w-3.5 h-3.5 animate-spin text-brand-amber" />
+          <Zap v-else class="w-3.5 h-3.5 text-brand-amber" />
+          <span>测试主接口连通性</span>
+        </button>
+
+        <button 
+          @click="actions.saveConfig" 
+          class="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-md shadow transition cursor-pointer">
+          <Save class="w-3.5 h-3.5" />
+          <span>保存系统配置</span>
+        </button>
+      </div>
     </div>
 
     <!-- 主配置表单卡片 -->
@@ -40,32 +51,105 @@
             class="w-full bg-atelier-950 border border-atelier-750 rounded-lg px-3.5 py-2 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60" 
             placeholder="sk-...">
         </div>
+
+        <!-- 主接口测试诊断状态栏 -->
+        <div v-if="state.configTestStatus?.default" class="text-xs rounded-lg p-2.5 flex items-center gap-2"
+          :class="{
+            'bg-atelier-950 text-ink-300 border border-atelier-800': state.configTestStatus.default.loading,
+            'bg-emerald-950/40 text-emerald-300 border border-emerald-800/60': state.configTestStatus.default.status === 'ok',
+            'bg-rose-950/40 text-rose-300 border border-rose-800/60': state.configTestStatus.default.status === 'error',
+          }">
+          <Loader2 v-if="state.configTestStatus.default.loading" class="w-4 h-4 animate-spin text-brand-amber shrink-0" />
+          <CheckCircle2 v-else-if="state.configTestStatus.default.status === 'ok'" class="w-4 h-4 text-emerald-400 shrink-0" />
+          <AlertCircle v-else class="w-4 h-4 text-rose-400 shrink-0" />
+          <span class="font-mono text-[11px] leading-tight break-all">{{ state.configTestStatus.default.message }}</span>
+        </div>
       </div>
 
       <!-- 三大角色分工模型绑定 -->
-      <div class="pt-2 border-t border-atelier-800">
-        <span class="text-xs font-serif font-bold text-brand-amber block mb-3">三大核心岗位角色模型绑定 (Role Model Binding)</span>
+      <div class="pt-4 border-t border-atelier-800">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-serif font-bold text-brand-amber block">三大核心岗位角色模型绑定 (Role Model Binding)</span>
+          <span class="text-[11px] text-ink-400">点击按钮可单独诊断各角色模型的可用性与推理延迟</span>
+        </div>
+
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
-            <label class="block text-[11px] text-ink-400 mb-1">因果推演师 (Reasoning)：</label>
+          <!-- 推演师 -->
+          <div class="p-3.5 bg-atelier-950/70 border border-atelier-800 rounded-lg space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="block text-[11px] font-semibold text-ink-300">因果推演师 (Reasoning)：</label>
+              <button 
+                @click="actions.testConfigConnection('reasoner')"
+                :disabled="state.configTestStatus?.reasoner?.loading"
+                class="px-2 py-0.5 text-[10px] bg-atelier-850 hover:bg-brand-amber/20 hover:text-brand-amber text-ink-300 border border-atelier-750 rounded transition cursor-pointer disabled:opacity-50">
+                <span v-if="state.configTestStatus?.reasoner?.loading">测试中...</span>
+                <span v-else>测连通性</span>
+              </button>
+            </div>
             <input 
               v-model="state.config.reasoning_model" 
-              class="w-full bg-atelier-950 border border-atelier-750 rounded-md px-3 py-1.5 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60" 
+              class="w-full bg-atelier-900 border border-atelier-750 rounded px-2.5 py-1.5 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60" 
               placeholder="deepseek-reasoner">
+            
+            <div v-if="state.configTestStatus?.reasoner" class="text-[10px] font-mono mt-1 flex items-center gap-1.5"
+              :class="state.configTestStatus.reasoner.status === 'ok' ? 'text-emerald-400' : (state.configTestStatus.reasoner.status === 'error' ? 'text-rose-400' : 'text-ink-400')">
+              <CheckCircle2 v-if="state.configTestStatus.reasoner.status === 'ok'" class="w-3 h-3 shrink-0" />
+              <AlertCircle v-else-if="state.configTestStatus.reasoner.status === 'error'" class="w-3 h-3 shrink-0" />
+              <Loader2 v-else class="w-3 h-3 animate-spin text-brand-amber shrink-0" />
+              <span class="truncate" :title="state.configTestStatus.reasoner.message">{{ state.configTestStatus.reasoner.message }}</span>
+            </div>
           </div>
-          <div>
-            <label class="block text-[11px] text-ink-400 mb-1">文学渲染师 (Writer)：</label>
+
+          <!-- 渲染师 -->
+          <div class="p-3.5 bg-atelier-950/70 border border-atelier-800 rounded-lg space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="block text-[11px] font-semibold text-ink-300">文学渲染师 (Writer)：</label>
+              <button 
+                @click="actions.testConfigConnection('writer')"
+                :disabled="state.configTestStatus?.writer?.loading"
+                class="px-2 py-0.5 text-[10px] bg-atelier-850 hover:bg-brand-amber/20 hover:text-brand-amber text-ink-300 border border-atelier-750 rounded transition cursor-pointer disabled:opacity-50">
+                <span v-if="state.configTestStatus?.writer?.loading">测试中...</span>
+                <span v-else>测连通性</span>
+              </button>
+            </div>
             <input 
               v-model="state.config.writer_model" 
-              class="w-full bg-atelier-950 border border-atelier-750 rounded-md px-3 py-1.5 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60" 
+              class="w-full bg-atelier-900 border border-atelier-750 rounded px-2.5 py-1.5 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60" 
               placeholder="deepseek-chat">
+            
+            <div v-if="state.configTestStatus?.writer" class="text-[10px] font-mono mt-1 flex items-center gap-1.5"
+              :class="state.configTestStatus.writer.status === 'ok' ? 'text-emerald-400' : (state.configTestStatus.writer.status === 'error' ? 'text-rose-400' : 'text-ink-400')">
+              <CheckCircle2 v-if="state.configTestStatus.writer.status === 'ok'" class="w-3 h-3 shrink-0" />
+              <AlertCircle v-else-if="state.configTestStatus.writer.status === 'error'" class="w-3 h-3 shrink-0" />
+              <Loader2 v-else class="w-3 h-3 animate-spin text-brand-amber shrink-0" />
+              <span class="truncate" :title="state.configTestStatus.writer.message">{{ state.configTestStatus.writer.message }}</span>
+            </div>
           </div>
-          <div>
-            <label class="block text-[11px] text-ink-400 mb-1">主审质检总监 (Reviewer)：</label>
+
+          <!-- 主审质检 -->
+          <div class="p-3.5 bg-atelier-950/70 border border-atelier-800 rounded-lg space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="block text-[11px] font-semibold text-ink-300">主审质检总监 (Reviewer)：</label>
+              <button 
+                @click="actions.testConfigConnection('reviewer')"
+                :disabled="state.configTestStatus?.reviewer?.loading"
+                class="px-2 py-0.5 text-[10px] bg-atelier-850 hover:bg-brand-amber/20 hover:text-brand-amber text-ink-300 border border-atelier-750 rounded transition cursor-pointer disabled:opacity-50">
+                <span v-if="state.configTestStatus?.reviewer?.loading">测试中...</span>
+                <span v-else>测连通性</span>
+              </button>
+            </div>
             <input 
               v-model="state.config.reviewer_model" 
-              class="w-full bg-atelier-950 border border-atelier-750 rounded-md px-3 py-1.5 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60" 
+              class="w-full bg-atelier-900 border border-atelier-750 rounded px-2.5 py-1.5 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60" 
               placeholder="deepseek-reasoner">
+            
+            <div v-if="state.configTestStatus?.reviewer" class="text-[10px] font-mono mt-1 flex items-center gap-1.5"
+              :class="state.configTestStatus.reviewer.status === 'ok' ? 'text-emerald-400' : (state.configTestStatus.reviewer.status === 'error' ? 'text-rose-400' : 'text-ink-400')">
+              <CheckCircle2 v-if="state.configTestStatus.reviewer.status === 'ok'" class="w-3 h-3 shrink-0" />
+              <AlertCircle v-else-if="state.configTestStatus.reviewer.status === 'error'" class="w-3 h-3 shrink-0" />
+              <Loader2 v-else class="w-3 h-3 animate-spin text-brand-amber shrink-0" />
+              <span class="truncate" :title="state.configTestStatus.reviewer.message">{{ state.configTestStatus.reviewer.message }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -94,6 +178,18 @@
         </div>
 
         <div v-if="state.enableReviewerProvider" class="p-4 bg-atelier-950 rounded-xl border border-atelier-750 space-y-3.5">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-medium text-ink-300">第三方独立物理端点设置</span>
+            <button 
+              @click="actions.testConfigConnection('reviewer_provider')"
+              :disabled="state.configTestStatus?.reviewer_provider?.loading"
+              class="flex items-center gap-1.5 px-3 py-1 bg-atelier-850 hover:bg-atelier-800 text-brand-amber border border-brand-amber/30 text-xs rounded shadow transition cursor-pointer disabled:opacity-50">
+              <Loader2 v-if="state.configTestStatus?.reviewer_provider?.loading" class="w-3.5 h-3.5 animate-spin text-brand-amber" />
+              <Zap v-else class="w-3.5 h-3.5 text-brand-amber" />
+              <span>测试独立通道</span>
+            </button>
+          </div>
+
           <div>
             <label class="block text-[11px] text-ink-400 mb-1">质检员 API Base URL：</label>
             <input 
@@ -116,6 +212,19 @@
               class="w-full bg-atelier-900 border border-atelier-750 rounded-md px-3 py-1.5 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60" 
               placeholder="gpt-4o / claude-3-5-sonnet-20241022">
           </div>
+
+          <!-- 独立通道诊断状态栏 -->
+          <div v-if="state.configTestStatus?.reviewer_provider" class="text-xs rounded-lg p-2.5 flex items-center gap-2"
+            :class="{
+              'bg-atelier-900 text-ink-300 border border-atelier-800': state.configTestStatus.reviewer_provider.loading,
+              'bg-emerald-950/40 text-emerald-300 border border-emerald-800/60': state.configTestStatus.reviewer_provider.status === 'ok',
+              'bg-rose-950/40 text-rose-300 border border-rose-800/60': state.configTestStatus.reviewer_provider.status === 'error',
+            }">
+            <Loader2 v-if="state.configTestStatus.reviewer_provider.loading" class="w-4 h-4 animate-spin text-brand-amber shrink-0" />
+            <CheckCircle2 v-else-if="state.configTestStatus.reviewer_provider.status === 'ok'" class="w-4 h-4 text-emerald-400 shrink-0" />
+            <AlertCircle v-else class="w-4 h-4 text-rose-400 shrink-0" />
+            <span class="font-mono text-[11px] leading-tight break-all">{{ state.configTestStatus.reviewer_provider.message }}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -124,5 +233,5 @@
 
 <script setup>
 import { state, actions } from '../stores/appState';
-import { Settings, Save, ShieldCheck } from 'lucide-vue-next';
+import { Settings, Save, ShieldCheck, Zap, Loader2, CheckCircle2, AlertCircle } from 'lucide-vue-next';
 </script>

@@ -35,6 +35,7 @@ export const api = {
   // Config
   getConfig: () => apiFetch('/api/config'),
   saveConfig: (data) => apiFetch('/api/config', { method: 'POST', body: JSON.stringify(data) }),
+  testConfig: (data) => apiFetch('/api/config/test', { method: 'POST', body: JSON.stringify(data) }),
 
   // Projects
   listProjects: () => apiFetch('/api/projects'),

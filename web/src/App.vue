@@ -1,12 +1,12 @@
 <template>
   <div class="flex h-screen bg-atelier-950 text-ink-100 font-sans overflow-hidden antialiased select-none">
     <!-- 侧边导航栏 -->
-    <AppSidebar />
+    <AppSidebar v-show="!state.isZenMode" />
 
     <!-- 主工作区容器 -->
     <main class="flex-1 flex flex-col min-w-0 bg-atelier-950 overflow-hidden relative">
       <!-- 顶部状态栏 -->
-      <AppHeader />
+      <AppHeader v-show="!state.isZenMode" @trigger-pipeline="actions.runAutonomousPipeline" />
 
       <!-- 视图挂载区 (根据 activeTab 响应式切换) -->
       <div class="flex-1 flex flex-col min-h-0 overflow-hidden relative">
@@ -74,5 +74,11 @@ import HumanTouchesModal from './components/modals/HumanTouchesModal.vue';
 onMounted(async () => {
   await actions.loadConfig();
   await actions.loadProjects();
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && state.isZenMode) {
+      state.isZenMode = false;
+    }
+  });
 });
 </script>

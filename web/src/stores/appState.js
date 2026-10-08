@@ -1,11 +1,18 @@
 import { reactive, computed } from 'vue';
-import { api } from '../api/client';
+import { createConfigActions } from './domain/configActions';
+import { createProjectActions } from './domain/projectActions';
+import { createWorkbenchActions } from './domain/workbenchActions';
+import { createMatrixActions } from './domain/matrixActions';
+import { createCodexActions } from './domain/codexActions';
 
 export const state = reactive({
   // Navigation & View
   activeTab: 'workbench',
   isLoading: false,
   globalLoadingMessage: '',
+  showWorkflowPanel: true,
+  showHorizonPanel: true,
+  isZenMode: false,
 
   // System & Config
   config: {
@@ -21,6 +28,7 @@ export const state = reactive({
     },
   },
   enableReviewerProvider: false,
+  configTestStatus: {},
 
   // Projects
   projects: [],
@@ -140,195 +148,25 @@ export function notify(title, message = '', type = 'info', duration = 3500) {
   }, duration);
 }
 
-// Actions
+// Assemble Domain Actions with Cross-Domain Coordination
+const actionHelpers = {};
+
+const configActs = createConfigActions(state, notify);
+const matrixActs = createMatrixActions(state, notify, actionHelpers);
+const codexActs = createCodexActions(state, notify);
+const projectActs = createProjectActions(state, notify, actionHelpers);
+const workbenchActs = createWorkbenchActions(state, notify, actionHelpers);
+
+// Register cross-domain helper functions for inter-module workflows
+actionHelpers.loadMatrixOverview = matrixActs.loadMatrixOverview;
+actionHelpers.loadCodexEntries = codexActs.loadCodexEntries;
+actionHelpers.loadAnalytics = matrixActs.loadAnalytics;
+actionHelpers.selectProject = projectActs.selectProject;
+
 export const actions = {
-  async loadConfig() {
-    try {
-      const data = await api.getConfig();
-      state.config = {
-        ...state.config,
-        ...data,
-        reviewer_provider: data.reviewer_provider || { api_base: '', api_key: '', model: '' },
-      };
-      if (data.reviewer_provider && (data.reviewer_provider.api_base || data.reviewer_provider.api_key || data.reviewer_provider.model)) {
-        state.enableReviewerProvider = true;
-      }
-    } catch (e) {
-      console.error('load config error:', e);
-    }
-  },
-
-  async saveConfig() {
-    try {
-      const payload = { ...state.config };
-      if (!state.enableReviewerProvider) {
-        payload.reviewer_provider = null;
-      }
-      await api.saveConfig(payload);
-      notify('系统配置已保存', '模型与路由参数已实时更新生效', 'success');
-    } catch (e) {
-      notify('保存配置失败', e.message, 'error');
-    }
-  },
-
-  async loadProjects() {
-    try {
-      state.projects = await api.listProjects();
-      if (state.projects.length > 0 && !state.selectedProjectId) {
-        state.selectedProjectId = state.projects[0].id;
-        await this.selectProject(state.projects[0].id);
-      }
-    } catch (e) {
-      console.error('load projects error:', e);
-    }
-  },
-
-  async selectProject(id) {
-    if (!id) return;
-    state.selectedProjectId = id;
-    try {
-      state.currentProject = await api.getProject(id);
-      state.chapters = await api.listChapters(id);
-      state.hooks = await api.listHooks(id);
-      await this.loadMatrixOverview();
-      await this.loadCodexEntries();
-      await this.loadAnalytics();
-    } catch (e) {
-      console.error('select project error:', e);
-      notify('加载项目失败', e.message, 'error');
-    }
-  },
-
-  async loadMatrixOverview() {
-    if (!state.currentProject) return;
-    try {
-      state.matrixOverview = await api.getMatrixOverview(state.currentProject.id);
-    } catch (e) {
-      console.error('load matrix error:', e);
-    }
-  },
-
-  async loadCodexEntries() {
-    if (!state.currentProject) return;
-    try {
-      state.codexEntries = await api.listCodexEntries(state.currentProject.id);
-    } catch (e) {
-      console.error('load codex error:', e);
-    }
-  },
-
-  async loadAnalytics() {
-    if (!state.currentProject) return;
-    try {
-      state.analyticsHeatmap = await api.getAnalyticsHeatmap(state.currentProject.id);
-      state.analyticsTension = await api.getAnalyticsTension(state.currentProject.id);
-    } catch (e) {
-      console.error('load analytics error:', e);
-    }
-  },
-
-  async runLinter() {
-    if (!state.workbench.content) return;
-    try {
-      state.linterReport = await api.lintAnalyze(state.workbench.content);
-    } catch (e) {
-      console.error('linter error:', e);
-    }
-  },
-
-  async saveCurrentProject() {
-    if (!state.currentProject) return;
-    try {
-      await api.updateProject(state.currentProject);
-      notify('项目设定已保存', '实体物理状态与规则已持久化', 'success');
-    } catch (e) {
-      notify('保存项目失败', e.message, 'error');
-    }
-  },
-
-  async saveFramework() {
-    if (!state.currentProject?.framework) return;
-    try {
-      await api.updateFramework(state.currentProject.id, state.currentProject.framework);
-      notify('创世总纲已保存', '天道公理与战力阶梯已同步', 'success');
-    } catch (e) {
-      notify('保存创世总纲失败', e.message, 'error');
-    }
-  },
-
-  async bootstrapCurrentFramework(concept) {
-    if (!state.currentProject) return;
-    state.isLoading = true;
-    try {
-      const c = concept || state.currentProject.framework?.core_concept || state.currentProject.title;
-      state.currentProject.framework = await api.bootstrapFramework(state.currentProject.id, c);
-      notify('创世推演完成', '天道法则与战力天平已自动构建', 'success');
-    } catch (e) {
-      notify('创世推演失败', e.message, 'error');
-    } finally {
-      state.isLoading = false;
-    }
-  },
-
-  async createPlotHook(title, details, targetChapter) {
-    if (!state.currentProject) return;
-    try {
-      const newHook = {
-        title: title || '未命名伏笔',
-        details: details || '',
-        created_chapter: state.chapters.length + 1,
-        target_chapter: targetChapter || state.chapters.length + 3,
-        status: 'OPEN',
-      };
-      await api.createHook(state.currentProject.id, newHook);
-      state.hooks = await api.listHooks(state.currentProject.id);
-      notify('伏笔已记录', '因果账本已更新', 'success');
-    } catch (e) {
-      notify('新建伏笔失败', e.message, 'error');
-    }
-  },
-
-  async updatePlotHook(hook) {
-    if (!state.currentProject) return;
-    try {
-      await api.updateHook(state.currentProject.id, hook);
-      notify('伏笔状态已更新', '', 'success', 2000);
-    } catch (e) {
-      notify('更新伏笔失败', e.message, 'error');
-    }
-  },
-
-  async deletePlotHook(id) {
-    if (!confirm('确定删除该伏笔记录吗？')) return;
-    try {
-      await api.deleteHook(id);
-      state.hooks = state.hooks.filter(h => h.id !== id);
-      notify('伏笔已删除', '', 'info', 2000);
-    } catch (e) {
-      notify('删除伏笔失败', e.message, 'error');
-    }
-  },
-
-  async deleteScene(sceneId) {
-    if (!confirm('确定删除该场次吗？')) return;
-    try {
-      await api.deleteScene(sceneId);
-      await this.loadMatrixOverview();
-      notify('场次已删除', '', 'info', 2000);
-    } catch (e) {
-      notify('删除场次失败', e.message, 'error');
-    }
-  },
-
-  async deleteCodexEntry(entryId) {
-    if (!confirm('确定删除该百科实体吗？')) return;
-    try {
-      await api.deleteCodexEntry(state.currentProject.id, entryId);
-      state.codexEntries = state.codexEntries.filter(e => e.id !== entryId);
-      notify('百科实体已删除', '', 'info', 2000);
-    } catch (e) {
-      notify('删除实体失败', e.message, 'error');
-    }
-  },
+  ...configActs,
+  ...projectActs,
+  ...workbenchActs,
+  ...matrixActs,
+  ...codexActs,
 };
-

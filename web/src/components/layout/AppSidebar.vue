@@ -1,19 +1,19 @@
 <template>
   <aside class="w-64 bg-atelier-900 border-r border-atelier-750 flex flex-col justify-between shrink-0 select-none">
     <div class="flex flex-col min-h-0">
-      <!-- 品牌标识 -->
-      <div class="h-14 px-4 border-b border-atelier-750 flex items-center justify-between">
-        <div class="flex items-center gap-2.5">
-          <div class="w-7 h-7 rounded-md bg-brand-amber/15 border border-brand-amber/30 flex items-center justify-center text-brand-amber font-serif font-bold text-sm shadow-amber-glow">
+      <!-- 品牌标识与 macOS 交通灯避让区 -->
+      <div class="h-14 pl-20 pr-3 border-b border-atelier-750 flex items-center justify-between" style="-webkit-app-region: drag;">
+        <div class="flex items-center gap-2" style="-webkit-app-region: no-drag;">
+          <div class="w-6 h-6 rounded-md bg-brand-amber/15 border border-brand-amber/30 flex items-center justify-center text-brand-amber font-serif font-bold text-xs shadow-amber-glow">
             墨
           </div>
           <div>
-            <span class="text-sm font-semibold tracking-wide text-ink-50">NovelStudio</span>
-            <span class="block text-[9px] font-mono tracking-wider text-ink-400 uppercase -mt-0.5">Atelier 2.0</span>
+            <span class="text-xs font-semibold tracking-wide text-ink-50">NovelStudio</span>
+            <span class="block text-[8px] font-mono tracking-wider text-ink-400 uppercase -mt-0.5">Desktop Pro</span>
           </div>
         </div>
-        <span class="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-          GO·SQLITE
+        <span class="text-[9px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" style="-webkit-app-region: no-drag;">
+          NATIVE
         </span>
       </div>
 
@@ -28,7 +28,7 @@
             <span>新建</span>
           </button>
         </div>
-        <div class="relative">
+        <div v-if="state.projects.length > 0" class="relative">
           <select 
             :value="state.selectedProjectId" 
             @change="actions.selectProject($event.target.value)"
@@ -37,6 +37,13 @@
           </select>
           <ChevronDown class="w-3.5 h-3.5 text-ink-400 absolute right-2 top-2.5 pointer-events-none" />
         </div>
+        <button 
+          v-else
+          @click="state.showNewProjectModal = true"
+          class="w-full py-2 px-2.5 bg-brand-amber/10 hover:bg-brand-amber/20 border border-brand-amber/30 rounded-md text-xs text-brand-amber font-medium flex items-center justify-center gap-1.5 transition cursor-pointer">
+          <Plus class="w-3.5 h-3.5" />
+          <span>点击创建第一部作品</span>
+        </button>
       </div>
 
       <!-- 主导航列表 -->

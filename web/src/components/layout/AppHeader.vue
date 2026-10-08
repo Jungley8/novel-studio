@@ -1,7 +1,7 @@
 <template>
-  <header class="h-14 border-b border-atelier-750 px-6 flex items-center justify-between bg-atelier-900/60 backdrop-blur-md select-none shrink-0 z-10">
+  <header class="h-14 border-b border-atelier-750 px-5 flex items-center justify-between bg-atelier-900/60 backdrop-blur-md select-none shrink-0 z-10" style="-webkit-app-region: drag;">
     <!-- 左侧：作品与状态 -->
-    <div class="flex items-center gap-3 min-w-0" v-if="state.currentProject">
+    <div class="flex items-center gap-3 min-w-0" v-if="state.currentProject" style="-webkit-app-region: no-drag;">
       <h2 class="text-sm font-bold font-serif text-ink-50 truncate tracking-wide">
         {{ state.currentProject.title }}
       </h2>
@@ -12,16 +12,40 @@
         · {{ computedState.currentVolume.value.title }}
       </span>
     </div>
-    <div v-else class="text-xs text-ink-400">
-      请选择或新建小说作品
+    <div v-else class="text-xs text-ink-400 font-serif" style="-webkit-app-region: no-drag;">
+      故事工厂 · 请在左侧选择或新建作品
     </div>
 
     <!-- 右侧：全局快捷工具与流水线驱动 -->
-    <div class="flex items-center gap-2.5 shrink-0">
+    <div class="flex items-center gap-2 shrink-0" style="-webkit-app-region: no-drag;">
+      <!-- 面板视界与专注模式开关 (仅手稿工作台) -->
+      <div v-if="state.activeTab === 'workbench'" class="flex items-center bg-atelier-850 border border-atelier-750 rounded-md p-0.5 mr-1">
+        <button 
+          @click="state.showWorkflowPanel = !state.showWorkflowPanel"
+          :class="state.showWorkflowPanel ? 'bg-atelier-750 text-brand-amber' : 'text-ink-400 hover:text-ink-200'"
+          class="p-1.5 rounded transition cursor-pointer"
+          title="切换左侧工序决策面板">
+          <PanelLeft class="w-3.5 h-3.5" />
+        </button>
+        <button 
+          @click="state.showHorizonPanel = !state.showHorizonPanel"
+          :class="state.showHorizonPanel ? 'bg-atelier-750 text-brand-cyan' : 'text-ink-400 hover:text-ink-200'"
+          class="p-1.5 rounded transition cursor-pointer"
+          title="切换右侧因果状态面板">
+          <PanelRight class="w-3.5 h-3.5" />
+        </button>
+        <button 
+          @click="state.isZenMode = true"
+          class="p-1.5 rounded text-ink-400 hover:text-brand-amber hover:bg-atelier-750 transition cursor-pointer"
+          title="进入极简专注写作模式 (按 ESC 退出)">
+          <Maximize2 class="w-3.5 h-3.5" />
+        </button>
+      </div>
+
       <!-- 真实 Token 成本计数器 -->
       <div 
         v-if="state.pipelineState.tokens.total_tokens > 0"
-        class="hidden lg:flex items-center gap-2 px-2.5 py-1 bg-atelier-850 rounded-md border border-atelier-750 text-[11px] font-mono text-ink-300">
+        class="hidden xl:flex items-center gap-2 px-2.5 py-1 bg-atelier-850 rounded-md border border-atelier-750 text-[11px] font-mono text-ink-300">
         <span>Token: <strong class="text-ink-100 font-semibold">{{ state.pipelineState.tokens.total_tokens.toLocaleString() }}</strong></span>
         <span class="text-ink-500">|</span>
         <span>${{ computedState.pipelineCostUSD.value.toFixed(4) }}</span>
@@ -49,7 +73,7 @@
       <button 
         @click="$emit('trigger-pipeline')"
         :disabled="state.pipelineState.active || !state.currentProject"
-        class="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-md transition shadow-atelier-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-md transition shadow-atelier-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         :class="state.pipelineState.active 
           ? 'bg-amber-500/20 text-brand-amber border border-brand-amber/40 animate-subtle-pulse' 
           : 'bg-gradient-to-r from-brand-amber to-amber-600 hover:from-brand-amber-hover hover:to-amber-500 text-atelier-950'">
@@ -63,7 +87,7 @@
 
 <script setup>
 import { state, computedState } from '../../stores/appState';
-import { Eye, MessageSquareText, Zap, Loader2 } from 'lucide-vue-next';
+import { Eye, MessageSquareText, Zap, Loader2, PanelLeft, PanelRight, Maximize2 } from 'lucide-vue-next';
 
 defineEmits(['trigger-pipeline']);
 </script>
