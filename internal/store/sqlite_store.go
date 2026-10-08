@@ -24,10 +24,12 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	}
 
 	// Optimize for concurrency & single-file responsiveness
-	if _, err := db.Exec(`PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;`); err != nil {
+	if _, err := db.Exec(`PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("set pragma failed: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	s := &SQLiteStore{db: db}
 	if err := s.migrate(); err != nil {

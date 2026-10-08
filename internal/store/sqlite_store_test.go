@@ -752,4 +752,3 @@ func TestSQLiteStore_MultiCharacterMutationCommit(t *testing.T) {
 		t.Errorf("expected progression notes to contain 震撼归心, got %s", gotChar2.Progressions[0].Notes)
 	}
 }
-

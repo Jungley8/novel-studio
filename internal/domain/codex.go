@@ -69,7 +69,6 @@ type CodexEntry struct {
 	UpdatedAt          time.Time        `json:"updated_at"`
 }
 
-
 // ActiveProgression returns the most relevant Progression snapshot for a given chapter index.
 func (e *CodexEntry) ActiveProgression(chapterIndex int) *Progression {
 	var best *Progression
