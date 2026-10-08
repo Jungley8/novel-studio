@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
@@ -45,6 +46,7 @@ type WorkshopProduceRequest struct {
 	ProjectID        string           `json:"project_id"`
 	ChapterIndex     int              `json:"chapter_index"`
 	CoreConflict     string           `json:"core_conflict"`
+	InitialDraft     string           `json:"initial_draft,omitempty"`
 	ReasoningModel   string           `json:"reasoning_model,omitempty"`
 	WriterModel      string           `json:"writer_model,omitempty"`
 	ReviewerModel    string           `json:"reviewer_model,omitempty"`
@@ -213,48 +215,58 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		})
 	}
 
-	// 3. Render Literary Scene Draft (Skip if recovered from checkpoint)
+	// 3. Render Literary Scene Draft (Skip if recovered from checkpoint or initial draft provided)
 	if draftText == "" {
-		emit(WorkshopEvent{Phase: PhaseRendering, Message: "正在进行文学高张力渲染..."})
-		rendered, usage, rErr := w.orch.RenderSceneWithHorizon(ctx, req.WriterModel, horizon, beatsOut.Beats, req.WordsTarget)
-		if rErr != nil {
-			return nil, fmt.Errorf("render scene draft failed: %w", rErr)
-		}
-		draftText = rendered
-		addUsage(usage)
-
-		// Optional: Apply Censor Harmonization & Adversarial Perturbation
-		if req.EnableHarmonize || req.PerturbIntensity > 0 {
-			intensity := req.PerturbIntensity
-			if intensity <= 0 {
-				intensity = 0.6
+		if strings.TrimSpace(req.InitialDraft) != "" {
+			draftText = strings.TrimSpace(req.InitialDraft)
+			emit(WorkshopEvent{
+				Phase:       PhaseDrafted,
+				Message:     fmt.Sprintf("已载入前版手稿草稿 (共 %d 字)，将在前版基础上执行质检与针对性返工", len([]rune(draftText))),
+				DraftText:   draftText,
+				TotalTokens: totalUsage.TotalTokens,
+			})
+		} else {
+			emit(WorkshopEvent{Phase: PhaseRendering, Message: "正在进行文学高张力渲染..."})
+			rendered, usage, rErr := w.orch.RenderSceneWithHorizon(ctx, req.WriterModel, horizon, beatsOut.Beats, req.WordsTarget)
+			if rErr != nil {
+				return nil, fmt.Errorf("render scene draft failed: %w", rErr)
 			}
-			harmonized, hReport := w.harmonizer.FullProcess(draftText, intensity)
-			if len(hReport.HarmonizedItems) > 0 {
-				emit(WorkshopEvent{
-					Phase:   PhaseDrafted,
-					Message: fmt.Sprintf("已完成国内平台合规脱敏和谐 (%d 处高危敏感词平滑替换)", len(hReport.HarmonizedItems)),
-				})
-			}
-			draftText = harmonized
-		}
+			draftText = rendered
+			addUsage(usage)
 
-		// Save Checkpoint after initial rendering
-		_ = w.store.SaveCheckpoint(ctx, &domain.ChapterCheckpoint{
-			ProjectID:     req.ProjectID,
-			ChapterIndex:  req.ChapterIndex,
-			Phase:         domain.CheckpointPhaseDrafted,
-			CoreConflict:  req.CoreConflict,
-			Beats:         beatsOut.Beats,
-			StateMutation: beatsOut.StateMutation,
-			DraftText:     draftText,
-		})
-		emit(WorkshopEvent{
-			Phase:       PhaseDrafted,
-			Message:     fmt.Sprintf("正文初稿渲染完成 (共 %d 字)", len([]rune(draftText))),
-			DraftText:   draftText,
-			TotalTokens: totalUsage.TotalTokens,
-		})
+			// Optional: Apply Censor Harmonization & Adversarial Perturbation
+			if req.EnableHarmonize || req.PerturbIntensity > 0 {
+				intensity := req.PerturbIntensity
+				if intensity <= 0 {
+					intensity = 0.6
+				}
+				harmonized, hReport := w.harmonizer.FullProcess(draftText, intensity)
+				if len(hReport.HarmonizedItems) > 0 {
+					emit(WorkshopEvent{
+						Phase:   PhaseDrafted,
+						Message: fmt.Sprintf("已完成国内平台合规脱敏和谐 (%d 处高危敏感词平滑替换)", len(hReport.HarmonizedItems)),
+					})
+				}
+				draftText = harmonized
+			}
+
+			// Save Checkpoint after initial rendering
+			_ = w.store.SaveCheckpoint(ctx, &domain.ChapterCheckpoint{
+				ProjectID:     req.ProjectID,
+				ChapterIndex:  req.ChapterIndex,
+				Phase:         domain.CheckpointPhaseDrafted,
+				CoreConflict:  req.CoreConflict,
+				Beats:         beatsOut.Beats,
+				StateMutation: beatsOut.StateMutation,
+				DraftText:     draftText,
+			})
+			emit(WorkshopEvent{
+				Phase:       PhaseDrafted,
+				Message:     fmt.Sprintf("正文初稿渲染完成 (共 %d 字)", len([]rune(draftText))),
+				DraftText:   draftText,
+				TotalTokens: totalUsage.TotalTokens,
+			})
+		}
 	}
 
 	// 4. Audit via Quality Gate (with plot hooks resolution awareness)

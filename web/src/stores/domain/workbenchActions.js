@@ -37,6 +37,7 @@ export function createWorkbenchActions(state, notify, helpers) {
       const payload = {
         chapter_index: nextIndex,
         core_conflict: conflict,
+        initial_draft: state.workbench.content?.trim() || '',
         words_target: 2000,
         auto_commit: true,
         max_rewrite_loops: 3,

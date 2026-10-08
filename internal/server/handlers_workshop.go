@@ -224,15 +224,42 @@ func (s *Server) handleRewriteDraft(w http.ResponseWriter, r *http.Request, proj
 	var req struct {
 		ChapterIndex  int                  `json:"chapter_index"`
 		OriginalDraft string               `json:"original_draft"`
+		Content       string               `json:"content"`
+		Issues        []string             `json:"issues"`
+		Suggestions   string               `json:"suggestions"`
 		Review        *domain.ReviewResult `json:"review"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.Review == nil {
-		errorResponse(w, http.StatusBadRequest, "review result is required for rewriting")
+
+	if strings.TrimSpace(req.OriginalDraft) == "" && strings.TrimSpace(req.Content) != "" {
+		req.OriginalDraft = req.Content
+	}
+	if strings.TrimSpace(req.OriginalDraft) == "" {
+		errorResponse(w, http.StatusBadRequest, "original draft cannot be empty")
 		return
+	}
+
+	if req.Review == nil {
+		if len(req.Issues) > 0 || strings.TrimSpace(req.Suggestions) != "" {
+			req.Review = &domain.ReviewResult{
+				Verdict:     domain.ReviewVerdictRevision,
+				Score:       70,
+				Issues:      req.Issues,
+				Suggestions: req.Suggestions,
+				ReviewedAt:  time.Now(),
+			}
+		} else {
+			req.Review = &domain.ReviewResult{
+				Verdict:     domain.ReviewVerdictRevision,
+				Score:       70,
+				Issues:      []string{"需根据去AI味与语法健全原则进行深度精修"},
+				Suggestions: "请重塑叙事节奏，补齐主谓宾完整结构，消除机械断句与模式化废词，增强骨肉质感与真实呼吸感。",
+				ReviewedAt:  time.Now(),
+			}
+		}
 	}
 
 	p, err := s.store.GetProject(r.Context(), projectID)

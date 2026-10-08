@@ -750,11 +750,24 @@ async function handleRewriteDraft() {
   if (!state.currentProject || !state.workbench.content.trim()) return;
   state.isRewriting = true;
   try {
+    const issues = state.reviewResult?.issues?.length 
+      ? state.reviewResult.issues 
+      : ['需根据去AI味与语法健全原则进行深度精修'];
+    const suggestions = state.reviewResult?.suggestions 
+      || '请重塑叙事节奏，补齐主谓宾完整结构，消除机械断句与模式化废词。';
+
     const res = await api.rewriteDraft(state.currentProject.id, {
       chapter_index: computedState.nextChapterIndex.value,
+      original_draft: state.workbench.content,
       content: state.workbench.content,
-      issues: state.reviewResult?.issues || [],
-      suggestions: state.reviewResult?.suggestions || '',
+      issues: issues,
+      suggestions: suggestions,
+      review: {
+        verdict: 'REVISION_NEEDED',
+        score: state.reviewResult?.score || 70,
+        issues: issues,
+        suggestions: suggestions,
+      },
     });
     state.workbench.content = res.content || '';
     state.rewriteLoopCount++;
