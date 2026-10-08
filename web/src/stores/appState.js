@@ -162,6 +162,7 @@ actionHelpers.loadMatrixOverview = matrixActs.loadMatrixOverview;
 actionHelpers.loadCodexEntries = codexActs.loadCodexEntries;
 actionHelpers.loadAnalytics = matrixActs.loadAnalytics;
 actionHelpers.selectProject = projectActs.selectProject;
+actionHelpers.restoreCheckpoint = workbenchActs.restoreCheckpoint;
 
 export const actions = {
   ...configActs,

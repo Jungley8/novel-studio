@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -102,6 +103,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 		s.handleReviewDraft(w, r, projectID)
 	case "rewrite-draft":
 		s.handleRewriteDraft(w, r, projectID)
+	case "checkpoint":
+		s.handleProjectCheckpoint(w, r, projectID)
 	case "framework":
 		s.handleProjectFramework(w, r, projectID, parts)
 	case "codex":
@@ -178,11 +181,47 @@ func (s *Server) handleProjectChapters(w http.ResponseWriter, r *http.Request, p
 			errorResponse(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		_ = s.store.ClearCheckpoint(ctx, projectID, c.ChapterIndex)
 
 		jsonResponse(w, http.StatusCreated, map[string]any{
 			"chapter": c,
 			"project": updatedProj,
 		})
+	default:
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleProjectCheckpoint(w http.ResponseWriter, r *http.Request, projectID string) {
+	ctx := r.Context()
+	switch r.Method {
+	case http.MethodGet:
+		idxStr := r.URL.Query().Get("chapter_index")
+		idx, _ := strconv.Atoi(idxStr)
+		if idx <= 0 {
+			idx = 1
+		}
+		cp, err := s.store.GetCheckpoint(ctx, projectID, idx)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if cp == nil {
+			jsonResponse(w, http.StatusOK, nil)
+			return
+		}
+		jsonResponse(w, http.StatusOK, cp)
+	case http.MethodDelete:
+		idxStr := r.URL.Query().Get("chapter_index")
+		idx, _ := strconv.Atoi(idxStr)
+		if idx <= 0 {
+			idx = 1
+		}
+		if err := s.store.ClearCheckpoint(ctx, projectID, idx); err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]string{"status": "cleared"})
 	default:
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
 	}

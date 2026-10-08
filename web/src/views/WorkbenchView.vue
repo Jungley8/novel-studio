@@ -581,7 +581,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { state, computedState, actions, notify } from '../stores/appState';
 import { api } from '../api/client';
 import {
@@ -796,6 +796,9 @@ async function handleCommitChapter() {
       audit_report: state.reviewResult,
       word_count: state.workbench.content.length,
     });
+    try {
+      await api.clearCheckpoint(state.currentProject.id, computedState.nextChapterIndex.value);
+    } catch (_) {}
     notify('章节已成功封存归档', `第 ${computedState.nextChapterIndex.value} 章已记录入正史与状态账本`, 'success');
     await actions.selectProject(state.currentProject.id);
     state.workbench.content = '';
@@ -873,4 +876,10 @@ function openHarmonizeModal() {
 function openHumanTouchesModal() {
   state.showHumanTouchesModal = true;
 }
+
+onMounted(() => {
+  if (actions.restoreCheckpoint) {
+    actions.restoreCheckpoint(computedState.nextChapterIndex.value);
+  }
+});
 </script>

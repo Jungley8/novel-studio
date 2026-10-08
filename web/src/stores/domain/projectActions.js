@@ -30,6 +30,9 @@ export function createProjectActions(state, notify, helpers) {
         if (helpers && helpers.loadAnalytics) {
           await helpers.loadAnalytics();
         }
+        if (helpers && helpers.restoreCheckpoint) {
+          await helpers.restoreCheckpoint();
+        }
       } catch (e) {
         console.error('select project error:', e);
         notify('加载项目失败', e.message, 'error');

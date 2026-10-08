@@ -90,6 +90,8 @@ export const api = {
   renderScene: (projectId, data) => apiFetch(`/api/projects/${projectId}/render-scene`, { method: 'POST', body: JSON.stringify(data) }),
   reviewDraft: (projectId, data) => apiFetch(`/api/projects/${projectId}/review-draft`, { method: 'POST', body: JSON.stringify(data) }),
   rewriteDraft: (projectId, data) => apiFetch(`/api/projects/${projectId}/rewrite-draft`, { method: 'POST', body: JSON.stringify(data) }),
+  getCheckpoint: (projectId, chapterIndex) => apiFetch(`/api/projects/${projectId}/checkpoint?chapter_index=${chapterIndex}`),
+  clearCheckpoint: (projectId, chapterIndex) => apiFetch(`/api/projects/${projectId}/checkpoint?chapter_index=${chapterIndex}`, { method: 'DELETE' }),
   produceAutonomous: (projectId, data) => apiFetch(`/api/projects/${projectId}/workshop/produce`, { method: 'POST', body: JSON.stringify(data) }),
   inlineAction: (data) => apiFetch('/api/workshop/inline-action', { method: 'POST', body: JSON.stringify(data) }),
   promptPreview: (projectId, data) => apiFetch(`/api/projects/${projectId}/prompt-preview`, { method: 'POST', body: JSON.stringify(data) }),

@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -533,5 +534,77 @@ func TestServer_ConfigTest(t *testing.T) {
 		if res.Status != "ok" {
 			t.Errorf("expected fallback to unmasked real key to succeed, got: %+v", res)
 		}
+	}
+}
+
+func TestServer_CheckpointLifecycle(t *testing.T) {
+	srv, s, _ := setupTestServer(t)
+
+	// Create test project
+	proj := &domain.Project{
+		ID:    "proj-cp-test",
+		Title: "断点测试作品",
+	}
+	if err := s.SaveProject(context.Background(), proj); err != nil {
+		t.Fatalf("save project failed: %v", err)
+	}
+
+	// 1. GET checkpoint when none exists -> returns 200 with null
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/proj-cp-test/checkpoint?chapter_index=1", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if strings.TrimSpace(w.Body.String()) != "null" {
+		t.Errorf("expected null, got %s", w.Body.String())
+	}
+
+	// 2. Save a checkpoint into store
+	cp := &domain.ChapterCheckpoint{
+		ProjectID:    "proj-cp-test",
+		ChapterIndex: 1,
+		Phase:        domain.CheckpointPhaseRewriting,
+		CoreConflict: "主角直面神庭使者",
+		DraftText:    "寒风卷着冰碴子呼啸而过...",
+		AuditReport: &domain.AuditReport{
+			Verdict: domain.ReviewVerdictRevision,
+			Score:   72,
+			Issues:  []string{"实体违规"},
+		},
+	}
+	if err := s.SaveCheckpoint(context.Background(), cp); err != nil {
+		t.Fatalf("save checkpoint failed: %v", err)
+	}
+
+	// 3. GET checkpoint -> should return the saved checkpoint
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/proj-cp-test/checkpoint?chapter_index=1", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var gotCp domain.ChapterCheckpoint
+	if err := json.Unmarshal(w.Body.Bytes(), &gotCp); err != nil {
+		t.Fatalf("unmarshal checkpoint failed: %v", err)
+	}
+	if gotCp.DraftText != cp.DraftText || gotCp.AuditReport == nil || gotCp.AuditReport.Score != 72 {
+		t.Errorf("unexpected checkpoint content: %+v", gotCp)
+	}
+
+	// 4. DELETE checkpoint -> should clear it
+	req = httptest.NewRequest(http.MethodDelete, "/api/projects/proj-cp-test/checkpoint?chapter_index=1", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 on delete, got %d", w.Code)
+	}
+
+	// 5. Verify it is now null
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/proj-cp-test/checkpoint?chapter_index=1", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if strings.TrimSpace(w.Body.String()) != "null" {
+		t.Errorf("expected null after delete, got %s", w.Body.String())
 	}
 }

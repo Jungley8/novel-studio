@@ -144,5 +144,62 @@ export function createWorkbenchActions(state, notify, helpers) {
         state.pipelineState.active = false;
       }
     },
+
+    async restoreCheckpoint(targetIndex) {
+      if (!state.currentProject) return;
+      if (state.workbench.content && state.workbench.content.trim()) return;
+      const idx = targetIndex || (state.chapters ? state.chapters.length + 1 : 1);
+      try {
+        const cp = await api.getCheckpoint(state.currentProject.id, idx);
+        if (cp && cp.draft_text) {
+          state.workbench.content = cp.draft_text;
+          if (cp.core_conflict && !state.workbench.coreConflict) {
+            state.workbench.coreConflict = cp.core_conflict;
+          }
+          if (cp.beats && cp.beats.length) {
+            state.workbench.beats = cp.beats;
+          }
+          if (cp.state_mutation) {
+            state.workbench.stateMutation = cp.state_mutation;
+          }
+          if (cp.audit_report) {
+            state.reviewResult = cp.audit_report;
+            if (cp.audit_report.linter) {
+              state.linterReport = cp.audit_report.linter;
+            }
+          }
+          if (cp.rewrite_loops) {
+            state.rewriteLoopCount = cp.rewrite_loops;
+          }
+          if (cp.phase === 'AUDITED' || cp.phase === 'REWRITING') {
+            state.activeStep = cp.audit_report?.verdict === 'ACCEPTED' ? 6 : 5;
+          } else if (cp.phase === 'DRAFTED') {
+            state.activeStep = 3;
+          } else if (cp.phase === 'BEATS_DERIVED') {
+            state.activeStep = 2;
+          }
+          if (this.runLinter) {
+            this.runLinter();
+          }
+          notify('已自动恢复在途草稿断点', `已载入第 ${cp.chapter_index} 章在途推演草稿（共 ${cp.draft_text.length} 字）及质检报告`, 'info');
+        }
+      } catch (err) {
+        console.warn('restore checkpoint failed:', err);
+      }
+    },
+
+    async discardCheckpoint(targetIndex) {
+      if (!state.currentProject) return;
+      const idx = targetIndex || (state.chapters ? state.chapters.length + 1 : 1);
+      try {
+        await api.clearCheckpoint(state.currentProject.id, idx);
+        state.workbench.content = '';
+        state.reviewResult = null;
+        state.activeStep = 1;
+        notify('草稿断点已废弃', `第 ${idx} 章在途草稿已清除`, 'info');
+      } catch (err) {
+        notify('清除断点失败', err.message, 'error');
+      }
+    },
   };
 }
