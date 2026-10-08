@@ -123,8 +123,11 @@ func TestServer_ConfigAndProjects(t *testing.T) {
 		Project domain.Project `json:"project"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &commitResp)
-	if commitResp.Project.Protagonist.Inventory != "沉渊古剑, 时空晶石x1" {
+	if commitResp.Project.Protagonist.Inventory != "沉渊古剑, 时空晶石" {
 		t.Errorf("unexpected mutated inventory: %s", commitResp.Project.Protagonist.Inventory)
+	}
+	if len(commitResp.Project.Protagonist.StructuredItems) != 2 || commitResp.Project.Protagonist.StructuredItems[1].Quantity != 1 {
+		t.Errorf("unexpected structured items: %+v", commitResp.Project.Protagonist.StructuredItems)
 	}
 
 	// 4. POST /api/linter/analyze
@@ -185,5 +188,234 @@ func TestServer_ConfigAndProjects(t *testing.T) {
 	srv.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 for framework put, got %d", w.Code)
+	}
+
+	// 9. POST /api/projects/:id/codex (Create Codex Entry)
+	codexPayload := domain.CodexEntry{
+		Name:            "楚枫",
+		Category:        domain.CategoryCharacter,
+		Aliases:         []string{"白衣修罗", "疯子楚"},
+		Summary:         "杀猪少年，心性冷酷果决",
+		DetailsMarkdown: "暗藏弑神刀法与荒血后裔。",
+	}
+	body, _ = json.Marshal(codexPayload)
+	req = httptest.NewRequest(http.MethodPost, "/api/projects/"+created.ID+"/codex", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for codex create, got %d: %s", w.Code, w.Body.String())
+	}
+	var createdCodex domain.CodexEntry
+	_ = json.Unmarshal(w.Body.Bytes(), &createdCodex)
+
+	// 10. GET /api/projects/:id/codex
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+created.ID+"/codex", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for codex list, got %d", w.Code)
+	}
+	var codexList []domain.CodexEntry
+	_ = json.Unmarshal(w.Body.Bytes(), &codexList)
+	if len(codexList) != 1 || codexList[0].Name != "楚枫" {
+		t.Fatalf("expected 1 codex entry named 楚枫, got %+v", codexList)
+	}
+
+	// 11. POST /api/projects/:id/codex/scan
+	scanPayload := map[string]string{"text": "月夜之下，白衣修罗悄然拔出斩神刀。"}
+	body, _ = json.Marshal(scanPayload)
+	req = httptest.NewRequest(http.MethodPost, "/api/projects/"+created.ID+"/codex/scan", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for codex scan, got %d", w.Code)
+	}
+	var scanResult struct {
+		MatchedEntries []domain.CodexEntry `json:"matched_entries"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &scanResult)
+	if len(scanResult.MatchedEntries) != 1 || scanResult.MatchedEntries[0].Name != "楚枫" {
+		t.Fatalf("expected scan to match 楚枫 via alias 白衣修罗, got %+v", scanResult)
+	}
+}
+
+func TestServer_MatrixScenesAndAnalytics(t *testing.T) {
+	srv, s, _ := setupTestServer(t)
+	ctx := t.Context()
+
+	// 1. Create Project
+	proj := &domain.Project{
+		Title:          "大明修仙传",
+		TargetPlatform: "起点仙侠",
+		WorldRules:     "皇权与道门制衡，灵气日渐稀薄",
+	}
+	projBody, _ := json.Marshal(proj)
+	req := httptest.NewRequest(http.MethodPost, "/api/projects", bytes.NewReader(projBody))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create project failed: %d", w.Code)
+	}
+	var created domain.Project
+	_ = json.Unmarshal(w.Body.Bytes(), &created)
+
+	// 2. Add a chapter
+	chap := &domain.Chapter{
+		ProjectID:    created.ID,
+		ChapterIndex: 1,
+		Title:        "紫禁风雪",
+		Content:      "风雪之中，白衣修罗手握残刀，冷眼望向城楼上的锦衣卫统领赵天霸。",
+		WordCount:    3000,
+	}
+	if _, err := s.CommitChapter(ctx, created.ID, chap); err != nil {
+		t.Fatalf("CommitChapter failed: %v", err)
+	}
+
+	// 3. Add a Codex Entry
+	codex := &domain.CodexEntry{
+		ProjectID:       created.ID,
+		Category:        domain.CategoryCharacter,
+		Name:            "楚枫",
+		Aliases:         []string{"白衣修罗"},
+		Summary:         "大明前朝遗孤",
+		DetailsMarkdown: "身负血海深仇",
+	}
+	_ = s.SaveCodexEntry(ctx, codex)
+
+	// 4. Test Matrix Overview
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+created.ID+"/matrix", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("matrix overview failed: %d", w.Code)
+	}
+	var matrix domain.MatrixOverview
+	_ = json.Unmarshal(w.Body.Bytes(), &matrix)
+	if len(matrix.Volumes) == 0 {
+		t.Errorf("expected at least 1 default volume group in matrix, got %d", len(matrix.Volumes))
+	}
+
+	// 5. Test Scene Creation
+	scPayload := domain.Scene{
+		ChapterID:       chap.ID,
+		SceneIndex:      1,
+		Title:           "城门对峙",
+		DramaticGoal:    "突破城门封锁",
+		ConflictBarrier: "锦衣卫百户布阵阻拦",
+		TensionLevel:    8,
+		WordCount:       1200,
+	}
+	scBody, _ := json.Marshal(scPayload)
+	req = httptest.NewRequest(http.MethodPost, "/api/projects/"+created.ID+"/scenes", bytes.NewReader(scBody))
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create scene failed: %d, body: %s", w.Code, w.Body.String())
+	}
+	var createdScene domain.Scene
+	_ = json.Unmarshal(w.Body.Bytes(), &createdScene)
+	if createdScene.ID == "" || createdScene.Title != "城门对峙" {
+		t.Fatalf("unexpected created scene: %+v", createdScene)
+	}
+
+	// 6. Test Scene Retrieval & Update via /api/scenes/:id
+	req = httptest.NewRequest(http.MethodGet, "/api/scenes/"+createdScene.ID, nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get scene failed: %d", w.Code)
+	}
+
+	// 7. Test Scene Markers
+	markerPayload := domain.SceneMarker{
+		MarkerType:     domain.MarkerTypePlotHole,
+		Color:          "#ef4444",
+		TextRangeStart: 10,
+		TextRangeEnd:   20,
+		Content:        "此处锦衣卫佩刀型号与朝代设定不符",
+	}
+	mBody, _ := json.Marshal(markerPayload)
+	req = httptest.NewRequest(http.MethodPost, "/api/scenes/"+createdScene.ID+"/markers", bytes.NewReader(mBody))
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create marker failed: %d", w.Code)
+	}
+	var createdMarker domain.SceneMarker
+	_ = json.Unmarshal(w.Body.Bytes(), &createdMarker)
+
+	req = httptest.NewRequest(http.MethodGet, "/api/scenes/"+createdScene.ID+"/markers", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list markers failed: %d", w.Code)
+	}
+	var markers []domain.SceneMarker
+	_ = json.Unmarshal(w.Body.Bytes(), &markers)
+	if len(markers) != 1 {
+		t.Errorf("expected 1 marker, got %d", len(markers))
+	}
+
+	// 8. Test Prompt Preview
+	previewReq := map[string]any{
+		"chapter_index": 1,
+		"scene_title":   "夜袭皇城",
+		"pov":           "楚枫",
+		"dramatic_goal": "潜入藏书阁寻找长生诀",
+		"conflict":      "值守太监实力深不可测",
+		"core_events":   []string{"避开巡逻", "斩杀哨探", "破除禁制"},
+	}
+	prevBody, _ := json.Marshal(previewReq)
+	req = httptest.NewRequest(http.MethodPost, "/api/projects/"+created.ID+"/prompt-preview", bytes.NewReader(prevBody))
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("prompt preview failed: %d, body: %s", w.Code, w.Body.String())
+	}
+	var prevResp struct {
+		SystemPrompt        string `json:"system_prompt"`
+		UserPrompt          string `json:"user_prompt"`
+		Components          []any  `json:"components"`
+		TotalTokensEstimate int    `json:"total_tokens_estimate"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &prevResp)
+	if len(prevResp.Components) != 4 || prevResp.TotalTokensEstimate <= 0 {
+		t.Errorf("invalid prompt preview response: %+v", prevResp)
+	}
+
+	// 9. Test Analytics Heatmap
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+created.ID+"/analytics/heatmap", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("analytics heatmap failed: %d", w.Code)
+	}
+	var heatmapResp struct {
+		Chapters []any `json:"chapters"`
+		Entities []struct {
+			Name          string      `json:"name"`
+			TotalMentions int         `json:"total_mentions"`
+			ChapterCounts map[int]int `json:"chapter_counts"`
+		} `json:"entities"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &heatmapResp)
+	if len(heatmapResp.Entities) != 1 || heatmapResp.Entities[0].TotalMentions != 1 {
+		t.Errorf("expected entity 楚枫 mentioned 1 time in chapter 1 via alias, got: %+v", heatmapResp)
+	}
+
+	// 10. Test Analytics Tension
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+created.ID+"/analytics/tension", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("analytics tension failed: %d", w.Code)
+	}
+	var tensionResp struct {
+		Points     []any   `json:"points"`
+		AvgTension float64 `json:"avg_tension"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &tensionResp)
+	if len(tensionResp.Points) != 1 || tensionResp.AvgTension <= 0 {
+		t.Errorf("expected tension points, got: %+v", tensionResp)
 	}
 }

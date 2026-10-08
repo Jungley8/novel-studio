@@ -182,6 +182,23 @@ func TestChapterWorkshop_ResumeCheckpoint(t *testing.T) {
 	if res.ResumedPhase != string(domain.CheckpointPhaseDrafted) {
 		t.Errorf("expected resumed phase %s, got %s", domain.CheckpointPhaseDrafted, res.ResumedPhase)
 	}
+
+	// Test B: When ResumeCheckpoint is false, clear stale checkpoint and generate afresh
+	reqFresh := WorkshopProduceRequest{
+		ProjectID:        "p-cp",
+		ChapterIndex:     2,
+		ResumeCheckpoint: false,
+	}
+	resFresh, err := workshop.ProduceChapter(context.Background(), reqFresh)
+	if err != nil {
+		t.Fatalf("ProduceChapter without checkpoint failed: %v", err)
+	}
+	if resFresh.ResumedPhase != "" {
+		t.Errorf("expected no resumed phase when ResumeCheckpoint is false, got %s", resFresh.ResumedPhase)
+	}
+	if resFresh.Content != "新草稿内容" {
+		t.Errorf("expected fresh content '新草稿内容', got %s", resFresh.Content)
+	}
 }
 
 type mockCheckpointWorkshopStore struct {

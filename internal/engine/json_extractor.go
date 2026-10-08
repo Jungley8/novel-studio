@@ -128,28 +128,107 @@ func attemptValidateAndSanitize(candidate string) string {
 		return candidate
 	}
 
-	// 1. Remove trailing commas before } or ]
-	sanitized := trailingCommaRegex.ReplaceAllString(candidate, "$1")
+	// 1. Remove trailing commas before } or ] strictly outside string literals
+	sanitized := removeTrailingCommasAware(candidate)
 	if json.Valid([]byte(sanitized)) {
 		return sanitized
 	}
 
-	// 2. Try closing missing curly braces or brackets if output was cut off
-	openBraces := strings.Count(sanitized, "{") - strings.Count(sanitized, "}")
-	if openBraces > 0 {
-		repaired := sanitized + strings.Repeat("}", openBraces)
+	// 2. Try closing missing curly braces or brackets strictly counted outside string literals
+	openBraces, openBrackets := countUnclosedTokens(sanitized)
+	if openBraces > 0 || openBrackets > 0 {
+		repaired := sanitized + strings.Repeat("]", openBrackets) + strings.Repeat("}", openBraces)
 		if json.Valid([]byte(repaired)) {
 			return repaired
 		}
-	}
-
-	openBrackets := strings.Count(sanitized, "[") - strings.Count(sanitized, "]")
-	if openBrackets > 0 {
-		repaired := sanitized + strings.Repeat("]", openBrackets)
-		if json.Valid([]byte(repaired)) {
-			return repaired
+		repairedAlt := sanitized + strings.Repeat("}", openBraces) + strings.Repeat("]", openBrackets)
+		if json.Valid([]byte(repairedAlt)) {
+			return repairedAlt
 		}
 	}
 
 	return ""
+}
+
+// removeTrailingCommasAware removes trailing commas directly preceding '}' or ']'
+// while strictly preserving commas and brackets inside quoted JSON string literals.
+func removeTrailingCommasAware(s string) string {
+	var sb strings.Builder
+	inString := false
+	escaped := false
+	n := len(s)
+
+	for i := 0; i < n; i++ {
+		c := s[i]
+		if inString {
+			sb.WriteByte(c)
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		if c == '"' {
+			inString = true
+			sb.WriteByte(c)
+			continue
+		}
+
+		if c == ',' {
+			// Lookahead for closing brace or bracket outside string literal
+			peekIdx := i + 1
+			for peekIdx < n && (s[peekIdx] == ' ' || s[peekIdx] == '\t' || s[peekIdx] == '\r' || s[peekIdx] == '\n') {
+				peekIdx++
+			}
+			if peekIdx < n && (s[peekIdx] == '}' || s[peekIdx] == ']') {
+				// Trailing comma found outside string: skip writing it!
+				continue
+			}
+		}
+
+		sb.WriteByte(c)
+	}
+
+	return sb.String()
+}
+
+// countUnclosedTokens counts unbalanced '{' and '[' exclusively outside string literals.
+func countUnclosedTokens(s string) (unclosedBraces, unclosedBrackets int) {
+	inString := false
+	escaped := false
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		if c == '"' {
+			inString = true
+			continue
+		}
+
+		if c == '{' {
+			unclosedBraces++
+		} else if c == '}' && unclosedBraces > 0 {
+			unclosedBraces--
+		} else if c == '[' {
+			unclosedBrackets++
+		} else if c == ']' && unclosedBrackets > 0 {
+			unclosedBrackets--
+		}
+	}
+
+	return unclosedBraces, unclosedBrackets
 }

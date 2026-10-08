@@ -28,6 +28,10 @@ var CoreBannedKeywords = []string{
 	"眉头紧锁", "眉头微皱", "双拳紧握",
 	"眼中闪过一丝", "目光一凝", "瞳孔微缩",
 	"点了点头", "摇了摇头",
+	// === AI 微表情与副词套路 (腾讯朱雀强特征) ===
+	"僵硬的弧度", "眼角没有半分笑意", "眼角毫无笑意", "瞳孔缩成了针尖", "瞳孔缩成针尖",
+	"古井无波", "慢条斯理地", "几不可察地", "夜枭般的狞笑", "如泥牛入海", "如丧家之犬",
+	"死寂一片", "冷汗涔涔",
 	// === 环境万能句 ===
 	"空气仿佛凝固", "空气中弥漫着", "气氛变得凝重",
 	"鸦雀无声", "针落可闻", "天地为之一暗", "风起云涌",
@@ -48,6 +52,7 @@ var WarningKeywords = []string{
 	"深吸一口气", "长舒一口气",
 	"微微一笑", "淡淡一笑",
 	"缓缓说道", "沉声说道", "冷声说道",
+	"总而言之", "综上所述", "仿佛在诉说", "预示着", "伴随着",
 }
 
 // Linter analyzes text against AI detection metrics and clichés using two-tier detection.
@@ -97,6 +102,12 @@ func (l *Linter) Analyze(text string) domain.LinterResult {
 		if count >= 2 {
 			hits = append(hits, fmt.Sprintf("%s(×%d)", word, count))
 		}
+	}
+
+	// 2.5 Scan formulaic similes (像.../如...)
+	simileCount := CountSimileClichés(text)
+	if simileCount >= 3 {
+		hits = append(hits, fmt.Sprintf("书面比喻泛滥(命中%d处公式化比喻)", simileCount))
 	}
 
 	// 3. Compute Burstiness (sentence length standard deviation)
@@ -369,3 +380,17 @@ func IsExclamationExcessive(text string, density float64) bool {
 	// For chapter-length text (>= 500 characters), flag if density > 4.0 per 1000 characters
 	return density > 4.0 && count >= 4
 }
+
+// CountSimileClichés scans for formulaic simile patterns (像...一样/如...般/宛如/犹如).
+func CountSimileClichés(text string) int {
+	patterns := []string{
+		"像干枯", "像生锈", "像钝刀", "犹如", "宛如", "如同", "好似",
+		"夜枭般", "泥牛入海", "丧家之犬", "古井无波", "般地", "般的",
+	}
+	count := 0
+	for _, p := range patterns {
+		count += strings.Count(text, p)
+	}
+	return count
+}
+

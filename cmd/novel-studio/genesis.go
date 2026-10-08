@@ -64,7 +64,7 @@ func runGenesisCLI(argv []string, defaultDataDir string) int {
 	orch := engine.NewOrchestrator(llmClient)
 
 	ctx := context.Background()
-	fw, err := orch.BootstrapFramework(ctx, reasoningModel, engine.FrameworkBootstrapRequest{
+	fw, _, err := orch.BootstrapFramework(ctx, reasoningModel, engine.FrameworkBootstrapRequest{
 		Title:          *titleFlag,
 		TargetPlatform: *platformFlag,
 		CoreConcept:    *conceptFlag,
@@ -87,9 +87,15 @@ func runGenesisCLI(argv []string, defaultDataDir string) int {
 		}
 	}
 
-	initialRealm := "练气一层"
+	initialRealm := "凡胎境"
 	if len(fw.PowerLadder) > 0 {
 		initialRealm = fw.PowerLadder[0].Realm
+	}
+
+	protagonistName := "顾渊"
+	protagonistGoal := fw.ThemePremise
+	if protagonistGoal == "" {
+		protagonistGoal = "查明宗门覆灭真相，逆伐伪神"
 	}
 
 	proj := &domain.Project{
@@ -98,9 +104,9 @@ func runGenesisCLI(argv []string, defaultDataDir string) int {
 		TargetPlatform: *platformFlag,
 		WorldRules:     strings.TrimSpace(worldRules.String()),
 		Protagonist: domain.Protagonist{
-			NameAndLevel: fmt.Sprintf("主角 (%s)", initialRealm),
-			Inventory:    "残破黑铁, 粗布短衫",
-			CoreGoal:     fw.ThemePremise,
+			NameAndLevel: fmt.Sprintf("%s (%s)", protagonistName, initialRealm),
+			Inventory:    "凡骨铁印x1, 粗布短褐x1, 引路符x1",
+			CoreGoal:     protagonistGoal,
 			HealthStatus: "良好",
 		},
 		Framework: fw,
@@ -113,7 +119,7 @@ func runGenesisCLI(argv []string, defaultDataDir string) int {
 		return 1
 	}
 
-	// Save seed hooks
+	// 1. Seed plot hooks
 	for i, sh := range fw.SeedHooks {
 		hook := &domain.PlotHook{
 			ID:             fmt.Sprintf("hook_%s_%d", projectID, i+1),
@@ -127,6 +133,85 @@ func runGenesisCLI(argv []string, defaultDataDir string) int {
 		}
 		_ = s.SavePlotHook(ctx, hook)
 	}
+
+	// 2. Seed key cast characters into The Codex
+	for i, kc := range fw.KeyCharacters {
+		archetype := "SUPPORTING"
+		disposition := "NEUTRAL"
+		voiceTone := "言简意赅，语带锋芒"
+		colorTag := "#10b981"
+
+		if strings.Contains(kc.Role, "宿敌") || strings.Contains(kc.Role, "魔") || strings.Contains(kc.Role, "反派") {
+			archetype = "ANTAGONIST"
+			disposition = "HOSTILE"
+			voiceTone = "言语极轻尖细，像钝刀刮生锈铁皮，伪善转为狰狞"
+			colorTag = "#f43f5e"
+		} else if strings.Contains(kc.Role, "搭档") || strings.Contains(kc.Role, "同盟") || strings.Contains(kc.Role, "女配") {
+			archetype = "DEUTERAGONIST"
+			disposition = "WARY"
+			voiceTone = "灵动中藏着敏锐算计，惊骇时语带轻颤"
+			colorTag = "#8b5cf6"
+		} else if strings.Contains(kc.Role, "导师") || strings.Contains(kc.Role, "领路") {
+			archetype = "MENTOR"
+			disposition = "FRIENDLY"
+			voiceTone = "沧桑威严，如老僧入定"
+			colorTag = "#3b82f6"
+		}
+
+		aliases := []string{}
+		if kc.Name == "楚掌柜" {
+			aliases = []string{"疯子楚", "白衣修罗"}
+		} else if kc.Name == "柳依依" {
+			aliases = []string{"小师妹", "柳姑娘"}
+		}
+
+		entry := &domain.CodexEntry{
+			ID:                 fmt.Sprintf("codex_%s_char_%d", projectID, i+1),
+			ProjectID:          projectID,
+			Category:           domain.CategoryCharacter,
+			Name:               kc.Name,
+			ColorTag:           colorTag,
+			Summary:            fmt.Sprintf("%s (%s), 境界: %s", kc.Role, kc.FateArc, kc.Realm),
+			DetailsMarkdown:    fmt.Sprintf("### %s\n- **戏剧定位**: %s\n- **修为境界**: %s\n- **核心动机**: %s\n- **宿命轨迹**: %s\n", kc.Name, kc.Role, kc.Realm, kc.Goal, kc.FateArc),
+			Archetype:          archetype,
+			VoiceTone:          voiceTone,
+			CoreMotivation:     kc.Goal,
+			CurrentDisposition: disposition,
+			TrackingMode:       domain.TrackingModeAutoMention,
+			Aliases:            aliases,
+			CreatedAt:          time.Now(),
+			UpdatedAt:          time.Now(),
+		}
+		_ = s.SaveCodexEntry(ctx, entry)
+	}
+
+	// 3. Seed Location & Item into The Codex
+	_ = s.SaveCodexEntry(ctx, &domain.CodexEntry{
+		ID:              fmt.Sprintf("codex_%s_loc_1", projectID),
+		ProjectID:       projectID,
+		Category:        domain.CategoryLocation,
+		Name:            "聚仙楼",
+		ColorTag:        "#eab308",
+		Summary:         "风雪隘口残破茶肆客栈，黄绫帘子破损，暗伏化龙暗哨与机关地道",
+		DetailsMarkdown: "北地官道上唯一的歇脚茶棚客栈，内设通天阁暗桩地道，是第一卷杀局起点。",
+		TrackingMode:    domain.TrackingModeAutoMention,
+		Aliases:         []string{"风雪茶肆", "聚仙客栈"},
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	})
+	_ = s.SaveCodexEntry(ctx, &domain.CodexEntry{
+		ID:              fmt.Sprintf("codex_%s_item_1", projectID),
+		ProjectID:       projectID,
+		Category:        domain.CategoryItem,
+		Name:            "凡骨残印",
+		ColorTag:        "#06b6d4",
+		Summary:         "主角胸口深处的上古神纹残印，可化解魔毒，吞噬神明诅咒",
+		DetailsMarkdown: "上古宗门覆灭遗留的不灭凡铁残印，唯有凡人无灵根胎骨可驭，遇魔毒神威自显。",
+		TrackingMode:    domain.TrackingModeAutoMention,
+		Aliases:         []string{"残骨铁印", "凡骨铁印"},
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	})
 
 	// Print Summary
 	fmt.Printf("\n✨ 宏观总纲创世推演完成！作品已原子落库 (ID: %s)\n", projectID)

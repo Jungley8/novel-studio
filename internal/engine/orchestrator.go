@@ -20,9 +20,14 @@ func NewOrchestrator(client LLMClient) *Orchestrator {
 	return &Orchestrator{client: client}
 }
 
+func (o *Orchestrator) SetClient(client LLMClient) {
+	o.client = client
+}
+
 type DeriveBeatsOutput struct {
 	Beats         []domain.SceneBeat   `json:"beats"`
 	StateMutation domain.StateMutation `json:"state_mutation"`
+	Usage         TokenUsage           `json:"usage,omitempty"`
 }
 
 func (o *Orchestrator) DeriveBeats(
@@ -67,7 +72,14 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
   ],
   "state_mutation": {
     "inventory_delta": "物品变动描述，如：消耗青钢剑，获得残破古玉",
-    "power_delta": "战力或修为变动描述"
+    "power_delta": "战力或修为变动描述",
+    "character_mutations": [
+      {
+        "name": "配角或反派姓名",
+        "status_delta": "该角色状态/心境/伤势/修为变迁，如：左臂被斩断，道心动摇",
+        "relation_delta": "对主角或全局的关系变化，如：由轻蔑转为刻骨仇恨"
+      }
+    ]
   }
 }`
 
@@ -113,6 +125,11 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 			horizon.ActivePowerTier.Bottleneck, horizon.ActivePowerTier.Drawback)
 	}
 
+	codexContext := ""
+	if strings.TrimSpace(horizon.CodexContextText) != "" {
+		codexContext = "\n\n" + horizon.CodexContextText
+	}
+
 	project := horizon.Project
 	userPrompt := fmt.Sprintf(`【作品信息】
 书名：《%s》
@@ -125,7 +142,7 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 【主角当前状态机】
 姓名与等级：%s
 随身物品栏：%s
-当前隐秘目标：%s
+当前隐秘目标：%s%s
 
 【前序正史视界 (最近 3 章密封剧情)】
 %s%s
@@ -139,13 +156,14 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 请推演输出严格合法的 JSON。`,
 		project.Title, project.TargetPlatform, horizon.TargetChapter,
 		horizon.WorldRules, volumeContext, powerContext,
-		horizon.ProtagonistState.NameAndLevel, horizon.ProtagonistState.Inventory, horizon.ProtagonistState.CoreGoal,
+		horizon.ProtagonistState.NameAndLevel, horizon.ProtagonistState.Inventory, horizon.ProtagonistState.CoreGoal, codexContext,
 		rollingCanon, callbacksText,
 		hooksSummary,
 		coreConflict,
 	)
 
-	resp, err := o.client.ChatCompletion(ctx, reasoningModel, systemPrompt, userPrompt, 0.4)
+	ctxRole := ContextWithRole(ctx, RoleReasoner)
+	resp, usage, err := o.client.ChatCompletionWithUsage(ctxRole, reasoningModel, systemPrompt, userPrompt, 0.4)
 	if err != nil {
 		return nil, fmt.Errorf("derive beats LLM call failed: %w", err)
 	}
@@ -158,6 +176,7 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 	if err := json.Unmarshal([]byte(cleanJSON), &out); err != nil {
 		return nil, fmt.Errorf("parse beats JSON failed (raw: %s): %w", resp, err)
 	}
+	out.Usage = usage
 
 	return &out, nil
 }
@@ -169,7 +188,7 @@ func (o *Orchestrator) RenderScene(
 	chapterIndex int,
 	beats []domain.SceneBeat,
 	wordsTarget int,
-) (string, error) {
+) (string, TokenUsage, error) {
 	horizon := &CanonHorizon{
 		Project:          project,
 		TargetChapter:    chapterIndex,
@@ -185,7 +204,7 @@ func (o *Orchestrator) RenderSceneWithHorizon(
 	horizon *CanonHorizon,
 	beats []domain.SceneBeat,
 	wordsTarget int,
-) (string, error) {
+) (string, TokenUsage, error) {
 	if wordsTarget <= 0 {
 		wordsTarget = 2000
 	}
@@ -223,11 +242,24 @@ func (o *Orchestrator) RenderSceneWithHorizon(
 【对话与叙述比例】
 %s
 
-【写作铁律】
-1. 严禁出现以下AI模式化废词：不由得、仿佛、宛若、嘴角勾起、眼神复杂、一时间、殊不知、与此同时、冷哼一声、倒吸一口凉气、暗自思忖。
-2. 句长节奏（突发度）：战斗与对峙必须多用 3-6 字短句（可单句成段）；氛围烘托多用感官长句，长短句剧烈交替。
-3. Show, don't tell：严禁直抒胸臆“他很愤怒”，必须通过微动作、肌肉紧绷、环境反馈体现。
-4. 严格按照提供的节拍事实展开，不得擅自修改因果大纲。`,
+【去 AI 味与像人一样写作铁律】
+1. 状语与副词戒断法则（核心去AI原则）：
+   - 中文能不用状语就不用状语，能不用副词就不用副词。严禁使用“修饰性副词+动词”（如：极其、猛然、冷冷地、迅速地、慢条斯理地、几不可察地、前所未有地）。
+   - 彻底禁用“...地”修饰动词。画面感来自强动词和名词质感，绝不用副词给动词当拐杖（用“冲撞”代替“快速地跑”，用“抠案板”代替“紧张地抓着”）。
+   - 不要追求表达完美，不要为了逻辑完整、结构工整、表达高级而改写。优先保留原本自然的口语呼吸与粗粝感。
+2. 禁绝一切模板化书面比喻（喻词清零）：
+   - 严禁出现“像...一样”、“如同...”、“宛若...”、“...般的”比喻套路（如：像干枯鹰爪、像钝刀刮铁、夜枭般的狞笑、如泥牛入海、如丧家之犬、目光如古井无波）。
+   - 所有事物用客观物理材质与骨肉感直接呈现，严禁添加第二层廉价修辞。
+3. 拒绝慢动作分解与微表情解剖：
+   - 严禁描写“嘴角扯出弧度”、“眼角没有半分笑意”、“瞳孔缩成针尖”。
+   - 严禁摄像头式机械分解动作（摘下斗笠 -> 搁在桌上 -> 桌面积灰 -> 指腹擦过 -> 留下白痕）。用人物主观焦点的粗粝动作直接交代。
+4. 句长节奏（突发度）与语法留白：
+   - 句子平均长度控制在 15-20 字以内。战斗与对峙多用 3-6 字短句（如：“顾渊没退。腰身一沉，踏裂泥地。”）。
+   - 允许碎句、倒装、口语吞音。严禁段尾总结升华，事件发生后戛然而止，留白交给读者。
+5. 多人物独立声口与粗粝对话：
+   - 人物对话必须像真人说话，带口语惯性与市井质感（“打听这干啥？”、“算哪门子账”），严禁打乒乓球式的书面文雅对答。
+6. 严禁出现以下AI模式化废词：
+   不由得、仿佛、宛若、嘴角勾起、眼神复杂、一时间、殊不知、与此同时、冷哼一声、倒吸一口凉气、暗自思忖、死寂一片、冷汗涔涔。`,
 		tensionDirective,
 		platformDirective,
 		dialogueRatioDirective,
@@ -236,6 +268,11 @@ func (o *Orchestrator) RenderSceneWithHorizon(
 	var anchorSection string
 	if horizon.TailAnchor != "" {
 		anchorSection = fmt.Sprintf("\n【上章收尾文风锚定 (最后200字，请严格承接此腔调与视角)】\n%s\n", horizon.TailAnchor)
+	}
+
+	var codexSection string
+	if strings.TrimSpace(horizon.CodexContextText) != "" {
+		codexSection = fmt.Sprintf("\n%s\n", horizon.CodexContextText)
 	}
 
 	beatsJSON, _ := json.MarshalIndent(beats, "", "  ")
@@ -249,7 +286,7 @@ func (o *Orchestrator) RenderSceneWithHorizon(
 %s
 
 【主角状态参考】
-%s | 携带物品：%s%s
+%s | 携带物品：%s%s%s
 
 【必须执行的场景节拍 (请严格按节拍顺序与因果展开)】
 %s
@@ -258,11 +295,12 @@ func (o *Orchestrator) RenderSceneWithHorizon(
 		project.Title, chapterIndex, wordsTarget,
 		horizon.WorldRules,
 		horizon.ProtagonistState.NameAndLevel, horizon.ProtagonistState.Inventory,
-		anchorSection,
+		anchorSection, codexSection,
 		string(beatsJSON),
 	)
 
-	return o.client.ChatCompletion(ctx, writerModel, systemPrompt, userPrompt, 0.75)
+	ctxRole := ContextWithRole(ctx, RoleWriter)
+	return o.client.ChatCompletionWithUsage(ctxRole, writerModel, systemPrompt, userPrompt, 0.75)
 }
 
 func (o *Orchestrator) ReviewDraft(
@@ -272,7 +310,7 @@ func (o *Orchestrator) ReviewDraft(
 	chapterIndex int,
 	beats []domain.SceneBeat,
 	draftText string,
-) (*domain.ReviewResult, error) {
+) (*domain.ReviewResult, TokenUsage, error) {
 	systemPrompt := `你是一名极其挑剔、拥有十余年网文编辑经验的总编审（Reviewer）。
 你的任务是对送审的裸正文草稿进行严格审查，寻找：
 1. 战力崩坏与设定矛盾：主角是否使用了物品栏中没有的道具？是否违反了世界法则？
@@ -305,9 +343,10 @@ func (o *Orchestrator) ReviewDraft(
 		draftText,
 	)
 
-	resp, err := o.client.ChatCompletion(ctx, reviewerModel, systemPrompt, userPrompt, 0.3)
+	ctxRole := ContextWithRole(ctx, RoleReviewer)
+	resp, usage, err := o.client.ChatCompletionWithUsage(ctxRole, reviewerModel, systemPrompt, userPrompt, 0.3)
 	if err != nil {
-		return nil, fmt.Errorf("review draft LLM call failed: %w", err)
+		return nil, usage, fmt.Errorf("review draft LLM call failed: %w", err)
 	}
 
 	cleanJSON, err := ExtractAndCleanJSON(resp)
@@ -323,7 +362,7 @@ func (o *Orchestrator) ReviewDraft(
 		ResolvedHookIDs []string             `json:"resolved_hook_ids"`
 	}
 	if err := json.Unmarshal([]byte(cleanJSON), &out); err != nil {
-		return nil, fmt.Errorf("parse review JSON failed (raw: %s): %w", resp, err)
+		return nil, usage, fmt.Errorf("parse review JSON failed (raw: %s): %w", resp, err)
 	}
 
 	if out.Verdict != domain.ReviewVerdictAccepted && out.Verdict != domain.ReviewVerdictRevision {
@@ -341,7 +380,7 @@ func (o *Orchestrator) ReviewDraft(
 		Suggestions:     out.Suggestions,
 		ResolvedHookIDs: out.ResolvedHookIDs,
 		ReviewedAt:      time.Now(),
-	}, nil
+	}, usage, nil
 }
 
 func (o *Orchestrator) RewriteDraft(
@@ -351,14 +390,14 @@ func (o *Orchestrator) RewriteDraft(
 	chapterIndex int,
 	originalDraft string,
 	review *domain.ReviewResult,
-) (string, error) {
-	systemPrompt := `你是一名顶级网文精修专家。你的任务是根据主编审（Reviewer）的具体驳回意见，对原草稿进行定向精修与差分重构。
-精修与写作铁律：
-1. 严格修复主编指出的所有问题，逐条落实整改意见。
-2. 【差分保护】严禁全盘推翻重写！对于主编没有提出异议的优秀段落和精彩描写，必须原样保留。
-3. 修改比例严格控制在有问题的局部段落（修改内容原则上不得超过全文的 35%），集中火力解决病灶。
-4. 严格遵循 Show, don't tell，杜绝AI套话，严禁出现不由得、仿佛、嘴角勾起等模式化废词。
-5. 直接输出精修重构后的完整正文，无需任何客套寒暄。`
+) (string, TokenUsage, error) {
+	systemPrompt := `你是一名顶级网文精修专家。你的任务是根据主审的具体驳回意见，对原草稿进行定向精修与差分重构。
+精修与去AI味铁律：
+1. 严格修复主审指出的所有问题，逐条落实整改意见。
+2. 状语与副词戒断：能不用状语就不用状语，能不用副词就不用副词。彻底禁用“...地”修饰动词，用强动词和名词质感直接呈现动作，绝不用副词当拐杖。
+3. 拔除书面比喻：删掉所有“像...”、“如...”、“宛若...”式书面比喻，用真实骨肉感与物理破坏直接呈现。
+4. 拒绝微表情与慢动作：删掉“嘴角弧度”、“瞳孔针尖”、“眼角笑意”，动作保持粗粝主观聚焦。
+5. 【差分保护】集中火力解决病灶，直接输出精修重构后的完整正文，无需任何客套寒暄。`
 
 	issuesText := "无明显硬伤"
 	if len(review.Issues) > 0 {
@@ -381,7 +420,8 @@ func (o *Orchestrator) RewriteDraft(
 		originalDraft,
 	)
 
-	return o.client.ChatCompletion(ctx, writerModel, systemPrompt, userPrompt, 0.7)
+	ctxRole := ContextWithRole(ctx, RoleWriter)
+	return o.client.ChatCompletionWithUsage(ctxRole, writerModel, systemPrompt, userPrompt, 0.7)
 }
 
 // buildTensionCurvePrompt dynamically generates rhythm density directives from beat tension values.
@@ -464,9 +504,9 @@ func (o *Orchestrator) BootstrapFramework(
 	ctx context.Context,
 	reasoningModel string,
 	req FrameworkBootstrapRequest,
-) (*domain.ProjectFramework, error) {
+) (*domain.ProjectFramework, TokenUsage, error) {
 	if strings.TrimSpace(req.Title) == "" {
-		return nil, errors.New("title cannot be empty")
+		return nil, TokenUsage{}, errors.New("title cannot be empty")
 	}
 	platform := req.TargetPlatform
 	if strings.TrimSpace(platform) == "" {
@@ -544,9 +584,10 @@ func (o *Orchestrator) BootstrapFramework(
 		req.Title, platform, req.CoreConcept,
 	)
 
-	resp, err := o.client.ChatCompletion(ctx, reasoningModel, systemPrompt, userPrompt, 0.5)
+	ctxRole := ContextWithRole(ctx, RoleReasoner)
+	resp, usage, err := o.client.ChatCompletionWithUsage(ctxRole, reasoningModel, systemPrompt, userPrompt, 0.5)
 	if err != nil {
-		return nil, fmt.Errorf("bootstrap framework LLM call failed: %w", err)
+		return nil, usage, fmt.Errorf("bootstrap framework LLM call failed: %w", err)
 	}
 
 	cleanJSON, err := ExtractAndCleanJSON(resp)
@@ -556,8 +597,8 @@ func (o *Orchestrator) BootstrapFramework(
 
 	var fw domain.ProjectFramework
 	if err := json.Unmarshal([]byte(cleanJSON), &fw); err != nil {
-		return nil, fmt.Errorf("parse framework JSON failed (raw: %s): %w", resp, err)
+		return nil, usage, fmt.Errorf("parse framework JSON failed (raw: %s): %w", resp, err)
 	}
 
-	return &fw, nil
+	return &fw, usage, nil
 }

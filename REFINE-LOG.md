@@ -152,3 +152,178 @@
    - 新建项目弹窗升级为双模式，支持一键 "AI 宏观创世推演"；
    - 生产车间 (Workbench) 实时动态显示当前分卷使命与当前境界代价，全程锚定宏观视界。
 
+---
+
+## 对抗式审查缺陷整改与工业化加固 (Adversarial Code Audit & Deep Hardening)
+
+针对 20 万~100 万字长篇连载场景下暴露出的 8 大并发、状态机与架构致命缺陷，完成全量逐行加固与纯净切换：
+
+### 1. 🔴 多模型真实路由解耦 (LLMRouter 消除门面伪实现)
+- **问题实质**：原 `LLMRouter` 的 `ChatCompletion` 接口无条件将全部请求打到 `r.defaultCl`，`Orchestrator` 未携带角色信息，导致配置的多 Provider（推理/创作/审校）解耦降偏形同虚设。
+- **加固落地**：
+  - `llm_client.go` 引入基于 Context 的角色机制：`ContextWithRole`、`RoleFromContext`、`RoleReasoner`、`RoleWriter`、`RoleReviewer`；
+  - `LLMRouter` 升级 `resolveClientAndModel` 真实路由：优先通过 Context 角色映射到配置的 `ReasonerProvider`、`WriterProvider` 或 `ReviewerProvider`，次选模型名前缀匹配；
+  - `Orchestrator` 与 `QualityGate` 全线在调用时注入对应角色，并在服务启动时将 `router` 注入 `Orchestrator`，实现真正的三模型物理隔离与交叉审校。
+
+### 2. 🔴 Token 真实度量与成本核算全面打通 (Eliminate Fake Accounting)
+- **问题实质**：原流水线中的 Token 使用量全为硬编码常数（800/1200/1500等），前端展示的 Token 和账单完全失真。
+- **加固落地**：
+  - `Orchestrator.DeriveBeatsWithHorizon`、`RenderScene`、`ReviewDraft`、`RewriteDraft`、`BootstrapFramework` 全面升级为调用底层 `ChatCompletionWithUsage`，返回真实消耗的 `TokenUsage`；
+  - `QualityGate.Audit` 与 `AuditWithHooks` 实时统计审校阶段产生的 `TokenUsage`；
+  - `ChapterWorkshop.ProduceChapter` 移除全部常数 Mock，动态累加各阶段真实 Token，输出精确的 `TotalUsage` 与 `EstimatedCostUSD`。
+
+### 3. 🔴 状态机道具数量数学化解析与不变量加固 (Mathematical Inventory & Quantities)
+- **问题实质**：原实体状态机在更新 `StructuredItems` 时直接将数量写死为 `1`，且字符串匹配存在子串误判，导致长篇连载中道具累积在多章结算后被清零。
+- **加固落地**：
+  - `domain/ledger.go` 引入词法提取正则（`qtyMultiplierRegex`、`qtyChineseUnitRegex`、`qtyTrailingNumRegex`），精准提取“洗髓丹x3”、“灵石 100块”等数量表达；
+  - 加减结算基于结构化 `InventoryItem` 执行数学运算（加法累加，减法按量扣减或耗尽移除）；
+  - `Inventory` 自然语言字符串采用规范化格式输出（数量 > 1 时追加 `xN`，数量 = 1 时输出标准品名），彻底杜绝数量清零与不变量崩坏。
+
+### 4. 🟠 SSE 流式通道防泄漏与 Goroutine 安全回收 (Stream Cancellation Leak Prevention)
+- **问题实质**：原 `ChatCompletionStream` 中的 `out <- chunk` 缺乏 `ctx.Done()` 监听，前端中断或网络异常时后台 goroutine 永久阻塞，导致连接与文件句柄泄漏。
+- **加固落地**：
+  - 将所有流式 channel 发送包裹在 `select { case out <- chunk: case <-ctx.Done(): return }`；
+  - 客户端取消或连接断开时，goroutine 立即安全返回，确保 `resp.Body` 及时关闭与资源回收。
+
+### 5. 🟠 QualityGate 审校裁决优先级严格收拢 (Fail-Closed Verdict Security)
+- **问题实质**：当审校 LLM 明确判定 `REVISION_NEEDED` 时，若综合评分 ≥ 80 分，原代码会粗暴覆盖为 `ACCEPTED` 直接放行。
+- **加固落地**：
+  - `QualityGate.AuditWithHooks` 建立严格 Fail-Closed 判定：只有当审校模型明确判定 `out.Verdict == ReviewVerdictAccepted`，且综合评分 ≥ 80，且无禁用词与极端格式异常时，方可放行；
+  - 语义主审的一票否决权得到绝对保证，存在逻辑漏洞的章节严禁归档。
+
+### 6. 🟠 断点锁死 (Stale Lock) 与返工计数器连续追踪 (Robust Checkpoint Recovery)
+- **问题实质**：失败的断点未被及时清除导致同一章节永远读出旧草稿锁死；断点恢复后返工计数器重新从 0 开始计算导致最大返工轮次限制失效。
+- **加固落地**：
+  - `ChapterWorkshop.ProduceChapter` 严格依据 `req.ResumeCheckpoint` 判断；非恢复模式下主动调用 `ClearCheckpoint` 清理脏数据；
+  - 断点恢复时从 `cp.RewriteLoops` 恢复真实轮次，并持续递增追踪，严格保证不超过 `MaxRewriteLoops`。
+
+### 7. 🟡 JSON 修复器词法边界保护 (Tokenizer-Aware JSON Repair)
+- **问题实质**：原字符串尾逗号正则与括号统计会破坏文本内部合法的逗号与花括号。
+- **加固落地**：
+  - 重构 `removeTrailingCommasAware` 与 `countUnclosedTokens`，引入字符串字面量转义感知扫描，完全忽略引号内部的逗号与括号；
+  - 正文对话中即便包含“{天元, 归一}”等符号，也不会干扰外部 JSON 结构的提取与修复。
+
+### 8. 🟡 跨卷长线伏笔因果历史场景还原 (Cross-Volume Plot Hook Narrative Recall)
+- **问题实质**：跨卷线索此前仅拼接章节标题与核心冲突，缺失埋设伏笔时的具体上下文场景段落。
+- **加固落地**：
+  - `CanonChronicle.AssembleHorizon` 关联各历史章所埋设的全部活跃伏笔详情（标题、目标章节、状态、要点）；
+  - 引入 `extractHookSceneExcerpt` 智能提取器：基于伏笔关键词定位原章正文现场，精准截取前后 150 字场景实况还原注入 Layer 3 历史因果线索，为长线伏笔的伏笔回收与解密提供高保真度上下文。
+
+---
+
+## 终态质量总体验证
+
+- **编译构建**：纯 Go 零 CGO 单二进制通过 (`go build ./...`)
+- **全量测试**：`go test -count=1 -race ./...` 100% 通过（29 个测试用例，覆盖并发、状态机、多模型路由、断点恢复、Token 真实统计等核心路径）
+- **格式规范**：`gofmt -w .` 全量格式化完成
+- **安全与稳定性**：所有状态流转严格遵循 Fail-Closed 原则，无降级垫片，无 Mock 伪实现。
+
+---
+
+## 阶段六：NovelStudio 2.0 对标 Novelcrafter 架构全面重塑与落地
+
+日期：2026-10-08  
+核心目标：基于海外 AI 辅助小说标杆 **Novelcrafter** 的核心特性，结合 NovelStudio 原有的因果状态机与单二进制护城河，全面落地 4 大里程碑功能，完成从纯后台推演工具向现代化沉浸式 AI 创作工坊的跨越。
+
+### Milestone 1: The Codex 全域世界观百科
+1. **领域实体模型 (`internal/domain/codex.go`)**：
+   - `CodexCategory`：支持 `CHARACTER`(角色)、`LOCATION`(地理)、`LORE`(公理)、`ITEM`(道具) 四大基石分类；
+   - `TrackingMode`：支持 `AUTO_MENTION`(智能引用自动注入)、`ALWAYS_INJECT`(全量强制注入)、`MANUAL`(手动引用)；
+   - `Progression` 阶段演进时间线：支持按 `active_from_chapter` 记录实体的属性、修为、心境与持有物快照，提供 `ActiveProgression(chapterIndex)` 确定性解析特定章节时刻的状态；
+   - `EntityRelation` 两两关系拓扑：记录两个实体之间的关系类型 (`NEMESIS`/`ALLY`/`MENTOR` 等) 与因果说明。
+2. **零 CGO SQLite 存储实现 (`internal/store/sqlite_store.go`)**：
+   - 建立 `codex_entries`、`codex_aliases`、`codex_progressions`、`codex_relations` 四张表及索引；
+   - 实现级联删除与事务一致性，提供完整的 CRUD 操作与关系查询。
+3. **实体引用智能扫描器 (`internal/engine/mention_scanner.go`)**：
+   - 支持别名与主名称的高性能上下文正则匹配与字位定位；
+   - 区分 `ALWAYS_INJECT` 与普通命中实体。
+4. **动态正史视界四层装配 (`internal/engine/chronicle.go`)**：
+   - 在 `AssembleHorizon` 中动态扫描最近正史与尾部锚点，提取活跃百科实体；
+   - 智能解析特定章节的演进快照，并仅在两实体于该场景共现时精准激活两两关系，注入 Layer 4 百科视界，严控 Token 膨胀。
+5. **API 与测试闭环**：
+   - 完整交付 `/api/projects/:id/codex` 相关接口（增删改查、阶段演进、关系网络、正文扫描）。
+
+### Milestone 2: The Matrix 矩阵大纲与原子场次
+1. **层次化大纲模型 (`internal/domain/matrix.go`)**：
+   - `Scene`：定义原子叙事场次，包含 `SceneIndex`、`Title`、`DramaticGoal`(戏剧目标)、`ConflictBarrier`(冲突阻碍)、`TensionLevel`(1-10 张力阶梯)、`WordCount`；
+   - `SceneMarker`：支持在场次中打上 `TODO`、`PLOT_HOLE`、`HOOK_ANCHOR`、`NOTE` 批注；
+   - `MatrixVolumeGroup` 与 `MatrixOverview`：实现 Volume ➔ Chapter ➔ Scene 4 层树状结构与全书字数、平均张力多维表格聚合。
+2. **SQLite 存储持久化**：
+   - 建立 `scenes` 与 `scene_markers` 表与级联外键，实现场次与批注的高效存取。
+3. **API 路由**：
+   - 交付 `/api/projects/:id/matrix`、`/api/projects/:id/scenes`、`/api/scenes/:id`、`/api/scenes/:id/markers`。
+
+### Milestone 3: Manuscript 手稿协作与透明提示词
+1. **划词 Inline AI 伴写动作 (`/api/workshop/inline-action`)**：
+   - 支持 `rewrite`(文学润色)、`expand`(细节扩写)、`shorten`(精简提炼)、`sensory`(五感沉浸强化)、`dialogue`(台词机锋打磨)、`custom`(自定义定向指令)；
+   - 统一由 `LLMRouter` 调度 `RoleWriter` 工业级输出，无多余寒暄废话。
+2. **提示词透视镜 Prompt Inspector (`/api/projects/:id/prompt-preview`)**：
+   - 彻底打破黑盒，将发往大模型的提示词解构为 4 大可视化积木卡片：
+     1. 世界观与风格公理 (Global Framework)
+     2. 因果故事线记忆 (Canon Horizon)
+     3. 全域百科与关系 (The Codex Injected)
+     4. 场景戏剧规格 (Scene Dramaturgy)
+   - 实时输出各积木的 Token 估算与完整组装文本，支持一键复制。
+
+### Milestone 4: Workshop 情境对话与全书态势分析
+1. **情境对话抽屉 (`/api/projects/:id/chat`)**：
+   - `character_roleplay`：动态绑定百科中该角色的最新设定、当前章节阶段状态与人际关系网，以第一人称严格保持人设与创作者对戏；
+   - `scene_brainstorm`：结合世界观规则，协助构思反转高能桥段；
+   - `editor_critique`：以严苛总编视角对剧情逻辑与节奏发起质询。
+2. **全书态势监控 (`/api/projects/:id/analytics`)**：
+   - `heatmap`：基于 `MentionScanner` 计算所有实体在全书各章节的出场频次矩阵，生成角色出场热力图；
+   - `tension`：提取全书各章节与场次的张力等级（1-10），生成戏剧张力心流分布直方图。
+
+### 单二进制 Web 终端界面深度集成
+- `web/dist/index.html`：
+  - 侧边栏新增 **🔲 矩阵大纲 (The Matrix)**、**📖 全域百科 (The Codex)**、**📊 态势分析 (Analytics)** 三大一级视图；
+  - 沉浸式手稿编辑器集成提示词透视 (Inspector) 弹窗、情境工坊 (Chat) 侧边抽屉、划词/段落 AI 快速操作栏及差分替换对比框；
+  - 零外部运行时依赖，由 Go 单二进制通过 `//go:embed all:dist` 纯净交付。
+
+### 自动化验证与质量门禁
+- **单元与集成测试**：全量测试套件通过（`go test -count=1 -race ./...`，覆盖 Domain、Store、Engine、Server 各层，包含新增的 Matrix、Codex、Analytics、PromptPreview 测试）；
+- **单二进制构建与体检**：`go build -o novel-studio ./cmd/novel-studio && ./novel-studio doctor` 全部通过（6 项通过，0 项失败）。
+
+---
+
+## 商业级去AI味攻防与国内平台合规体系 (Anti-AI Detection & Censor Harmonizer)
+
+针对长篇正文在腾讯朱雀 AI 检测助手出现 `No human creation detected, suspected AI 100%` 的问题，实施双轨落地方案（一+二全量上线）：
+
+### 1. 商业检测器机理破解与根因定位
+- **均匀概率分布陷阱 (Low Perplexity)**：大模型生成的词汇均处于 Top-5 极高概率分布分支，整篇文本缺乏方差；
+- **极端纯净叙事陷阱 (Hyper-Purity)**：800 字正文全部集中于物理动作与主线推进，零走神、零生理抗力、零世俗生活摩擦；
+- **机械断奏对称排比 (Staccato Cadence)**：强行要求短句导致出现匀称的“7字+逗号+7字”机器鼓点。
+
+### 2. 解法二：国内关键词合规和谐与对抗扰动 (`internal/engine/harmonizer.go`)
+- **涉暴与违规敏词平滑替换 (`HarmonizeSensitiveWords`)**：
+  - “开膛破肚” ➔ “重创倒地”
+  - “血肉模糊” ➔ “一片狼藉”
+  - “碎成肉泥” ➔ “筋骨尽断”
+  - “尸体” ➔ “残躯”
+  - “死人” ➔ “亡者”
+  - 粗俗脏话平滑转换为市井武侠俚语。
+- **对抗性词汇似然度扰动 (`Perturb`)**：
+  - 将高频 AI 动词与连接词（“走过去”、“看着”、“拿出了”）动态扰动为低概率触感动词（“大步踏过去”、“乜斜着盯牢”、“怀里摸出”）；
+  - 打散对称逗号，注入不规则破折号与停顿。
+- **全自动流水线接入 (`ProduceChapter`)**：在自主章节生产流水线中无缝集成合规与对抗扰动，生成合规审计报告。
+
+### 3. 解法一：人机协同人味杂质注入 (`SuggestHumanTouches`)
+- 提供 4 维人味杂质生成与破防原理推荐：
+  1. `PHYSIOLOGY` (生理不适偏见)：胃痉挛、冷汗浸透后背、旧伤隐痛、咽喉干咳；
+  2. `TRIVIALITY` (生活物质闲笔)：油灯爆芯、粗茶浮沫、鞋底踩入碎石、桌面薄灰指印；
+  3. `COLLOQUIALISM` (市井口癖碎屑)：粗鄙俗话、口语叹词、说话停顿；
+  4. `CADENCE` (标点断裂顿挫)：短促急停、破折留白，打破机械对称。
+
+### 4. 去 AI 味元提示词升级 (`orchestrator.go` & `linter.go`)
+- **状语/副词剥夺法则**：能不用状语就不用状语，能不用副词就不用副词；禁用“...地”修饰动词，强动词顶格；
+- **公式化比喻清零**：“像/如/犹如/宛若”清零，超过 2 处直接驳回返工；
+- **套路微表情清零**：全面封杀“嘴角僵硬弧度”、“眼角没有笑意”、“瞳孔缩成针尖”等 AI 套路描写。
+
+### 5. 桌面与前端工作台可视化交付
+- **Vite + Vue 3 + Tailwind CSS 现代工程构建**：替代单文件 `index.html`，组件化全量重构；
+- **合规与扰动弹窗 (`HarmonizeModal.vue`)**：支持 0.1~1.0 扰动强度调节、敏感词替换前后清单对比与一键替换手稿；
+- **人味注入建议弹窗 (`HumanTouchesModal.vue`)**：支持 4 类人味杂质筛选、破防原理透视与一键插入当前手稿；
+- **手稿顶栏与 Step 4 终审门禁集成**：快速触发质检、合规审查与人味建议。
+
+

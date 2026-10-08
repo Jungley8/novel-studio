@@ -86,13 +86,16 @@ func TestOrchestrator_RenderScene(t *testing.T) {
 		{Phase: "蓄力压迫", Tension: 8, Action: "风雪封山"},
 	}
 
-	content, err := orch.RenderScene(context.Background(), "deepseek-chat", p, 1, beats, 1500)
+	content, usage, err := orch.RenderScene(context.Background(), "deepseek-chat", p, 1, beats, 1500)
 	if err != nil {
 		t.Fatalf("RenderScene failed: %v", err)
 	}
 
 	if content != "青云峰上，寒风如刀。陆青抬起眼皮，指尖微屈。" {
 		t.Errorf("unexpected content: %s", content)
+	}
+	if usage.TotalTokens != 300 {
+		t.Errorf("expected usage 300, got %d", usage.TotalTokens)
 	}
 }
 
@@ -111,13 +114,16 @@ func TestOrchestrator_RenderSceneWithHorizon(t *testing.T) {
 		{Phase: "章末留钩", Tension: 9, Action: "剑气破空", HookType: "CLIFFHANGER"},
 	}
 
-	content, err := orch.RenderSceneWithHorizon(context.Background(), "deepseek-chat", horizon, beats, 2000)
+	content, usage, err := orch.RenderSceneWithHorizon(context.Background(), "deepseek-chat", horizon, beats, 2000)
 	if err != nil {
 		t.Fatalf("RenderSceneWithHorizon failed: %v", err)
 	}
 
 	if content != "漫天风雪呼啸。陆青迎风而立。" {
 		t.Errorf("unexpected content: %s", content)
+	}
+	if usage.TotalTokens != 300 {
+		t.Errorf("expected usage 300, got %d", usage.TotalTokens)
 	}
 }
 
@@ -132,7 +138,7 @@ func TestOrchestrator_ReviewDraft(t *testing.T) {
 	orch := engine.NewOrchestrator(mock)
 
 	p := &domain.Project{Title: "斗破苍穹"}
-	rev, err := orch.ReviewDraft(context.Background(), "deepseek-reasoner", p, 1, nil, "草稿正文...")
+	rev, usage, err := orch.ReviewDraft(context.Background(), "deepseek-reasoner", p, 1, nil, "草稿正文...")
 	if err != nil {
 		t.Fatalf("ReviewDraft failed: %v", err)
 	}
@@ -145,6 +151,9 @@ func TestOrchestrator_ReviewDraft(t *testing.T) {
 	}
 	if len(rev.Issues) != 1 {
 		t.Errorf("expected 1 issue, got %d", len(rev.Issues))
+	}
+	if usage.TotalTokens != 300 {
+		t.Errorf("expected usage 300, got %d", usage.TotalTokens)
 	}
 }
 
@@ -160,13 +169,16 @@ func TestOrchestrator_RewriteDraft(t *testing.T) {
 		Suggestions: "改为八极崩",
 	}
 
-	rewritten, err := orch.RewriteDraft(context.Background(), "deepseek-chat", p, 1, "旧草稿", rev)
+	rewritten, usage, err := orch.RewriteDraft(context.Background(), "deepseek-chat", p, 1, "旧草稿", rev)
 	if err != nil {
 		t.Fatalf("RewriteDraft failed: %v", err)
 	}
 
 	if rewritten != "重修后的正文：陆青翻掌成印，呼啸破风。" {
 		t.Errorf("unexpected rewritten text: %s", rewritten)
+	}
+	if usage.TotalTokens != 300 {
+		t.Errorf("expected usage 300, got %d", usage.TotalTokens)
 	}
 }
 
@@ -215,9 +227,12 @@ func TestOrchestrator_BootstrapFramework(t *testing.T) {
 		CoreConcept:    "三千年修真沉浮，天道是寄生真魔",
 	}
 
-	fw, err := orch.BootstrapFramework(context.Background(), "deepseek-reasoner", req)
+	fw, usage, err := orch.BootstrapFramework(context.Background(), "deepseek-reasoner", req)
 	if err != nil {
 		t.Fatalf("BootstrapFramework failed: %v", err)
+	}
+	if usage.TotalTokens != 300 {
+		t.Errorf("expected usage 300, got %d", usage.TotalTokens)
 	}
 
 	if fw.ThemePremise != "万古三千年修真界沉浮，凡人逆修弑神，天道实为寄生真魔" {

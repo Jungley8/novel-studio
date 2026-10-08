@@ -52,6 +52,8 @@ type WorkshopProduceRequest struct {
 	AutoCommit       bool             `json:"auto_commit,omitempty"`
 	MaxRewriteLoops  int              `json:"max_rewrite_loops,omitempty"`
 	ResumeCheckpoint bool             `json:"resume_checkpoint,omitempty"`
+	EnableHarmonize  bool             `json:"enable_harmonize,omitempty"`
+	PerturbIntensity float64          `json:"perturb_intensity,omitempty"`
 	OnProgress       ProgressCallback `json:"-"`
 }
 
@@ -69,6 +71,7 @@ type WorkshopProduceResult struct {
 	EstimatedCostUSD float64              `json:"estimated_cost_usd"`
 	ResumedPhase     string               `json:"resumed_phase,omitempty"`
 	UpdatedProject   *domain.Project      `json:"updated_project,omitempty"`
+	HarmonizeReport  *HarmonizeReport     `json:"harmonize_report,omitempty"`
 }
 
 // ChapterWorkshop is the deep orchestration module that encapsulates the entire
@@ -78,6 +81,7 @@ type ChapterWorkshop struct {
 	chronicle   *CanonChronicle
 	qualityGate *QualityGate
 	store       store.Store
+	harmonizer  *Harmonizer
 }
 
 func NewChapterWorkshop(
@@ -91,7 +95,12 @@ func NewChapterWorkshop(
 		chronicle:   chronicle,
 		qualityGate: qualityGate,
 		store:       store,
+		harmonizer:  NewHarmonizer(),
 	}
+}
+
+func (w *ChapterWorkshop) Harmonizer() *Harmonizer {
+	return w.harmonizer
 }
 
 // ProduceChapter executes the complete autonomous chapter production pipeline:
@@ -139,29 +148,36 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		draftText     string
 		auditReport   *domain.AuditReport
 		checkpointHit bool
+		rewriteLoops  int
 	)
 
-	cp, err := w.store.GetCheckpoint(ctx, req.ProjectID, req.ChapterIndex)
-	if err == nil && cp != nil {
-		checkpointHit = true
-		resumedPhase = string(cp.Phase)
-		if len(cp.Beats) > 0 {
-			beatsOut = &DeriveBeatsOutput{
-				Beats:         cp.Beats,
-				StateMutation: cp.StateMutation,
+	if req.ResumeCheckpoint {
+		cp, err := w.store.GetCheckpoint(ctx, req.ProjectID, req.ChapterIndex)
+		if err == nil && cp != nil {
+			checkpointHit = true
+			resumedPhase = string(cp.Phase)
+			rewriteLoops = cp.RewriteLoops
+			if len(cp.Beats) > 0 {
+				beatsOut = &DeriveBeatsOutput{
+					Beats:         cp.Beats,
+					StateMutation: cp.StateMutation,
+				}
 			}
+			if cp.DraftText != "" {
+				draftText = cp.DraftText
+			}
+			if cp.AuditReport != nil {
+				auditReport = cp.AuditReport
+			}
+			emit(WorkshopEvent{
+				Phase:   WorkshopPhase(cp.Phase),
+				Message: fmt.Sprintf("已从断点恢复 (阶段: %s, 历史返工轮次: %d)", cp.Phase, cp.RewriteLoops),
+				Beats:   cp.Beats,
+			})
 		}
-		if cp.DraftText != "" {
-			draftText = cp.DraftText
-		}
-		if cp.AuditReport != nil {
-			auditReport = cp.AuditReport
-		}
-		emit(WorkshopEvent{
-			Phase:   WorkshopPhase(cp.Phase),
-			Message: fmt.Sprintf("已从断点恢复 (阶段: %s)", cp.Phase),
-			Beats:   cp.Beats,
-		})
+	} else {
+		// Clean run explicitly requested: wipe out any prior stale checkpoint
+		_ = w.store.ClearCheckpoint(ctx, req.ProjectID, req.ChapterIndex)
 	}
 
 	// 1. Synthesize Canon Horizon
@@ -178,7 +194,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			return nil, fmt.Errorf("derive beats failed: %w", bErr)
 		}
 		beatsOut = bOut
-		addUsage(TokenUsage{PromptTokens: 800, CompletionTokens: 400, TotalTokens: 1200})
+		addUsage(bOut.Usage)
 
 		// Save Checkpoint after beats derivation
 		_ = w.store.SaveCheckpoint(ctx, &domain.ChapterCheckpoint{
@@ -200,12 +216,28 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	// 3. Render Literary Scene Draft (Skip if recovered from checkpoint)
 	if draftText == "" {
 		emit(WorkshopEvent{Phase: PhaseRendering, Message: "正在进行文学高张力渲染..."})
-		rendered, rErr := w.orch.RenderSceneWithHorizon(ctx, req.WriterModel, horizon, beatsOut.Beats, req.WordsTarget)
+		rendered, usage, rErr := w.orch.RenderSceneWithHorizon(ctx, req.WriterModel, horizon, beatsOut.Beats, req.WordsTarget)
 		if rErr != nil {
 			return nil, fmt.Errorf("render scene draft failed: %w", rErr)
 		}
 		draftText = rendered
-		addUsage(TokenUsage{PromptTokens: 1200, CompletionTokens: 2200, TotalTokens: 3400})
+		addUsage(usage)
+
+		// Optional: Apply Censor Harmonization & Adversarial Perturbation
+		if req.EnableHarmonize || req.PerturbIntensity > 0 {
+			intensity := req.PerturbIntensity
+			if intensity <= 0 {
+				intensity = 0.6
+			}
+			harmonized, hReport := w.harmonizer.FullProcess(draftText, intensity)
+			if len(hReport.HarmonizedItems) > 0 {
+				emit(WorkshopEvent{
+					Phase:   PhaseDrafted,
+					Message: fmt.Sprintf("已完成国内平台合规脱敏和谐 (%d 处高危敏感词平滑替换)", len(hReport.HarmonizedItems)),
+				})
+			}
+			draftText = harmonized
+		}
 
 		// Save Checkpoint after initial rendering
 		_ = w.store.SaveCheckpoint(ctx, &domain.ChapterCheckpoint{
@@ -228,12 +260,12 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	// 4. Audit via Quality Gate (with plot hooks resolution awareness)
 	if auditReport == nil {
 		emit(WorkshopEvent{Phase: PhaseAuditing, Message: "正在执行 QualityGate 算法质检与主审综合审校..."})
-		audit, aErr := w.qualityGate.AuditWithHooks(ctx, req.ReviewerModel, horizon.Project, req.ChapterIndex, beatsOut.Beats, horizon.AllActiveHooks, draftText)
+		audit, usage, aErr := w.qualityGate.AuditWithHooks(ctx, req.ReviewerModel, horizon.Project, req.ChapterIndex, beatsOut.Beats, horizon.AllActiveHooks, draftText)
 		if aErr != nil {
 			return nil, fmt.Errorf("quality gate audit failed: %w", aErr)
 		}
 		auditReport = audit
-		addUsage(TokenUsage{PromptTokens: 1500, CompletionTokens: 500, TotalTokens: 2000})
+		addUsage(usage)
 
 		// Save Checkpoint after audit
 		_ = w.store.SaveCheckpoint(ctx, &domain.ChapterCheckpoint{
@@ -255,7 +287,6 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	}
 
 	// 5. Targeted Rewrite Loop if revision needed
-	rewriteLoops := 0
 	currentDraft := draftText
 	for auditReport.Verdict == domain.ReviewVerdictRevision && rewriteLoops < req.MaxRewriteLoops {
 		rewriteLoops++
@@ -265,18 +296,18 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			RewriteLoop: rewriteLoops,
 		})
 
-		revised, rerr := w.orch.RewriteDraft(ctx, req.WriterModel, horizon.Project, req.ChapterIndex, currentDraft, auditReport.ToReviewResult())
+		revised, usage, rerr := w.orch.RewriteDraft(ctx, req.WriterModel, horizon.Project, req.ChapterIndex, currentDraft, auditReport.ToReviewResult())
 		if rerr != nil {
 			break // fallback gracefully to current draft
 		}
 		currentDraft = revised
-		addUsage(TokenUsage{PromptTokens: 1800, CompletionTokens: 2000, TotalTokens: 3800})
+		addUsage(usage)
 
 		// Re-audit revised draft
-		newAudit, aerr := w.qualityGate.AuditWithHooks(ctx, req.ReviewerModel, horizon.Project, req.ChapterIndex, beatsOut.Beats, horizon.AllActiveHooks, currentDraft)
+		newAudit, auditUsage, aerr := w.qualityGate.AuditWithHooks(ctx, req.ReviewerModel, horizon.Project, req.ChapterIndex, beatsOut.Beats, horizon.AllActiveHooks, currentDraft)
 		if aerr == nil {
 			auditReport = newAudit
-			addUsage(TokenUsage{PromptTokens: 1500, CompletionTokens: 500, TotalTokens: 2000})
+			addUsage(auditUsage)
 		}
 
 		// Save checkpoint for rewrite loop
@@ -320,6 +351,10 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	}
 	if checkpointHit {
 		result.ResumedPhase = resumedPhase
+	}
+	if req.EnableHarmonize || req.PerturbIntensity > 0 {
+		_, rpt := w.harmonizer.FullProcess(currentDraft, 0)
+		result.HarmonizeReport = &rpt
 	}
 
 	// 6. Optional Atomic Commitment

@@ -83,3 +83,87 @@ func TestApplyStateMutation(t *testing.T) {
 		t.Errorf("expected 筑基初期, got %s", updated2.NameAndLevel)
 	}
 }
+
+func TestApplyStateMutation_MathematicalQuantity(t *testing.T) {
+	initial := Protagonist{
+		NameAndLevel: "楚枫 (炼气一层)",
+		Inventory:    "粗布衣, 基础飞剑",
+	}
+
+	// 1. Gain multiple items: 洗髓丹x3, 灵石 100块
+	mutation1 := StateMutation{
+		InventoryDelta: "获得 洗髓丹x3; +灵石 100块",
+	}
+	updated1, audit1, err := ApplyStateMutation(initial, mutation1)
+	if err != nil {
+		t.Fatalf("mutation1 failed: %v", err)
+	}
+
+	var xisui *InventoryItem
+	var lingshi *InventoryItem
+	for i := range updated1.StructuredItems {
+		itm := &updated1.StructuredItems[i]
+		if itm.Name == "洗髓丹" {
+			xisui = itm
+		}
+		if itm.Name == "灵石" {
+			lingshi = itm
+		}
+	}
+	if xisui == nil || xisui.Quantity != 3 {
+		t.Fatalf("expected 洗髓丹 quantity 3, got %+v (audit: %v)", xisui, audit1)
+	}
+	if lingshi == nil || lingshi.Quantity != 100 {
+		t.Fatalf("expected 灵石 quantity 100, got %+v", lingshi)
+	}
+	if !strings.Contains(updated1.Inventory, "洗髓丹x3") {
+		t.Errorf("expected 洗髓丹x3 in Inventory string, got: %s", updated1.Inventory)
+	}
+
+	// 2. Consume partial items: 消耗 洗髓丹x1, 消耗 灵石 20块
+	mutation2 := StateMutation{
+		InventoryDelta: "消耗 洗髓丹x1; -灵石 20块",
+	}
+	updated2, _, err := ApplyStateMutation(updated1, mutation2)
+	if err != nil {
+		t.Fatalf("mutation2 failed: %v", err)
+	}
+
+	var xisui2 *InventoryItem
+	var lingshi2 *InventoryItem
+	for i := range updated2.StructuredItems {
+		itm := &updated2.StructuredItems[i]
+		if itm.Name == "洗髓丹" {
+			xisui2 = itm
+		}
+		if itm.Name == "灵石" {
+			lingshi2 = itm
+		}
+	}
+	if xisui2 == nil || xisui2.Quantity != 2 {
+		t.Fatalf("expected 洗髓丹 quantity 2 after consuming 1, got %+v", xisui2)
+	}
+	if lingshi2 == nil || lingshi2.Quantity != 80 {
+		t.Fatalf("expected 灵石 quantity 80 after consuming 20, got %+v", lingshi2)
+	}
+	if !strings.Contains(updated2.Inventory, "洗髓丹x2") {
+		t.Errorf("expected 洗髓丹x2 in inventory, got: %s", updated2.Inventory)
+	}
+
+	// 3. Fully consume remaining items: 消耗 洗髓丹x2
+	mutation3 := StateMutation{
+		InventoryDelta: "消耗 洗髓丹x2",
+	}
+	updated3, _, err := ApplyStateMutation(updated2, mutation3)
+	if err != nil {
+		t.Fatalf("mutation3 failed: %v", err)
+	}
+	for _, itm := range updated3.StructuredItems {
+		if itm.Name == "洗髓丹" {
+			t.Fatalf("expected 洗髓丹 to be completely removed, but still present: %+v", itm)
+		}
+	}
+	if strings.Contains(updated3.Inventory, "洗髓丹") {
+		t.Errorf("expected 洗髓丹 to be removed from inventory string, got: %s", updated3.Inventory)
+	}
+}

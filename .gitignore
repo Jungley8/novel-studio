@@ -22,3 +22,8 @@
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Frontend Dependencies
+node_modules/
+web/node_modules/
+

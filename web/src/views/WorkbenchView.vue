@@ -1,0 +1,732 @@
+<template>
+  <div class="flex-1 flex overflow-hidden">
+    <!-- 左栏：六步工序决策与节拍推演 (宽 340px) -->
+    <div class="w-84 border-r border-atelier-750 bg-atelier-900/40 flex flex-col shrink-0 overflow-hidden">
+      <!-- 工步导航指示条 -->
+      <div class="p-3 border-b border-atelier-750 bg-atelier-900/60">
+        <div class="grid grid-cols-6 gap-1">
+          <button 
+            v-for="step in workflowSteps" 
+            :key="step.id"
+            @click="goToStep(step.id)"
+            class="flex flex-col items-center py-1.5 rounded transition relative group cursor-pointer"
+            :class="state.activeStep === step.id ? 'bg-atelier-800 text-brand-amber font-bold' : 'text-ink-400 hover:text-ink-200 hover:bg-atelier-850'">
+            <span class="text-[11px] font-mono">{{ step.id }}</span>
+            <span class="text-[9px] mt-0.5 scale-90">{{ step.shortLabel }}</span>
+            <span 
+              v-if="stepBadge(step.id)" 
+              class="w-1.5 h-1.5 rounded-full absolute top-1 right-1"
+              :class="stepBadgeClass(step.id)"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 工步面板内容区 -->
+      <div class="flex-1 p-4 overflow-y-auto space-y-4">
+        <!-- STEP 1: 核心冲突与伏笔回收 -->
+        <div v-show="state.activeStep === 1" class="space-y-3.5">
+          <div>
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-brand-amber flex items-center gap-1.5">
+                <Target class="w-3.5 h-3.5" />
+                <span>Step 1: 核心冲突与动机</span>
+              </span>
+              <span class="text-[10px] font-mono text-ink-400">第 {{ computedState.nextChapterIndex.value }} 章</span>
+            </div>
+            <p class="text-[11px] text-ink-400 mt-1">确立本章的核心戏剧钩子、物理阻碍与高光反转目标。</p>
+          </div>
+
+          <!-- 灵感预设药丸 -->
+          <div>
+            <span class="text-[10px] uppercase font-mono tracking-wider text-ink-400 block mb-1">高能戏剧母题：</span>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button 
+                v-for="preset in inspirationPresets" 
+                :key="preset.title"
+                @click="state.workbench.coreConflict = preset.conflict"
+                class="px-2 py-1.5 text-left text-[11px] bg-atelier-850 hover:bg-atelier-800 text-ink-200 rounded border border-atelier-750 transition cursor-pointer">
+                <div class="font-semibold text-ink-100">{{ preset.title }}</div>
+                <div class="text-[10px] text-ink-400 truncate">{{ preset.desc }}</div>
+              </button>
+            </div>
+          </div>
+
+          <!-- 伏笔回收药丸 -->
+          <div v-if="computedState.activeHooksList.value.length > 0">
+            <span class="text-[10px] uppercase font-mono tracking-wider text-ink-400 block mb-1">待回收因果伏笔：</span>
+            <div class="flex flex-wrap gap-1">
+              <button 
+                v-for="h in computedState.activeHooksList.value" 
+                :key="h.id"
+                @click="appendHookToConflict(h)"
+                class="text-[10px] px-2 py-0.5 rounded bg-brand-amber/10 hover:bg-brand-amber/20 text-brand-amber border border-brand-amber/25 transition flex items-center gap-1 cursor-pointer"
+                :title="h.details">
+                <Anchor class="w-2.5 h-2.5" />
+                <span>{{ h.title }} (第{{ h.target_chapter }}章)</span>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-[11px] text-ink-300 mb-1 font-medium">核心剧情冲突描述：</label>
+            <textarea 
+              v-model="state.workbench.coreConflict"
+              rows="4" 
+              class="w-full bg-atelier-950 border border-atelier-750 rounded-md p-2.5 text-xs text-ink-100 placeholder-ink-500 resize-none focus-ring font-sans"
+              placeholder="例如：主角在拍卖会上洞悉残破丹炉藏有上古神念，引诱宿敌恶意抬价反遭反噬..."></textarea>
+          </div>
+
+          <button 
+            @click="handleDeriveBeats"
+            :disabled="state.isGeneratingBeats || !state.workbench.coreConflict.trim()"
+            class="w-full py-2 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-md shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
+            <Loader2 v-if="state.isGeneratingBeats" class="w-3.5 h-3.5 animate-spin" />
+            <Sparkles v-else class="w-3.5 h-3.5" />
+            <span>{{ state.isGeneratingBeats ? '大模型正在推演节拍...' : '推演四段论节拍 (Derive Beats)' }}</span>
+          </button>
+        </div>
+
+        <!-- STEP 2: 因果节拍调优 -->
+        <div v-show="state.activeStep === 2" class="space-y-3.5">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-brand-amber flex items-center gap-1.5">
+              <GitCommit class="w-3.5 h-3.5" />
+              <span>Step 2: 因果节拍矩阵</span>
+            </span>
+            <button @click="handleDeriveBeats" class="text-[11px] text-ink-400 hover:text-brand-amber transition cursor-pointer">
+              重新推演
+            </button>
+          </div>
+
+          <div class="space-y-2.5">
+            <div 
+              v-for="(b, i) in state.workbench.beats" 
+              :key="i"
+              class="p-2.5 bg-atelier-950/80 border border-atelier-750 rounded-md space-y-1.5">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] font-bold text-ink-100">{{ b.phase || `节拍 ${i + 1}` }}</span>
+                <span class="text-[10px] font-mono px-1.5 py-0.2 rounded font-bold" :class="tensionBadgeClass(b.tension)">
+                  张力 {{ b.tension }}/10
+                </span>
+              </div>
+              <input 
+                v-model="b.action" 
+                class="w-full bg-atelier-850 border border-atelier-700 rounded px-2 py-1 text-xs text-ink-100 focus-ring" 
+                placeholder="客观物理动作与剧情事实...">
+              <input 
+                v-model="b.expectation_broken" 
+                class="w-full bg-atelier-850 border border-atelier-700 rounded px-2 py-1 text-[11px] text-ink-300 focus-ring" 
+                placeholder="打破谁的预期 / 读者心流反应...">
+            </div>
+          </div>
+
+          <!-- 状态机变动预览 -->
+          <div class="p-2.5 bg-atelier-950 rounded border border-atelier-750 text-[11px] space-y-1">
+            <span class="font-bold text-brand-emerald flex items-center gap-1">
+              <ShieldCheck class="w-3 h-3" />
+              <span>状态机预判结算：</span>
+            </span>
+            <div class="text-ink-300">战力：<span class="text-ink-100">{{ state.workbench.stateMutation.power_delta || '无' }}</span></div>
+            <div class="text-ink-300">物品：<span class="text-ink-100">{{ state.workbench.stateMutation.inventory_delta || '无' }}</span></div>
+          </div>
+
+          <button 
+            @click="handleRenderScene"
+            :disabled="state.isRenderingScene"
+            class="w-full py-2 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-md shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
+            <Loader2 v-if="state.isRenderingScene" class="w-3.5 h-3.5 animate-spin" />
+            <PenTool v-else class="w-3.5 h-3.5" />
+            <span>{{ state.isRenderingScene ? '作家模型文学渲染中...' : '渲染正文初稿 (Render Prose)' }}</span>
+          </button>
+        </div>
+
+        <!-- STEP 4: 质检门禁与主编终审 -->
+        <div v-show="state.activeStep === 4" class="space-y-3.5">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-brand-amber flex items-center gap-1.5">
+              <ShieldAlert class="w-3.5 h-3.5" />
+              <span>Step 4: 质检门禁终审</span>
+            </span>
+            <button @click="handleReviewDraft" :disabled="state.isReviewing" class="text-[11px] text-brand-amber hover:underline cursor-pointer">
+              {{ state.isReviewing ? '终审中...' : '发起终审' }}
+            </button>
+          </div>
+
+          <!-- 突发度指标 -->
+          <div class="p-3 bg-atelier-950 rounded-md border border-atelier-750 space-y-1.5">
+            <div class="flex justify-between items-center text-xs">
+              <span class="text-ink-300">句长突发度 (Burstiness)</span>
+              <span class="font-mono font-bold" :class="state.linterReport.burstiness_score >= 45 ? 'text-brand-emerald' : 'text-brand-rose'">
+                {{ state.linterReport.burstiness_score }} 分
+              </span>
+            </div>
+            <div class="w-full bg-atelier-800 h-1.5 rounded-full overflow-hidden">
+              <div 
+                :style="{ width: Math.min(100, state.linterReport.burstiness_score) + '%' }" 
+                :class="state.linterReport.burstiness_score >= 45 ? 'bg-brand-emerald' : 'bg-brand-rose'" 
+                class="h-full transition-all"></div>
+            </div>
+            <p class="text-[10px] text-ink-400">长短句剧烈交替可有效瓦解 AI 机械感 (≥ 45 分达标)。</p>
+          </div>
+
+          <!-- 模式化套词命中小结 -->
+          <div class="p-3 bg-atelier-950 rounded-md border border-atelier-750 space-y-1">
+            <div class="flex justify-between items-center text-xs">
+              <span class="text-ink-300">模式化套词检测：</span>
+              <span class="font-mono text-xs" :class="state.linterReport.hit_banned_words.length === 0 ? 'text-brand-emerald' : 'text-brand-rose'">
+                {{ state.linterReport.hit_banned_words.length }} 处命中
+              </span>
+            </div>
+            <div v-if="state.linterReport.hit_banned_words.length > 0" class="flex flex-wrap gap-1 mt-1">
+              <span v-for="w in state.linterReport.hit_banned_words" :key="w" class="text-[10px] bg-brand-rose/10 text-brand-rose border border-brand-rose/25 px-1.5 py-0.2 rounded font-mono">
+                {{ w }}
+              </span>
+            </div>
+            <div v-else class="text-[10px] text-brand-emerald/90">未检出高频模式化废词。</div>
+          </div>
+
+          <!-- 国内合规与去AI扰动小结 -->
+          <div class="p-3 bg-atelier-950 rounded-md border border-atelier-750 space-y-2">
+            <div class="flex justify-between items-center text-xs">
+              <span class="text-ink-200 font-bold flex items-center gap-1.5">
+                <ShieldCheck class="w-3.5 h-3.5 text-brand-emerald" />
+                <span>国内合规与对抗扰动</span>
+              </span>
+              <button @click="openHarmonizeModal" class="text-[10px] text-brand-amber hover:underline cursor-pointer">
+                参数设置
+              </button>
+            </div>
+            <p class="text-[10px] text-ink-400">平滑替换涉暴敏感词，打散高概率 AI 动词，瓦解商业检测器似然特征。</p>
+            <div class="flex gap-2">
+              <button 
+                @click="openHarmonizeModal" 
+                class="flex-1 py-1.5 px-2 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded text-[11px] transition flex items-center justify-center gap-1 cursor-pointer">
+                <ShieldCheck class="w-3 h-3 text-brand-emerald" />
+                <span>合规与扰动</span>
+              </button>
+              <button 
+                @click="openHumanTouchesModal" 
+                class="flex-1 py-1.5 px-2 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded text-[11px] transition flex items-center justify-center gap-1 cursor-pointer">
+                <HeartHandshake class="w-3 h-3 text-brand-amber" />
+                <span>注入人味建议</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 主编终审报告 -->
+          <div v-if="state.reviewResult" class="p-3 bg-atelier-950 rounded-md border space-y-2" :class="state.reviewResult.verdict === 'ACCEPTED' ? 'border-brand-emerald/40' : 'border-brand-rose/40'">
+            <div class="flex justify-between items-center text-xs">
+              <span class="font-bold flex items-center gap-1" :class="state.reviewResult.verdict === 'ACCEPTED' ? 'text-brand-emerald' : 'text-brand-rose'">
+                <span v-if="state.reviewResult.verdict === 'ACCEPTED'">✓ 终审裁决: 验收通过</span>
+                <span v-else>⚠️ 终审裁决: 驳回返工</span>
+              </span>
+              <span class="px-2 py-0.5 rounded text-xs font-mono font-bold" :class="state.reviewResult.score >= 80 ? 'bg-brand-emerald/15 text-brand-emerald border border-brand-emerald/30' : 'bg-brand-rose/15 text-brand-rose border border-brand-rose/30'">
+                {{ state.reviewResult.score }} 分
+              </span>
+            </div>
+            <div v-if="state.reviewResult.issues?.length" class="space-y-1">
+              <div class="text-[10px] text-ink-400 font-semibold">检出问题点 ({{ state.reviewResult.issues.length }})：</div>
+              <ul class="text-[11px] text-brand-rose/90 space-y-0.5 list-disc list-inside bg-atelier-900 p-2 rounded">
+                <li v-for="(iss, i) in state.reviewResult.issues" :key="i">{{ iss }}</li>
+              </ul>
+            </div>
+            <div v-if="state.reviewResult.suggestions" class="text-[11px] text-ink-300 leading-relaxed bg-atelier-900 p-2 rounded">
+              <strong class="text-ink-100">主编建议：</strong>{{ state.reviewResult.suggestions }}
+            </div>
+          </div>
+        </div>
+
+        <!-- STEP 5: 定向返工修缮 -->
+        <div v-show="state.activeStep === 5" class="space-y-3.5">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-brand-amber flex items-center gap-1.5">
+              <RefreshCw class="w-3.5 h-3.5" />
+              <span>Step 5: 缺陷定向返工</span>
+            </span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-atelier-800 text-brand-amber">
+              第 {{ state.rewriteLoopCount }} / 3 轮
+            </span>
+          </div>
+
+          <div v-if="state.reviewResult?.suggestions" class="p-3 bg-atelier-950 rounded-md border border-atelier-750 text-xs space-y-1.5">
+            <span class="font-bold text-ink-200">主编修改建议：</span>
+            <p class="text-[11px] text-ink-300 leading-relaxed whitespace-pre-wrap">{{ state.reviewResult.suggestions }}</p>
+          </div>
+
+          <button 
+            @click="handleRewriteDraft"
+            :disabled="state.isRewriting"
+            class="w-full py-2 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-md shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
+            <Loader2 v-if="state.isRewriting" class="w-3.5 h-3.5 animate-spin" />
+            <RotateCcw v-else class="w-3.5 h-3.5" />
+            <span>{{ state.isRewriting ? '执行局部差分返工中...' : '执行针对性精修返工' }}</span>
+          </button>
+        </div>
+
+        <!-- STEP 6: 结算归档 -->
+        <div v-show="state.activeStep === 6" class="space-y-3.5">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-brand-amber flex items-center gap-1.5">
+              <CheckCircle2 class="w-3.5 h-3.5" />
+              <span>Step 6: 原子归档结算</span>
+            </span>
+            <span class="text-[10px] font-mono text-ink-300">{{ state.workbench.content.length }} 字</span>
+          </div>
+
+          <p class="text-[11px] text-ink-400">将本章正文、状态机转移与伏笔回收一次性原子提交至 SQLite 数据库，成为封存正史。</p>
+
+          <button 
+            @click="handleCommitChapter"
+            :disabled="!state.workbench.content.trim()"
+            class="w-full py-2.5 bg-brand-emerald hover:bg-emerald-500 text-atelier-950 font-bold text-xs rounded-md shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
+            <Check class="w-4 h-4" />
+            <span>提交并原子封存第 {{ computedState.nextChapterIndex.value }} 章</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 中栏：手稿画布与沉浸式书写体验 (自适应弹性填充) -->
+    <div class="flex-1 flex flex-col overflow-hidden bg-atelier-950">
+      <!-- 手稿顶栏状态与字数计量 -->
+      <div class="h-11 px-5 border-b border-atelier-750 flex items-center justify-between bg-atelier-900/30 shrink-0">
+        <div class="flex items-center gap-3">
+          <span class="text-xs font-bold font-serif text-ink-100">
+            第 {{ computedState.nextChapterIndex.value }} 章手稿
+          </span>
+          <span class="text-[11px] font-mono text-ink-400">
+            <strong class="text-brand-amber font-semibold">{{ state.workbench.content.length }}</strong> 字 · 约 {{ Math.max(1, Math.ceil(state.workbench.content.length / 400)) }} 分钟读完
+          </span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button 
+            @click="actions.runLinter" 
+            class="px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded border border-atelier-750 transition flex items-center gap-1 cursor-pointer">
+            <Sparkles class="w-3 h-3 text-brand-amber" />
+            <span>反AI味质检</span>
+          </button>
+
+          <button 
+            @click="openHarmonizeModal" 
+            class="px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded border border-atelier-750 transition flex items-center gap-1 cursor-pointer"
+            title="平滑替换敏感词与对抗扰动">
+            <ShieldCheck class="w-3 h-3 text-brand-emerald" />
+            <span>合规与去AI扰动</span>
+          </button>
+
+          <button 
+            @click="openHumanTouchesModal" 
+            class="px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded border border-atelier-750 transition flex items-center gap-1 cursor-pointer"
+            title="生成生理不适、世俗闲笔等真实人味">
+            <HeartHandshake class="w-3 h-3 text-brand-amber" />
+            <span>注入人味建议</span>
+          </button>
+
+          <span 
+            v-if="state.reviewResult"
+            class="text-[10px] font-mono font-bold px-2 py-0.5 rounded border"
+            :class="state.reviewResult.score >= 80 ? 'bg-brand-emerald/15 text-brand-emerald border-brand-emerald/30' : 'bg-brand-rose/15 text-brand-rose border-brand-rose/30'">
+            终审: {{ state.reviewResult.score }}分 ({{ state.reviewResult.verdict }})
+          </span>
+        </div>
+      </div>
+
+      <!-- 划词 / 段落 Inline AI 快速伴写浮动条 -->
+      <div class="px-5 py-2 bg-atelier-900/80 border-b border-atelier-750 flex items-center justify-between text-xs shrink-0 select-none">
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <span class="text-ink-400 text-[10px] font-mono uppercase tracking-wider mr-1">划词伴写:</span>
+          <button 
+            v-for="act in inlineActionButtons" 
+            :key="act.action"
+            @click="runInlineAction(act.action)"
+            :disabled="inlineActionLoading || !state.workbench.content"
+            class="px-2.5 py-1 rounded bg-atelier-850 hover:bg-atelier-800 text-ink-200 hover:text-ink-50 border border-atelier-700 text-[11px] transition flex items-center gap-1 cursor-pointer disabled:opacity-40">
+            <component :is="act.icon" class="w-3 h-3 text-brand-amber" />
+            <span>{{ act.label }}</span>
+          </button>
+          <button 
+            @click="openCustomInlinePrompt"
+            :disabled="inlineActionLoading || !state.workbench.content"
+            class="px-2.5 py-1 rounded bg-atelier-850 hover:bg-atelier-800 text-brand-amber border border-atelier-700 text-[11px] transition flex items-center gap-1 cursor-pointer disabled:opacity-40">
+            <Wand2 class="w-3 h-3 text-brand-amber" />
+            <span>自定义指令</span>
+          </button>
+        </div>
+
+        <div v-if="inlineActionLoading" class="flex items-center gap-1 text-[11px] text-brand-amber">
+          <Loader2 class="w-3 h-3 animate-spin" />
+          <span>AI 加工润色中...</span>
+        </div>
+      </div>
+
+      <!-- 划词 AI 结果差分对比横幅 -->
+      <div v-if="showInlineDiff && inlineActionResult" class="p-3.5 bg-atelier-900/90 border-b border-brand-amber/30 space-y-2 shrink-0">
+        <div class="flex items-center justify-between text-xs">
+          <span class="font-bold text-brand-amber flex items-center gap-1.5">
+            <Sparkles class="w-3.5 h-3.5" />
+            <span>AI 改写结果 ({{ inlineActionResult.action }})</span>
+          </span>
+          <div class="flex gap-2">
+            <button @click="applyInlineResult" class="px-2.5 py-1 bg-brand-emerald hover:bg-emerald-500 text-atelier-950 font-bold rounded text-xs transition cursor-pointer">
+              ✓ 采纳替换
+            </button>
+            <button @click="discardInlineResult" class="px-2.5 py-1 bg-atelier-800 hover:bg-atelier-750 text-ink-300 rounded text-xs transition cursor-pointer">
+              ✕ 放弃
+            </button>
+          </div>
+        </div>
+        <div class="p-3 bg-atelier-950 rounded border border-atelier-750 text-xs text-ink-100 leading-relaxed font-serif max-h-36 overflow-y-auto whitespace-pre-wrap">
+          {{ inlineActionResult.result }}
+        </div>
+      </div>
+
+      <!-- 纯净排版正文文本框 -->
+      <div class="flex-1 flex overflow-hidden p-6 justify-center">
+        <div class="w-full max-w-3xl flex flex-col h-full">
+          <textarea 
+            id="prose-textarea"
+            v-model="state.workbench.content"
+            @input="actions.runLinter"
+            class="flex-1 w-full bg-transparent text-ink-100 text-base leading-relaxed font-serif resize-none focus:outline-none placeholder-ink-500 selection:bg-brand-amber selection:text-atelier-950 tracking-wide"
+            placeholder="正文手稿由此展开……支持输入或让作家模型依据节拍实时流式渲染。"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右栏：上下文透视镜与因果锁链视界 (宽 300px) -->
+    <div class="w-76 border-l border-atelier-750 bg-atelier-900/30 flex flex-col shrink-0 overflow-y-auto p-4 space-y-4">
+      <div>
+        <span class="text-[10px] font-mono uppercase tracking-wider text-ink-400 block mb-1">
+          因果锁链视界 (Horizon)
+        </span>
+        <h4 class="text-xs font-bold text-ink-200">全域时空与物理状态</h4>
+      </div>
+
+      <!-- 主角状态机快照 -->
+      <div class="p-3 bg-atelier-950/70 border border-atelier-750 rounded-md space-y-1.5 text-xs">
+        <span class="font-bold text-brand-emerald flex items-center gap-1.5">
+          <Cpu class="w-3.5 h-3.5" />
+          <span>主角因果账本</span>
+        </span>
+        <div class="text-[11px] text-ink-300">
+          境界：<strong class="text-ink-100 font-semibold">{{ state.currentProject?.protagonist?.name_and_level || '凡人' }}</strong>
+        </div>
+        <div class="text-[11px] text-ink-300">
+          行囊道具：<strong class="text-ink-100">{{ state.currentProject?.protagonist?.inventory || '无' }}</strong>
+        </div>
+      </div>
+
+      <!-- 上章收尾文风锚点 (Tail Anchor) -->
+      <div v-if="state.chapters.length > 0" class="p-3 bg-atelier-950/70 border border-atelier-750 rounded-md space-y-1.5 text-xs">
+        <span class="font-bold text-brand-amber flex items-center gap-1.5">
+          <Anchor class="w-3.5 h-3.5" />
+          <span>上章尾部腔调锚点</span>
+        </span>
+        <p class="text-[11px] text-ink-300 font-serif leading-relaxed italic line-clamp-4">
+          “{{ lastChapterTail }}”
+        </p>
+      </div>
+
+      <!-- 本场共现百科实体 -->
+      <div class="p-3 bg-atelier-950/70 border border-atelier-750 rounded-md space-y-2 text-xs">
+        <div class="flex items-center justify-between">
+          <span class="font-bold text-brand-cyan flex items-center gap-1.5">
+            <BookOpen class="w-3.5 h-3.5" />
+            <span>全域百科活跃度</span>
+          </span>
+          <span class="text-[10px] font-mono text-ink-400">{{ state.codexEntries.length }} 实体</span>
+        </div>
+        <div v-if="state.codexEntries.length > 0" class="flex flex-wrap gap-1">
+          <span 
+            v-for="e in state.codexEntries.slice(0, 8)" 
+            :key="e.id"
+            class="text-[10px] px-2 py-0.5 rounded bg-atelier-850 border border-atelier-700/80 text-ink-200">
+            {{ e.name }}
+          </span>
+        </div>
+        <div v-else class="text-[11px] text-ink-500 italic">
+          暂无录入的百科实体，可在 The Codex 建立世界观。
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed } from 'vue';
+import { state, computedState, actions, notify } from '../stores/appState';
+import { api } from '../api/client';
+import {
+  Target,
+  Sparkles,
+  GitCommit,
+  PenTool,
+  ShieldAlert,
+  RefreshCw,
+  CheckCircle2,
+  Check,
+  ShieldCheck,
+  Anchor,
+  Loader2,
+  Cpu,
+  BookOpen,
+  Wand2,
+  Scissors,
+  Maximize2,
+  Minimize2,
+  Eye,
+  MessageSquare,
+  RotateCcw,
+  HeartHandshake
+} from 'lucide-vue-next';
+
+const workflowSteps = [
+  { id: 1, shortLabel: '冲突' },
+  { id: 2, shortLabel: '节拍' },
+  { id: 3, shortLabel: '渲染' },
+  { id: 4, shortLabel: '质检' },
+  { id: 5, shortLabel: '返工' },
+  { id: 6, shortLabel: '归档' },
+];
+
+const inspirationPresets = [
+  { title: '拍卖截胡', desc: '低买高坑，暗藏乾坤', conflict: '主角在黑市拍卖会发现被掩盖的远古残器，反派欲恶意抬价加害，主角顺水推舟设局反坑反派万两灵石。' },
+  { title: '考核越级', desc: '以弱胜强，众目反转', conflict: '内门考核中反派暗中篡改抽签安排强敌，主角暗藏底牌在众目睽睽下以弱胜强，打破全场轻视。' },
+  { title: '密室反杀', desc: '利用公理，反向栽赃', conflict: '宗门密室内遭死士围剿，主角利用对世界规则的独特理解触发禁制，反向猎杀并栽赃幕后黑手。' },
+  { title: '伏笔收网', desc: '暗线引爆，逆转攻守', conflict: '前序埋伏的暗线被敌方误以为是破绽发起决战，主角瞬间翻开底牌彻底逆转攻守并回收悬念。' },
+];
+
+const inlineActionButtons = [
+  { action: 'rewrite', label: '重写润色', icon: Scissors },
+  { action: 'expand', label: '细节扩写', icon: Maximize2 },
+  { action: 'shorten', label: '精简提炼', icon: Minimize2 },
+  { action: 'sensory', label: '五感具象', icon: Eye },
+  { action: 'dialogue', label: '打磨台词', icon: MessageSquare },
+];
+
+const lastChapterTail = computed(() => {
+  if (!state.chapters.length) return '';
+  const last = state.chapters[state.chapters.length - 1];
+  if (!last.content) return '';
+  const runes = Array.from(last.content);
+  return runes.slice(Math.max(0, runes.length - 120)).join('');
+});
+
+function tensionBadgeClass(tension) {
+  if (tension >= 8) return 'bg-brand-rose/15 text-brand-rose border border-brand-rose/30';
+  if (tension >= 5) return 'bg-brand-amber/15 text-brand-amber border border-brand-amber/30';
+  return 'bg-brand-emerald/15 text-brand-emerald border border-brand-emerald/30';
+}
+
+function stepBadge(id) {
+  if (id === 1) return state.workbench.coreConflict ? true : false;
+  if (id === 2) return state.workbench.beats.some(b => b.action) ? true : false;
+  if (id === 3) return state.workbench.content ? true : false;
+  if (id === 4) return state.reviewResult ? true : false;
+  if (id === 5) return state.reviewResult?.verdict === 'REVISION_NEEDED';
+  return false;
+}
+
+function stepBadgeClass(id) {
+  if (id === 4 && state.reviewResult) {
+    return state.reviewResult.score >= 80 ? 'bg-brand-emerald' : 'bg-brand-rose';
+  }
+  if (id === 5 && state.reviewResult?.verdict === 'REVISION_NEEDED') {
+    return 'bg-brand-rose animate-pulse';
+  }
+  return 'bg-brand-amber';
+}
+
+function goToStep(id) {
+  state.activeStep = id;
+}
+
+function appendHookToConflict(h) {
+  const note = `\n[伏笔回收目标: ${h.title} - ${h.details}]`;
+  if (!state.workbench.coreConflict.includes(h.title)) {
+    state.workbench.coreConflict += note;
+  }
+}
+
+// 节拍推演
+async function handleDeriveBeats() {
+  if (!state.currentProject || !state.workbench.coreConflict.trim()) return;
+  state.isGeneratingBeats = true;
+  try {
+    const res = await api.deriveBeats(state.currentProject.id, {
+      chapter_index: computedState.nextChapterIndex.value,
+      core_conflict: state.workbench.coreConflict,
+    });
+    if (res.beats && res.beats.length) {
+      state.workbench.beats = res.beats;
+    }
+    if (res.state_mutation) {
+      state.workbench.stateMutation = res.state_mutation;
+    }
+    state.activeStep = 2;
+    notify('节拍推演完成', '已根据前序正史生成因果四段论节拍', 'success');
+  } catch (e) {
+    notify('推演节拍失败', e.message, 'error');
+  } finally {
+    state.isGeneratingBeats = false;
+  }
+}
+
+// 文学渲染
+async function handleRenderScene() {
+  if (!state.currentProject) return;
+  state.isRenderingScene = true;
+  try {
+    const res = await api.renderScene(state.currentProject.id, {
+      chapter_index: computedState.nextChapterIndex.value,
+      beats: state.workbench.beats,
+      words_target: state.wordsTarget || 2000,
+    });
+    state.workbench.content = res.content || '';
+    state.activeStep = 3;
+    await actions.runLinter();
+    notify('正文初稿生成完毕', `完成约 ${state.workbench.content.length} 字文学渲染`, 'success');
+  } catch (e) {
+    notify('渲染正文失败', e.message, 'error');
+  } finally {
+    state.isRenderingScene = false;
+  }
+}
+
+// 终审质检
+async function handleReviewDraft() {
+  if (!state.currentProject || !state.workbench.content.trim()) return;
+  state.isReviewing = true;
+  try {
+    const res = await api.reviewDraft(state.currentProject.id, {
+      chapter_index: computedState.nextChapterIndex.value,
+      content: state.workbench.content,
+      beats: state.workbench.beats,
+    });
+    state.reviewResult = res;
+    state.activeStep = res.verdict === 'ACCEPTED' ? 6 : 5;
+    notify('主编终审完成', `得分: ${res.score} · 裁决: ${res.verdict}`, res.verdict === 'ACCEPTED' ? 'success' : 'info');
+  } catch (e) {
+    notify('审查失败', e.message, 'error');
+  } finally {
+    state.isReviewing = false;
+  }
+}
+
+// 定向返工
+async function handleRewriteDraft() {
+  if (!state.currentProject || !state.workbench.content.trim()) return;
+  state.isRewriting = true;
+  try {
+    const res = await api.rewriteDraft(state.currentProject.id, {
+      chapter_index: computedState.nextChapterIndex.value,
+      content: state.workbench.content,
+      issues: state.reviewResult?.issues || [],
+      suggestions: state.reviewResult?.suggestions || '',
+    });
+    state.workbench.content = res.content || '';
+    state.rewriteLoopCount++;
+    await actions.runLinter();
+    state.activeStep = 4;
+    notify('针对性返工完成', '已采纳修改意见，正文已替换更新', 'success');
+  } catch (e) {
+    notify('返工失败', e.message, 'error');
+  } finally {
+    state.isRewriting = false;
+  }
+}
+
+// 提交归档
+async function handleCommitChapter() {
+  if (!state.currentProject || !state.workbench.content.trim()) return;
+  try {
+    const titleMatch = state.workbench.coreConflict.match(/^[^\n，。！？]+/);
+    const title = titleMatch ? titleMatch[0].trim() : `第 ${computedState.nextChapterIndex.value} 章`;
+    await api.commitChapter(state.currentProject.id, {
+      chapter_index: computedState.nextChapterIndex.value,
+      title: title,
+      content: state.workbench.content,
+      beats: state.workbench.beats,
+      state_mutation: state.workbench.stateMutation,
+      audit_report: state.reviewResult,
+      word_count: state.workbench.content.length,
+    });
+    notify('章节已成功封存归档', `第 ${computedState.nextChapterIndex.value} 章已记录入正史与状态账本`, 'success');
+    await actions.selectProject(state.currentProject.id);
+    state.workbench.content = '';
+    state.workbench.coreConflict = '';
+    state.reviewResult = null;
+    state.activeStep = 1;
+  } catch (e) {
+    notify('归档失败', e.message, 'error');
+  }
+}
+
+// 划词 Inline Actions
+const inlineActionLoading = ref(false);
+const inlineActionResult = ref(null);
+const showInlineDiff = ref(false);
+let lastSelectedText = '';
+
+function getSelectedOrFullText() {
+  const textarea = document.getElementById('prose-textarea');
+  if (textarea && textarea.selectionStart !== textarea.selectionEnd) {
+    const sel = textarea.value.substring(textarea.selectionStart, textarea.selectionEnd);
+    if (sel.trim()) return sel;
+  }
+  return state.workbench.content;
+}
+
+async function runInlineAction(actionType, instruction = '') {
+  const text = getSelectedOrFullText();
+  if (!text || !text.trim()) return notify('请先选中文本', '可在正文中选定段落后运行伴写动作', 'info');
+  lastSelectedText = text;
+  inlineActionLoading.value = true;
+  try {
+    const res = await api.inlineAction({
+      action: actionType,
+      selection: text,
+      instruction: instruction,
+      surrounding_context: `当前正文字数: ${state.workbench.content.length}`,
+    });
+    inlineActionResult.value = res;
+    showInlineDiff.value = true;
+  } catch (e) {
+    notify('AI 动作执行失败', e.message, 'error');
+  } finally {
+    inlineActionLoading.value = false;
+  }
+}
+
+function openCustomInlinePrompt() {
+  const instr = prompt('请输入你的定向修改或润色指令：');
+  if (instr) runInlineAction('custom', instr);
+}
+
+function applyInlineResult() {
+  if (!inlineActionResult.value) return;
+  if (lastSelectedText && lastSelectedText !== state.workbench.content && state.workbench.content.includes(lastSelectedText)) {
+    state.workbench.content = state.workbench.content.replace(lastSelectedText, inlineActionResult.value.result);
+  } else {
+    state.workbench.content = inlineActionResult.value.result;
+  }
+  showInlineDiff.value = false;
+  inlineActionResult.value = null;
+  actions.runLinter();
+  notify('已采纳改写结果', '正文已更新', 'success');
+}
+
+function discardInlineResult() {
+  showInlineDiff.value = false;
+  inlineActionResult.value = null;
+}
+
+function openHarmonizeModal() {
+  state.showHarmonizeModal = true;
+}
+
+function openHumanTouchesModal() {
+  state.showHumanTouchesModal = true;
+}
+</script>

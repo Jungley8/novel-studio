@@ -95,6 +95,94 @@ func (s *SQLiteStore) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_chapters_project ON chapters(project_id, chapter_index);
 	CREATE INDEX IF NOT EXISTS idx_hooks_project ON plot_hooks(project_id, status);
 	CREATE INDEX IF NOT EXISTS idx_checkpoints_project ON chapter_checkpoints(project_id, chapter_index);
+
+	CREATE TABLE IF NOT EXISTS codex_entries (
+		id TEXT PRIMARY KEY,
+		project_id TEXT NOT NULL,
+		category TEXT NOT NULL,
+		name TEXT NOT NULL,
+		color_tag TEXT,
+		summary TEXT,
+		details_markdown TEXT,
+		tracking_mode TEXT DEFAULT 'AUTO_MENTION',
+		archetype TEXT DEFAULT '',
+		voice_tone TEXT DEFAULT '',
+		core_motivation TEXT DEFAULT '',
+		current_disposition TEXT DEFAULT '',
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL,
+		FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS codex_aliases (
+		id TEXT PRIMARY KEY,
+		entry_id TEXT NOT NULL,
+		alias TEXT NOT NULL,
+		FOREIGN KEY(entry_id) REFERENCES codex_entries(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS codex_progressions (
+		id TEXT PRIMARY KEY,
+		entry_id TEXT NOT NULL,
+		active_from_chapter INTEGER NOT NULL,
+		state_payload_json TEXT NOT NULL,
+		notes TEXT,
+		created_at TIMESTAMP NOT NULL,
+		FOREIGN KEY(entry_id) REFERENCES codex_entries(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS codex_relations (
+		id TEXT PRIMARY KEY,
+		project_id TEXT NOT NULL,
+		source_entry_id TEXT NOT NULL,
+		target_entry_id TEXT NOT NULL,
+		relation_type TEXT NOT NULL,
+		description TEXT,
+		created_at TIMESTAMP NOT NULL,
+		FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_codex_aliases ON codex_aliases(alias);
+	CREATE INDEX IF NOT EXISTS idx_codex_entries_proj ON codex_entries(project_id, category);
+	CREATE INDEX IF NOT EXISTS idx_codex_progressions ON codex_progressions(entry_id, active_from_chapter);
+	CREATE INDEX IF NOT EXISTS idx_codex_relations ON codex_relations(project_id, source_entry_id);
+
+	CREATE TABLE IF NOT EXISTS scenes (
+		id TEXT PRIMARY KEY,
+		chapter_id TEXT NOT NULL,
+		project_id TEXT NOT NULL,
+		scene_index INTEGER NOT NULL,
+		title TEXT,
+		location_entry_id TEXT,
+		dramatic_goal TEXT,
+		conflict_barrier TEXT,
+		tension_level INTEGER DEFAULT 5,
+		beats_json TEXT NOT NULL,
+		state_mutation_json TEXT,
+		prose_content TEXT,
+		word_count INTEGER DEFAULT 0,
+		exclude_from_ai BOOLEAN DEFAULT 0,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL,
+		FOREIGN KEY(chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS scene_markers (
+		id TEXT PRIMARY KEY,
+		scene_id TEXT NOT NULL,
+		marker_type TEXT NOT NULL,
+		color TEXT NOT NULL,
+		text_range_start INTEGER NOT NULL,
+		text_range_end INTEGER NOT NULL,
+		content TEXT NOT NULL,
+		resolved BOOLEAN DEFAULT 0,
+		created_at TIMESTAMP NOT NULL,
+		FOREIGN KEY(scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_scenes_chapter ON scenes(chapter_id, scene_index);
+	CREATE INDEX IF NOT EXISTS idx_scenes_project ON scenes(project_id);
+	CREATE INDEX IF NOT EXISTS idx_scene_markers_scene ON scene_markers(scene_id);
 	`
 	if _, err := s.db.Exec(schema); err != nil {
 		return err
@@ -103,6 +191,10 @@ func (s *SQLiteStore) migrate() error {
 	_, _ = s.db.Exec(`ALTER TABLE chapters ADD COLUMN review_json TEXT;`)
 	_, _ = s.db.Exec(`ALTER TABLE projects ADD COLUMN framework_json TEXT;`)
 	_, _ = s.db.Exec(`UPDATE projects SET framework_json = '' WHERE framework_json IS NULL;`)
+	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN archetype TEXT DEFAULT '';`)
+	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN voice_tone TEXT DEFAULT '';`)
+	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN core_motivation TEXT DEFAULT '';`)
+	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN current_disposition TEXT DEFAULT '';`)
 	return nil
 }
 
@@ -326,6 +418,47 @@ func (s *SQLiteStore) CommitChapter(ctx context.Context, projectID string, c *do
 		projectID, c.ChapterIndex,
 	); err != nil {
 		return nil, fmt.Errorf("update plot hooks in tx: %w", err)
+	}
+
+	// 4b. Apply CharacterMutations to matching Codex character entries
+	if len(c.StateMutation.CharacterMutations) > 0 {
+		for _, cm := range c.StateMutation.CharacterMutations {
+			cmName := strings.TrimSpace(cm.Name)
+			if cmName == "" {
+				continue
+			}
+			var entryID string
+			row := tx.QueryRowContext(ctx, `
+				SELECT id FROM codex_entries 
+				WHERE project_id = ? AND (name = ? OR id IN (SELECT entry_id FROM codex_aliases WHERE alias = ?))
+				LIMIT 1
+			`, projectID, cmName, cmName)
+			if row.Scan(&entryID) == nil && entryID != "" {
+				progID := fmt.Sprintf("prog-%d-%s", time.Now().UnixNano(), entryID)
+				payloadJSON := fmt.Sprintf(`{"status":"%s","relation":"%s"}`,
+					strings.ReplaceAll(cm.StatusDelta, `"`, `\"`),
+					strings.ReplaceAll(cm.RelationDelta, `"`, `\"`),
+				)
+				notes := strings.TrimSpace(cm.StatusDelta)
+				if cm.RelationDelta != "" {
+					if notes != "" {
+						notes += "；"
+					}
+					notes += "对主角/因果变迁: " + cm.RelationDelta
+				}
+				_, _ = tx.ExecContext(ctx, `
+					INSERT INTO codex_progressions (id, entry_id, active_from_chapter, state_payload_json, notes, created_at)
+					VALUES (?, ?, ?, ?, ?, ?)
+				`, progID, entryID, c.ChapterIndex, payloadJSON, notes, time.Now())
+
+				// Update current_disposition if specified
+				if cm.RelationDelta != "" {
+					_, _ = tx.ExecContext(ctx, `
+						UPDATE codex_entries SET current_disposition = ?, updated_at = ? WHERE id = ?
+					`, cm.RelationDelta, time.Now(), entryID)
+				}
+			}
+		}
 	}
 
 	// 5. Clear checkpoint if one was saved during drafting
@@ -573,6 +706,633 @@ func (s *SQLiteStore) ClearCheckpoint(ctx context.Context, projectID string, cha
 		projectID, chapterIndex,
 	)
 	return err
+}
+
+// -------------------------------------------------------------
+// The Codex (全域世界观百科) 存储实现
+// -------------------------------------------------------------
+
+func (s *SQLiteStore) SaveCodexEntry(ctx context.Context, entry *domain.CodexEntry) error {
+	if err := entry.Validate(); err != nil {
+		return err
+	}
+	if entry.ID == "" {
+		entry.ID = fmt.Sprintf("codex-%d", time.Now().UnixNano())
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now()
+	}
+	entry.UpdatedAt = time.Now()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx failed: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	query := `
+	INSERT INTO codex_entries (
+		id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
+		archetype, voice_tone, core_motivation, current_disposition, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		category = excluded.category,
+		name = excluded.name,
+		color_tag = excluded.color_tag,
+		summary = excluded.summary,
+		details_markdown = excluded.details_markdown,
+		tracking_mode = excluded.tracking_mode,
+		archetype = excluded.archetype,
+		voice_tone = excluded.voice_tone,
+		core_motivation = excluded.core_motivation,
+		current_disposition = excluded.current_disposition,
+		updated_at = excluded.updated_at;
+	`
+	_, err = tx.ExecContext(ctx, query,
+		entry.ID, entry.ProjectID, string(entry.Category), entry.Name,
+		entry.ColorTag, entry.Summary, entry.DetailsMarkdown, string(entry.TrackingMode),
+		entry.Archetype, entry.VoiceTone, entry.CoreMotivation, entry.CurrentDisposition,
+		entry.CreatedAt, entry.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert codex entry: %w", err)
+	}
+
+	// Update aliases
+	if _, err := tx.ExecContext(ctx, `DELETE FROM codex_aliases WHERE entry_id = ?`, entry.ID); err != nil {
+		return fmt.Errorf("delete old aliases: %w", err)
+	}
+
+	for _, alias := range entry.Aliases {
+		aliasClean := strings.TrimSpace(alias)
+		if aliasClean == "" || aliasClean == entry.Name {
+			continue
+		}
+		aliasID := fmt.Sprintf("alias-%d-%s", time.Now().UnixNano(), aliasClean)
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO codex_aliases (id, entry_id, alias) VALUES (?, ?, ?)`,
+			aliasID, entry.ID, aliasClean,
+		); err != nil {
+			return fmt.Errorf("insert alias %s: %w", aliasClean, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (s *SQLiteStore) GetCodexEntry(ctx context.Context, projectID, id string) (*domain.CodexEntry, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
+		       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(core_motivation, ''), COALESCE(current_disposition, ''),
+		       created_at, updated_at
+		FROM codex_entries
+		WHERE project_id = ? AND id = ?
+	`, projectID, id)
+
+	var e domain.CodexEntry
+	var cat, tm, colorTag, summary, details, arch, vt, motiv, disp sql.NullString
+	if err := row.Scan(
+		&e.ID, &e.ProjectID, &cat, &e.Name, &colorTag, &summary, &details, &tm,
+		&arch, &vt, &motiv, &disp,
+		&e.CreatedAt, &e.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("scan codex entry: %w", err)
+	}
+	e.Category = domain.CodexCategory(cat.String)
+	e.TrackingMode = domain.TrackingMode(tm.String)
+	e.ColorTag = colorTag.String
+	e.Summary = summary.String
+	e.DetailsMarkdown = details.String
+	e.Archetype = arch.String
+	e.VoiceTone = vt.String
+	e.CoreMotivation = motiv.String
+	e.CurrentDisposition = disp.String
+
+	// Fetch aliases
+	aliasRows, err := s.db.QueryContext(ctx, `SELECT alias FROM codex_aliases WHERE entry_id = ? ORDER BY alias ASC`, e.ID)
+	if err == nil {
+		defer aliasRows.Close()
+		for aliasRows.Next() {
+			var a string
+			if err := aliasRows.Scan(&a); err == nil && a != "" {
+				e.Aliases = append(e.Aliases, a)
+			}
+		}
+	}
+
+	// Fetch progressions
+	progs, err := s.ListCodexProgressions(ctx, e.ID)
+	if err == nil {
+		e.Progressions = progs
+	}
+
+	// Fetch relations
+	rels, err := s.ListCodexRelations(ctx, projectID, e.ID)
+	if err == nil {
+		e.Relations = rels
+	}
+
+	return &e, nil
+}
+
+func (s *SQLiteStore) ListCodexEntries(ctx context.Context, projectID string, category domain.CodexCategory) ([]*domain.CodexEntry, error) {
+	var query string
+	var args []interface{}
+	if category != "" {
+		query = `
+			SELECT id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
+			       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(core_motivation, ''), COALESCE(current_disposition, ''),
+			       created_at, updated_at
+			FROM codex_entries
+			WHERE project_id = ? AND category = ?
+			ORDER BY name ASC
+		`
+		args = []interface{}{projectID, string(category)}
+	} else {
+		query = `
+			SELECT id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
+			       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(core_motivation, ''), COALESCE(current_disposition, ''),
+			       created_at, updated_at
+			FROM codex_entries
+			WHERE project_id = ?
+			ORDER BY category ASC, name ASC
+		`
+		args = []interface{}{projectID}
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list codex entries: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []*domain.CodexEntry
+	entryMap := make(map[string]*domain.CodexEntry)
+	for rows.Next() {
+		var e domain.CodexEntry
+		var cat, tm, colorTag, summary, details, arch, vt, motiv, disp sql.NullString
+		if err := rows.Scan(
+			&e.ID, &e.ProjectID, &cat, &e.Name, &colorTag, &summary, &details, &tm,
+			&arch, &vt, &motiv, &disp,
+			&e.CreatedAt, &e.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan codex row: %w", err)
+		}
+		e.Category = domain.CodexCategory(cat.String)
+		e.TrackingMode = domain.TrackingMode(tm.String)
+		e.ColorTag = colorTag.String
+		e.Summary = summary.String
+		e.DetailsMarkdown = details.String
+		e.Archetype = arch.String
+		e.VoiceTone = vt.String
+		e.CoreMotivation = motiv.String
+		e.CurrentDisposition = disp.String
+		entries = append(entries, &e)
+		entryMap[e.ID] = &e
+	}
+
+	if len(entries) == 0 {
+		return entries, nil
+	}
+
+	// Batch load aliases
+	aliasRows, err := s.db.QueryContext(ctx, `
+		SELECT a.entry_id, a.alias
+		FROM codex_aliases a
+		JOIN codex_entries e ON a.entry_id = e.id
+		WHERE e.project_id = ?
+	`, projectID)
+	if err == nil {
+		defer aliasRows.Close()
+		for aliasRows.Next() {
+			var entryID, alias string
+			if err := aliasRows.Scan(&entryID, &alias); err == nil {
+				if ent, ok := entryMap[entryID]; ok && alias != "" {
+					ent.Aliases = append(ent.Aliases, alias)
+				}
+			}
+		}
+	}
+
+	// Batch load progressions
+	progRows, err := s.db.QueryContext(ctx, `
+		SELECT p.id, p.entry_id, p.active_from_chapter, p.state_payload_json, COALESCE(p.notes, ''), p.created_at
+		FROM codex_progressions p
+		JOIN codex_entries e ON p.entry_id = e.id
+		WHERE e.project_id = ?
+		ORDER BY p.active_from_chapter ASC
+	`, projectID)
+	if err == nil {
+		defer progRows.Close()
+		for progRows.Next() {
+			var p domain.Progression
+			if err := progRows.Scan(&p.ID, &p.EntryID, &p.ActiveFromChapter, &p.StatePayloadJSON, &p.Notes, &p.CreatedAt); err == nil {
+				if ent, ok := entryMap[p.EntryID]; ok {
+					ent.Progressions = append(ent.Progressions, p)
+				}
+			}
+		}
+	}
+
+	return entries, nil
+}
+
+func (s *SQLiteStore) DeleteCodexEntry(ctx context.Context, projectID, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM codex_entries WHERE project_id = ? AND id = ?`, projectID, id)
+	if err != nil {
+		return fmt.Errorf("delete codex entry: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return errors.New("codex entry not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) SaveCodexProgression(ctx context.Context, entryID string, prog *domain.Progression) error {
+	if prog.ID == "" {
+		prog.ID = fmt.Sprintf("prog-%d", time.Now().UnixNano())
+	}
+	prog.EntryID = entryID
+	if prog.CreatedAt.IsZero() {
+		prog.CreatedAt = time.Now()
+	}
+
+	query := `
+	INSERT INTO codex_progressions (id, entry_id, active_from_chapter, state_payload_json, notes, created_at)
+	VALUES (?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		active_from_chapter = excluded.active_from_chapter,
+		state_payload_json = excluded.state_payload_json,
+		notes = excluded.notes;
+	`
+	_, err := s.db.ExecContext(ctx, query,
+		prog.ID, prog.EntryID, prog.ActiveFromChapter, prog.StatePayloadJSON, prog.Notes, prog.CreatedAt,
+	)
+	return err
+}
+
+func (s *SQLiteStore) ListCodexProgressions(ctx context.Context, entryID string) ([]domain.Progression, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, entry_id, active_from_chapter, state_payload_json, COALESCE(notes, ''), created_at
+		FROM codex_progressions
+		WHERE entry_id = ?
+		ORDER BY active_from_chapter ASC
+	`, entryID)
+	if err != nil {
+		return nil, fmt.Errorf("query progressions: %w", err)
+	}
+	defer rows.Close()
+
+	var progs []domain.Progression
+	for rows.Next() {
+		var p domain.Progression
+		if err := rows.Scan(&p.ID, &p.EntryID, &p.ActiveFromChapter, &p.StatePayloadJSON, &p.Notes, &p.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan progression: %w", err)
+		}
+		progs = append(progs, p)
+	}
+	return progs, nil
+}
+
+func (s *SQLiteStore) SaveCodexRelation(ctx context.Context, projectID string, rel *domain.EntityRelation) error {
+	if rel.ID == "" {
+		rel.ID = fmt.Sprintf("rel-%d", time.Now().UnixNano())
+	}
+	rel.ProjectID = projectID
+	if rel.CreatedAt.IsZero() {
+		rel.CreatedAt = time.Now()
+	}
+
+	query := `
+	INSERT INTO codex_relations (id, project_id, source_entry_id, target_entry_id, relation_type, description, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		relation_type = excluded.relation_type,
+		description = excluded.description;
+	`
+	_, err := s.db.ExecContext(ctx, query,
+		rel.ID, rel.ProjectID, rel.SourceEntryID, rel.TargetEntryID, rel.RelationType, rel.Description, rel.CreatedAt,
+	)
+	return err
+}
+
+func (s *SQLiteStore) ListCodexRelations(ctx context.Context, projectID string, entryID string) ([]domain.EntityRelation, error) {
+	var query string
+	var args []interface{}
+	if entryID != "" {
+		query = `
+			SELECT r.id, r.project_id, r.source_entry_id, r.target_entry_id, COALESCE(t.name, ''), r.relation_type, COALESCE(r.description, ''), r.created_at
+			FROM codex_relations r
+			LEFT JOIN codex_entries t ON r.target_entry_id = t.id
+			WHERE r.project_id = ? AND r.source_entry_id = ?
+			ORDER BY r.created_at ASC
+		`
+		args = []interface{}{projectID, entryID}
+	} else {
+		query = `
+			SELECT r.id, r.project_id, r.source_entry_id, r.target_entry_id, COALESCE(t.name, ''), r.relation_type, COALESCE(r.description, ''), r.created_at
+			FROM codex_relations r
+			LEFT JOIN codex_entries t ON r.target_entry_id = t.id
+			WHERE r.project_id = ?
+			ORDER BY r.created_at ASC
+		`
+		args = []interface{}{projectID}
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list relations: %w", err)
+	}
+	defer rows.Close()
+
+	var rels []domain.EntityRelation
+	for rows.Next() {
+		var r domain.EntityRelation
+		if err := rows.Scan(
+			&r.ID, &r.ProjectID, &r.SourceEntryID, &r.TargetEntryID, &r.TargetName, &r.RelationType, &r.Description, &r.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan relation: %w", err)
+		}
+		rels = append(rels, r)
+	}
+	return rels, nil
+}
+
+func (s *SQLiteStore) DeleteCodexRelation(ctx context.Context, projectID string, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM codex_relations WHERE project_id = ? AND id = ?`, projectID, id)
+	return err
+}
+
+// -------------------------------------------------------------
+// The Matrix (场景场次与矩阵大纲) 存储实现
+// -------------------------------------------------------------
+
+func (s *SQLiteStore) SaveScene(ctx context.Context, sc *domain.Scene) error {
+	if err := sc.Validate(); err != nil {
+		return err
+	}
+	if sc.ID == "" {
+		sc.ID = fmt.Sprintf("sc-%d", time.Now().UnixNano())
+	}
+	if sc.CreatedAt.IsZero() {
+		sc.CreatedAt = time.Now()
+	}
+	sc.UpdatedAt = time.Now()
+
+	beatsJSON, _ := json.Marshal(sc.Beats)
+	stateMutJSON, _ := json.Marshal(sc.StateMutation)
+	if sc.WordCount <= 0 && sc.ProseContent != "" {
+		sc.WordCount = len([]rune(sc.ProseContent))
+	}
+
+	query := `
+	INSERT INTO scenes (
+		id, chapter_id, project_id, scene_index, title, location_entry_id, dramatic_goal, conflict_barrier,
+		tension_level, beats_json, state_mutation_json, prose_content, word_count, exclude_from_ai, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		chapter_id = excluded.chapter_id,
+		scene_index = excluded.scene_index,
+		title = excluded.title,
+		location_entry_id = excluded.location_entry_id,
+		dramatic_goal = excluded.dramatic_goal,
+		conflict_barrier = excluded.conflict_barrier,
+		tension_level = excluded.tension_level,
+		beats_json = excluded.beats_json,
+		state_mutation_json = excluded.state_mutation_json,
+		prose_content = excluded.prose_content,
+		word_count = excluded.word_count,
+		exclude_from_ai = excluded.exclude_from_ai,
+		updated_at = excluded.updated_at;
+	`
+	_, err := s.db.ExecContext(ctx, query,
+		sc.ID, sc.ChapterID, sc.ProjectID, sc.SceneIndex, sc.Title, sc.LocationEntryID,
+		sc.DramaticGoal, sc.ConflictBarrier, sc.TensionLevel, string(beatsJSON), string(stateMutJSON),
+		sc.ProseContent, sc.WordCount, sc.ExcludeFromAI, sc.CreatedAt, sc.UpdatedAt,
+	)
+	return err
+}
+
+func (s *SQLiteStore) GetScene(ctx context.Context, id string) (*domain.Scene, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, chapter_id, project_id, scene_index, title, location_entry_id, dramatic_goal, conflict_barrier,
+		       tension_level, beats_json, state_mutation_json, prose_content, word_count, exclude_from_ai, created_at, updated_at
+		FROM scenes WHERE id = ?
+	`, id)
+
+	var sc domain.Scene
+	var title, loc, goal, barrier, prose sql.NullString
+	var beatsStr, stateMutStr string
+	if err := row.Scan(
+		&sc.ID, &sc.ChapterID, &sc.ProjectID, &sc.SceneIndex, &title, &loc, &goal, &barrier,
+		&sc.TensionLevel, &beatsStr, &stateMutStr, &prose, &sc.WordCount, &sc.ExcludeFromAI, &sc.CreatedAt, &sc.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("scan scene: %w", err)
+	}
+	sc.Title = title.String
+	sc.LocationEntryID = loc.String
+	sc.DramaticGoal = goal.String
+	sc.ConflictBarrier = barrier.String
+	sc.ProseContent = prose.String
+	_ = json.Unmarshal([]byte(beatsStr), &sc.Beats)
+	_ = json.Unmarshal([]byte(stateMutStr), &sc.StateMutation)
+
+	markers, err := s.ListSceneMarkers(ctx, sc.ID)
+	if err == nil {
+		sc.Markers = markers
+	}
+
+	return &sc, nil
+}
+
+func (s *SQLiteStore) ListScenes(ctx context.Context, chapterID string) ([]*domain.Scene, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, chapter_id, project_id, scene_index, title, location_entry_id, dramatic_goal, conflict_barrier,
+		       tension_level, beats_json, state_mutation_json, prose_content, word_count, exclude_from_ai, created_at, updated_at
+		FROM scenes WHERE chapter_id = ? ORDER BY scene_index ASC
+	`, chapterID)
+	if err != nil {
+		return nil, fmt.Errorf("list scenes: %w", err)
+	}
+	defer rows.Close()
+
+	var scenes []*domain.Scene
+	for rows.Next() {
+		var sc domain.Scene
+		var title, loc, goal, barrier, prose sql.NullString
+		var beatsStr, stateMutStr string
+		if err := rows.Scan(
+			&sc.ID, &sc.ChapterID, &sc.ProjectID, &sc.SceneIndex, &title, &loc, &goal, &barrier,
+			&sc.TensionLevel, &beatsStr, &stateMutStr, &prose, &sc.WordCount, &sc.ExcludeFromAI, &sc.CreatedAt, &sc.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan scene row: %w", err)
+		}
+		sc.Title = title.String
+		sc.LocationEntryID = loc.String
+		sc.DramaticGoal = goal.String
+		sc.ConflictBarrier = barrier.String
+		sc.ProseContent = prose.String
+		_ = json.Unmarshal([]byte(beatsStr), &sc.Beats)
+		_ = json.Unmarshal([]byte(stateMutStr), &sc.StateMutation)
+		scenes = append(scenes, &sc)
+	}
+	return scenes, nil
+}
+
+func (s *SQLiteStore) DeleteScene(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM scenes WHERE id = ?`, id)
+	return err
+}
+
+func (s *SQLiteStore) SaveSceneMarker(ctx context.Context, m *domain.SceneMarker) error {
+	if m.ID == "" {
+		m.ID = fmt.Sprintf("marker-%d", time.Now().UnixNano())
+	}
+	if m.CreatedAt.IsZero() {
+		m.CreatedAt = time.Now()
+	}
+
+	query := `
+	INSERT INTO scene_markers (id, scene_id, marker_type, color, text_range_start, text_range_end, content, resolved, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		marker_type = excluded.marker_type,
+		color = excluded.color,
+		text_range_start = excluded.text_range_start,
+		text_range_end = excluded.text_range_end,
+		content = excluded.content,
+		resolved = excluded.resolved;
+	`
+	_, err := s.db.ExecContext(ctx, query,
+		m.ID, m.SceneID, string(m.MarkerType), m.Color, m.TextRangeStart, m.TextRangeEnd, m.Content, m.Resolved, m.CreatedAt,
+	)
+	return err
+}
+
+func (s *SQLiteStore) ListSceneMarkers(ctx context.Context, sceneID string) ([]domain.SceneMarker, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, scene_id, marker_type, color, text_range_start, text_range_end, content, resolved, created_at
+		FROM scene_markers WHERE scene_id = ? ORDER BY text_range_start ASC
+	`, sceneID)
+	if err != nil {
+		return nil, fmt.Errorf("list markers: %w", err)
+	}
+	defer rows.Close()
+
+	var markers []domain.SceneMarker
+	for rows.Next() {
+		var m domain.SceneMarker
+		var mt string
+		if err := rows.Scan(
+			&m.ID, &m.SceneID, &mt, &m.Color, &m.TextRangeStart, &m.TextRangeEnd, &m.Content, &m.Resolved, &m.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan marker: %w", err)
+		}
+		m.MarkerType = domain.MarkerType(mt)
+		markers = append(markers, m)
+	}
+	return markers, nil
+}
+
+func (s *SQLiteStore) DeleteSceneMarker(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM scene_markers WHERE id = ?`, id)
+	return err
+}
+
+func (s *SQLiteStore) GetMatrixOverview(ctx context.Context, projectID string) (*domain.MatrixOverview, error) {
+	proj, err := s.GetProject(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("get project: %w", err)
+	}
+	chapters, err := s.ListChapters(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list chapters: %w", err)
+	}
+
+	overview := &domain.MatrixOverview{
+		ProjectID: projectID,
+	}
+
+	chapterRows := make([]*domain.MatrixChapterRow, 0, len(chapters))
+	totalWords := 0
+	totalScenes := 0
+
+	for _, ch := range chapters {
+		scenes, err := s.ListScenes(ctx, ch.ID)
+		if err != nil {
+			scenes = []*domain.Scene{}
+		}
+		chWords := ch.WordCount
+		for _, sc := range scenes {
+			chWords += sc.WordCount
+			totalScenes++
+		}
+		totalWords += chWords
+		chapterRows = append(chapterRows, &domain.MatrixChapterRow{
+			Chapter: ch,
+			Scenes:  scenes,
+		})
+	}
+	overview.TotalWords = totalWords
+	overview.TotalScenes = totalScenes
+
+	if proj.Framework != nil && len(proj.Framework.VolumeArcs) > 0 {
+		startIdx := 1
+		for _, arc := range proj.Framework.VolumeArcs {
+			est := arc.EstimatedChapters
+			if est <= 0 {
+				est = 30
+			}
+			endIdx := startIdx + est - 1
+
+			group := &domain.MatrixVolumeGroup{
+				VolumeIndex: arc.VolumeIndex,
+				Title:       arc.Title,
+				Theme:       arc.Theme,
+				CoreGoal:    arc.CoreGoal,
+				Climax:      arc.Climax,
+			}
+
+			var volWords int
+			var tensionSum int
+			var sceneCount int
+
+			for _, row := range chapterRows {
+				if row.Chapter.ChapterIndex >= startIdx && row.Chapter.ChapterIndex <= endIdx {
+					group.Chapters = append(group.Chapters, row)
+					volWords += row.Chapter.WordCount
+					for _, sc := range row.Scenes {
+						tensionSum += sc.TensionLevel
+						sceneCount++
+					}
+				}
+			}
+
+			group.TotalWords = volWords
+			if sceneCount > 0 {
+				group.AvgTension = float64(tensionSum) / float64(sceneCount)
+			}
+			overview.Volumes = append(overview.Volumes, group)
+			startIdx = endIdx + 1
+		}
+	} else {
+		defVol := &domain.MatrixVolumeGroup{
+			VolumeIndex: 1,
+			Title:       "第一卷",
+			Chapters:    chapterRows,
+			TotalWords:  totalWords,
+		}
+		overview.Volumes = append(overview.Volumes, defVol)
+	}
+
+	return overview, nil
 }
 
 func (s *SQLiteStore) Close() error {

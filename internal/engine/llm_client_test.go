@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Jungley8/novel-studio/internal/engine"
 )
@@ -191,3 +192,105 @@ func TestHTTPLLMClient_OpenCodeAndResponsesCompatibility(t *testing.T) {
 	}
 }
 
+func TestLLMRouter_ContextAndModelRouting(t *testing.T) {
+	calledRole := ""
+	tsWriter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledRole = "writer"
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"writer output"}}],"usage":{"total_tokens":10}}`))
+	}))
+	defer tsWriter.Close()
+
+	tsReviewer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledRole = "reviewer"
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"reviewer output"}}],"usage":{"total_tokens":25}}`))
+	}))
+	defer tsReviewer.Close()
+
+	defaultCl := engine.NewHTTPLLMClient("https://api.default.com", "def-key")
+	router := engine.NewLLMRouter(defaultCl)
+
+	writerCl := engine.NewHTTPLLMClient(tsWriter.URL, "writer-key")
+	reviewerCl := engine.NewHTTPLLMClient(tsReviewer.URL, "reviewer-key")
+
+	router.ConfigureRole(engine.RoleWriter, writerCl, "writer-model")
+	router.ConfigureRole(engine.RoleReviewer, reviewerCl, "reviewer-model")
+
+	// 1. ContextWithRole routes to writer
+	ctxWriter := engine.ContextWithRole(context.Background(), engine.RoleWriter)
+	resp, usage, err := router.ChatCompletionWithUsage(ctxWriter, "", "sys", "user", 0.7)
+	if err != nil {
+		t.Fatalf("writer ChatCompletionWithUsage failed: %v", err)
+	}
+	if calledRole != "writer" || resp != "writer output" || usage.TotalTokens != 10 {
+		t.Fatalf("expected writer response, got role=%s resp=%s tokens=%d", calledRole, resp, usage.TotalTokens)
+	}
+
+	// 2. ContextWithRole routes to reviewer
+	ctxReviewer := engine.ContextWithRole(context.Background(), engine.RoleReviewer)
+	respRev, usageRev, err := router.ChatCompletionWithUsage(ctxReviewer, "", "sys", "user", 0.3)
+	if err != nil {
+		t.Fatalf("reviewer ChatCompletionWithUsage failed: %v", err)
+	}
+	if calledRole != "reviewer" || respRev != "reviewer output" || usageRev.TotalTokens != 25 {
+		t.Fatalf("expected reviewer response, got role=%s resp=%s tokens=%d", calledRole, respRev, usageRev.TotalTokens)
+	}
+
+	// 3. Model match routes to reviewer without role in context
+	calledRole = ""
+	respModel, err := router.ChatCompletion(context.Background(), "reviewer-model", "sys", "user", 0.3)
+	if err != nil {
+		t.Fatalf("model match failed: %v", err)
+	}
+	if calledRole != "reviewer" || respModel != "reviewer output" {
+		t.Fatalf("expected model match to route to reviewer, got %s", calledRole)
+	}
+}
+
+func TestHTTPLLMClient_StreamCancellationLeakPrevention(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		// Continuously write chunks until connection closes
+		for i := 0; i < 200; i++ {
+			_, err := w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"chunk\"}}]}\n\n"))
+			if err != nil {
+				return
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}))
+	defer ts.Close()
+
+	client := engine.NewHTTPLLMClient(ts.URL, "test-key")
+	ctx, cancel := context.WithCancel(context.Background())
+
+	streamCh, err := client.ChatCompletionStream(ctx, "model", "sys", "user", 0.7)
+	if err != nil {
+		t.Fatalf("stream creation failed: %v", err)
+	}
+
+	// Read only 1 chunk then immediately cancel context without consuming the rest of streamCh
+	<-streamCh
+	cancel()
+
+	// Wait briefly: the sender goroutine must not block or leak
+	// Closing channel indicates goroutine has terminated cleanly
+	done := make(chan bool)
+	go func() {
+		for range streamCh {
+			// drain until closed
+		}
+		done <- true
+	}()
+
+	select {
+	case <-done:
+		// success: stream channel was closed cleanly
+	case <-time.After(2 * time.Second):
+		t.Fatal("goroutine blocked on sending to unconsumed stream channel: leak detected")
+	}
+}

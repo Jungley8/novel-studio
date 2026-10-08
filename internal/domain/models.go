@@ -132,10 +132,18 @@ type SceneBeat struct {
 	HookType          string `json:"hook_type,omitempty"`      // 仅最后一拍: CLIFFHANGER/REVERSAL/MYSTERY/POWER_UP
 }
 
+// CharacterMutation captures dynamic status and relationship mutations for cast characters / antagonists.
+type CharacterMutation struct {
+	Name          string `json:"name"`                     // 角色名或别名 (如: 楚掌柜 / 柳依依 / 厉魔尊)
+	StatusDelta   string `json:"status_delta"`             // 状态/心境/伤势/修为变迁 (如: 识破卧底身份，惊恐逃逸)
+	RelationDelta string `json:"relation_delta,omitempty"` // 对主角或他人的羁绊变化 (如: 转为不死不休的仇视)
+}
+
 // StateMutation represents expected changes after a chapter ends.
 type StateMutation struct {
-	InventoryDelta string `json:"inventory_delta"`
-	PowerDelta     string `json:"power_delta"`
+	InventoryDelta     string              `json:"inventory_delta"`
+	PowerDelta         string              `json:"power_delta"`
+	CharacterMutations []CharacterMutation `json:"character_mutations,omitempty"`
 }
 
 // PlotHook represents a foreshadowing or plot clue.

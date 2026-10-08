@@ -29,6 +29,9 @@ type CanonHorizon struct {
 	AllActiveHooks      []*domain.PlotHook      `json:"all_active_hooks"`
 	ProtagonistState    domain.Protagonist      `json:"protagonist_state"`
 	WorldRules          string                  `json:"world_rules"`
+	ActiveCodexEntries  []*domain.CodexEntry    `json:"active_codex_entries,omitempty"`
+	CodexRelations      []domain.EntityRelation `json:"codex_relations,omitempty"`
+	CodexContextText    string                  `json:"codex_context_text,omitempty"`
 }
 
 // CanonChronicle acts as the deep context assembler and horizon keeper.
@@ -172,12 +175,12 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 	// Identify active and urgent plot hooks
 	var activeHooks []*domain.PlotHook
 	var urgentHooks []*domain.PlotHook
-	activeOriginChapters := make(map[int]bool)
+	hooksByChapter := make(map[int][]*domain.PlotHook)
 
 	for _, h := range hooks {
 		if h.Status == domain.HookStatusOpen || h.Status == domain.HookStatusFermenting {
 			activeHooks = append(activeHooks, h)
-			activeOriginChapters[h.CreatedChapter] = true
+			hooksByChapter[h.CreatedChapter] = append(hooksByChapter[h.CreatedChapter], h)
 			// Urgent if scheduled for resolution within 2 chapters or overdue
 			if h.TargetChapter <= targetChapter+2 {
 				urgentHooks = append(urgentHooks, h)
@@ -190,14 +193,131 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 	if len(older) > 0 {
 		var callbacks []string
 		for _, oldCh := range older {
-			if activeOriginChapters[oldCh.ChapterIndex] {
-				callbacks = append(callbacks, fmt.Sprintf("• 【第 %d 章：%s】埋下的长线伏笔根源，核心冲突：%s",
-					oldCh.ChapterIndex, oldCh.Title, oldCh.CoreConflict))
+			chHooks := hooksByChapter[oldCh.ChapterIndex]
+			if len(chHooks) == 0 {
+				continue
+			}
+			for _, h := range chHooks {
+				var hookDesc strings.Builder
+				hookDesc.WriteString(fmt.Sprintf("• 【第 %d 章：%s】埋设伏笔《%s》（预定第 %d 章回收，当前状态：%s）",
+					oldCh.ChapterIndex, oldCh.Title, h.Title, h.TargetChapter, h.Status))
+				if strings.TrimSpace(h.Details) != "" {
+					hookDesc.WriteString(fmt.Sprintf("\n  - 伏笔要点与设计：%s", strings.TrimSpace(h.Details)))
+				}
+				if strings.TrimSpace(oldCh.CoreConflict) != "" {
+					hookDesc.WriteString(fmt.Sprintf("\n  - 原章核心冲突：%s", strings.TrimSpace(oldCh.CoreConflict)))
+				}
+				excerpt := extractHookSceneExcerpt(oldCh.Content, h.Title, h.Details, 150)
+				if excerpt != "" {
+					hookDesc.WriteString(fmt.Sprintf("\n  - 埋设时历史场景还原：“%s”", excerpt))
+				}
+				callbacks = append(callbacks, hookDesc.String())
 			}
 		}
 		if len(callbacks) > 0 {
 			cbSb.WriteString("【跨卷历史因果线索 (Historical Callbacks)】\n")
-			cbSb.WriteString(strings.Join(callbacks, "\n"))
+			cbSb.WriteString(strings.Join(callbacks, "\n\n"))
+		}
+	}
+
+	// Layer 4: The Codex (动态世界观全域百科与时空切片)
+	var activeCodex []*domain.CodexEntry
+	var codexRels []domain.EntityRelation
+	var codexSb strings.Builder
+
+	codexEntries, err := c.store.ListCodexEntries(ctx, projectID, "")
+	if err == nil && len(codexEntries) > 0 {
+		scanner := NewMentionScanner()
+		scanText := sb.String() + "\n" + tailAnchor
+		matched, _ := scanner.ScanText(scanText, codexEntries)
+		if len(matched) > 0 {
+			activeCodex = matched
+			codexSb.WriteString("【出场世界观实体与时空状态 (The Codex)】\n")
+			matchedIDs := make(map[string]bool)
+			for _, ent := range matched {
+				matchedIDs[ent.ID] = true
+				categoryLabel := "条目"
+				switch ent.Category {
+				case domain.CategoryCharacter:
+					categoryLabel = "角色"
+				case domain.CategoryLocation:
+					categoryLabel = "地点"
+				case domain.CategoryItem:
+					categoryLabel = "物品/功法"
+				case domain.CategoryLore:
+					categoryLabel = "法则/设定"
+				case domain.CategoryFaction:
+					categoryLabel = "势力"
+				}
+
+				aliasStr := ""
+				if len(ent.Aliases) > 0 {
+					aliasStr = fmt.Sprintf(" (别名：%s)", strings.Join(ent.Aliases, ", "))
+				}
+
+				codexSb.WriteString(fmt.Sprintf("• [%s] %s%s", categoryLabel, ent.Name, aliasStr))
+				if ent.Category == domain.CategoryCharacter {
+					if ent.Archetype != "" {
+						codexSb.WriteString(fmt.Sprintf(" 【定位: %s】", ent.Archetype))
+					}
+					if ent.CurrentDisposition != "" {
+						codexSb.WriteString(fmt.Sprintf(" 【对主角立场: %s】", ent.CurrentDisposition))
+					}
+				}
+
+				// Check active progression snapshot for target chapter
+				prog := ent.ActiveProgression(targetChapter)
+				if prog != nil {
+					codexSb.WriteString(fmt.Sprintf(" - 当前时空切片(第%d章起)：%s", prog.ActiveFromChapter, prog.StatePayloadJSON))
+					if prog.Notes != "" {
+						codexSb.WriteString(fmt.Sprintf(" [%s]", prog.Notes))
+					}
+				} else if ent.Summary != "" {
+					codexSb.WriteString(fmt.Sprintf(" - %s", ent.Summary))
+				}
+				codexSb.WriteString("\n")
+
+				if ent.Category == domain.CategoryCharacter {
+					if ent.VoiceTone != "" {
+						codexSb.WriteString(fmt.Sprintf("  - 台词声口与语言风格：%s\n", ent.VoiceTone))
+					}
+					if ent.CoreMotivation != "" {
+						codexSb.WriteString(fmt.Sprintf("  - 核心动机与底层执念：%s\n", ent.CoreMotivation))
+					}
+				}
+
+				if ent.DetailsMarkdown != "" {
+					codexSb.WriteString(fmt.Sprintf("  - 设定细节：%s\n", ent.DetailsMarkdown))
+				}
+			}
+
+			// Query relations between co-occurring entities
+			for _, ent := range matched {
+				rels, relErr := c.store.ListCodexRelations(ctx, projectID, ent.ID)
+				if relErr == nil {
+					for _, r := range rels {
+						if matchedIDs[r.TargetEntryID] {
+							codexRels = append(codexRels, r)
+						}
+					}
+				}
+			}
+
+			if len(codexRels) > 0 {
+				codexSb.WriteString("\n【实体间羁绊与冲突事实 (Relations)】\n")
+				for _, r := range codexRels {
+					sourceName := entNameByID(matched, r.SourceEntryID)
+					targetName := r.TargetName
+					if targetName == "" {
+						targetName = entNameByID(matched, r.TargetEntryID)
+					}
+					codexSb.WriteString(fmt.Sprintf("• [%s] ➔ [%s] (%s)", sourceName, targetName, r.RelationType))
+					if r.Description != "" {
+						codexSb.WriteString(fmt.Sprintf("：%s", r.Description))
+					}
+					codexSb.WriteString("\n")
+				}
+			}
 		}
 	}
 
@@ -215,5 +335,126 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 		AllActiveHooks:      activeHooks,
 		ProtagonistState:    project.Protagonist,
 		WorldRules:          project.WorldRules,
+		ActiveCodexEntries:  activeCodex,
+		CodexRelations:      codexRels,
+		CodexContextText:    strings.TrimSpace(codexSb.String()),
 	}, nil
+}
+
+func entNameByID(entries []*domain.CodexEntry, id string) string {
+	for _, e := range entries {
+		if e.ID == id {
+			return e.Name
+		}
+	}
+	return id
+}
+
+// extractHookSceneExcerpt extracts a high-relevance narrative excerpt around the moment
+// a foreshadowing hook was planted in an older canon chapter.
+func extractHookSceneExcerpt(content string, hookTitle string, hookDetails string, maxRunes int) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	if maxRunes <= 0 {
+		maxRunes = 150
+	}
+	runes := []rune(content)
+	if len(runes) <= maxRunes {
+		return cleanExcerpt(string(runes))
+	}
+
+	searchTerms := buildHookSearchTerms(hookTitle, hookDetails)
+	bestIdx := -1
+	for _, term := range searchTerms {
+		if term == "" {
+			continue
+		}
+		idx := strings.Index(content, term)
+		if idx != -1 {
+			bestIdx = len([]rune(content[:idx]))
+			break
+		}
+	}
+
+	if bestIdx == -1 {
+		// Fallback to chapter tail where plot hooks / cliffhangers are traditionally placed
+		start := len(runes) - maxRunes
+		if start < 0 {
+			start = 0
+		}
+		excerpt := string(runes[start:])
+		clean := cleanExcerpt(excerpt)
+		if start > 0 && !strings.HasPrefix(clean, "...") {
+			clean = "..." + clean
+		}
+		return clean
+	}
+
+	halfWindow := maxRunes / 2
+	start := bestIdx - halfWindow
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxRunes
+	if end > len(runes) {
+		end = len(runes)
+		start = end - maxRunes
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	excerpt := string(runes[start:end])
+	clean := cleanExcerpt(excerpt)
+	if start > 0 && !strings.HasPrefix(clean, "...") {
+		clean = "..." + clean
+	}
+	if end < len(runes) && !strings.HasSuffix(clean, "...") {
+		clean = clean + "..."
+	}
+	return clean
+}
+
+func buildHookSearchTerms(title string, details string) []string {
+	var terms []string
+	cleanTitle := strings.Trim(title, "《》“”\"'【】 ")
+	if cleanTitle != "" {
+		terms = append(terms, cleanTitle)
+		tRunes := []rune(cleanTitle)
+		if len(tRunes) >= 4 {
+			mid := len(tRunes) / 2
+			terms = append(terms, string(tRunes[:mid]))
+			terms = append(terms, string(tRunes[mid:]))
+		}
+	}
+
+	if details != "" {
+		splitFn := func(c rune) bool {
+			return c == '，' || c == '。' || c == '；' || c == '！' || c == '？' ||
+				c == ',' || c == '.' || c == ';' || c == '!' || c == '?' || c == '\n'
+		}
+		phrases := strings.FieldsFunc(details, splitFn)
+		for _, p := range phrases {
+			p = strings.TrimSpace(p)
+			pRunes := []rune(p)
+			if len(pRunes) >= 2 && len(pRunes) <= 15 {
+				terms = append(terms, p)
+			}
+		}
+	}
+	return terms
+}
+
+func cleanExcerpt(s string) string {
+	lines := strings.Split(s, "\n")
+	var cleanedLines []string
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed != "" {
+			cleanedLines = append(cleanedLines, trimmed)
+		}
+	}
+	return strings.Join(cleanedLines, " ")
 }

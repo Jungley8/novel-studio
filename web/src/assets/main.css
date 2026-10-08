@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+/* Custom Obsidian Scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #252b38;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3a4356;
+}
+
+/* Literary Canvas Prose Styling */
+.prose-canvas {
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", Georgia, serif;
+  line-height: 1.85;
+  letter-spacing: 0.015em;
+}
+
+.prose-canvas p {
+  margin-bottom: 1.25em;
+  text-indent: 2em;
+}
+
+/* Smooth Focus Rings */
+.focus-ring {
+  @apply focus:outline-none focus:ring-1 focus:ring-brand-amber/50 focus:border-brand-amber;
+}
+
+/* Glass panel blur */
+.glass-panel {
+  background: rgba(17, 20, 26, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(48, 56, 72, 0.4);
+}
+
+.glass-modal {
+  background: rgba(13, 15, 20, 0.94);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(48, 56, 72, 0.6);
+}
+
+/* Tension Gradient Bar */
+.tension-spectrum {
+  background: linear-gradient(90deg, #10b981 0%, #e5a93c 50%, #e11d48 100%);
+}
+
+/* Shimmer animation for generating state */
+@keyframes subtle-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.animate-subtle-pulse {
+  animation: subtle-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}

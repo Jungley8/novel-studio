@@ -38,7 +38,7 @@ func (q *QualityGate) Audit(
 	chapterIndex int,
 	beats []domain.SceneBeat,
 	draftText string,
-) (*domain.AuditReport, error) {
+) (*domain.AuditReport, TokenUsage, error) {
 	return q.AuditWithHooks(ctx, reviewerModel, project, chapterIndex, beats, nil, draftText)
 }
 
@@ -51,7 +51,7 @@ func (q *QualityGate) AuditWithHooks(
 	beats []domain.SceneBeat,
 	activeHooks []*domain.PlotHook,
 	draftText string,
-) (*domain.AuditReport, error) {
+) (*domain.AuditReport, TokenUsage, error) {
 	// 1. Fast algorithmic pre-pass
 	heuristic := q.linter.Analyze(draftText)
 
@@ -128,9 +128,10 @@ func (q *QualityGate) AuditWithHooks(
 		draftText,
 	)
 
-	resp, err := q.client.ChatCompletion(ctx, reviewerModel, systemPrompt, userPrompt, 0.3)
+	ctxRole := ContextWithRole(ctx, RoleReviewer)
+	resp, usage, err := q.client.ChatCompletionWithUsage(ctxRole, reviewerModel, systemPrompt, userPrompt, 0.3)
 	if err != nil {
-		return nil, fmt.Errorf("quality gate LLM review failed: %w", err)
+		return nil, usage, fmt.Errorf("quality gate LLM review failed: %w", err)
 	}
 
 	cleanJSON, err := ExtractAndCleanJSON(resp)
@@ -146,7 +147,7 @@ func (q *QualityGate) AuditWithHooks(
 		ResolvedHookIDs []string             `json:"resolved_hook_ids"`
 	}
 	if err := json.Unmarshal([]byte(cleanJSON), &out); err != nil {
-		return nil, fmt.Errorf("parse quality gate JSON failed (raw: %s): %w", resp, err)
+		return nil, usage, fmt.Errorf("parse quality gate JSON failed (raw: %s): %w", resp, err)
 	}
 
 	// 3. Integrate heuristic findings with semantic findings
@@ -181,9 +182,10 @@ func (q *QualityGate) AuditWithHooks(
 		finalScore = 0
 	}
 
-	// Verdict check: if cliches, low score, or extreme exclamation, force REVISION_NEEDED
+	// Verdict check: if LLM rejected or score < 80 or cliches/exclamation exist, enforce REVISION_NEEDED.
+	// Semantic reviewer veto is fail-closed and cannot be overridden by score.
 	verdict := out.Verdict
-	if finalScore >= 80 && len(heuristic.HitBannedWords) == 0 && !exclExcessive {
+	if out.Verdict == domain.ReviewVerdictAccepted && finalScore >= 80 && len(heuristic.HitBannedWords) == 0 && !exclExcessive {
 		verdict = domain.ReviewVerdictAccepted
 	} else {
 		verdict = domain.ReviewVerdictRevision
@@ -202,5 +204,5 @@ func (q *QualityGate) AuditWithHooks(
 		Suggestions:        out.Suggestions,
 		ResolvedHookIDs:    out.ResolvedHookIDs,
 		ReviewedAt:         time.Now(),
-	}, nil
+	}, usage, nil
 }

@@ -2,8 +2,16 @@ package domain
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
+)
+
+var (
+	qtyMultiplierRegex  = regexp.MustCompile(`(?i)[*x×]\s*(\d+)$`)
+	qtyChineseUnitRegex = regexp.MustCompile(`(\d+)\s*(个|颗|块|枚|把|瓶|张|本|支|道|条|粒|盒|株|坛|份|斤|件)$`)
+	qtyTrailingNumRegex = regexp.MustCompile(`\s+(\d+)$`)
 )
 
 // ApplyStateMutation executes a structured transition on the protagonist's state machine,
@@ -14,7 +22,7 @@ func ApplyStateMutation(p Protagonist, mutation StateMutation) (Protagonist, []s
 	var auditTrail []string
 
 	// 1. Process Inventory Mutations
-	items := parseInventoryItems(p.Inventory)
+	items := initInventoryItems(p)
 	rawDelta := strings.TrimSpace(mutation.InventoryDelta)
 
 	if rawDelta != "" {
@@ -26,34 +34,69 @@ func ApplyStateMutation(p Protagonist, mutation StateMutation) (Protagonist, []s
 			}
 
 			// Check if this token represents an addition or a removal
-			action, itemName := detectItemAction(token)
+			action, rawItem := detectItemAction(token)
+			itemName, deltaQty := parseItemAndQuantity(rawItem)
+			if itemName == "" {
+				continue
+			}
+			if deltaQty <= 0 {
+				deltaQty = 1
+			}
+
 			switch action {
 			case "ADD":
-				if !containsItem(items, itemName) {
-					items = append(items, itemName)
-					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 获得物品: %s", itemName))
+				foundIndex := findInventoryItemIndex(items, itemName)
+				if foundIndex >= 0 {
+					items[foundIndex].Quantity += deltaQty
+					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 获得物品: %s (增加 %d, 当前保有: %d)", itemName, deltaQty, items[foundIndex].Quantity))
 				} else {
-					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 物品已存在(更新记录): %s", itemName))
+					items = append(items, InventoryItem{
+						Name:     itemName,
+						Quantity: deltaQty,
+					})
+					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 获得物品: %s (数量: %d)", itemName, deltaQty))
 				}
 			case "REMOVE":
-				foundIndex := findItemIndex(items, itemName)
+				foundIndex := findInventoryItemIndex(items, itemName)
 				if foundIndex >= 0 {
-					removed := items[foundIndex]
-					items = append(items[:foundIndex], items[foundIndex+1:]...)
-					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 消耗/移除物品: %s", removed))
+					if items[foundIndex].Quantity > deltaQty {
+						items[foundIndex].Quantity -= deltaQty
+						auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 消耗/移除物品: %s (扣除 %d, 剩余: %d)", itemName, deltaQty, items[foundIndex].Quantity))
+					} else {
+						consumedAll := items[foundIndex].Quantity
+						items = append(items[:foundIndex], items[foundIndex+1:]...)
+						auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 消耗/移除物品: %s (已全部用尽, 共消耗 %d)", itemName, consumedAll))
+					}
 				} else {
 					// Invariant warning: consuming an item that doesn't exist
 					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger Warning] 实体状态机不一致: 尝试移除未持有的物品 '%s'", itemName))
 				}
 			default:
-				// Generic delta without explicit +/- prefix
-				if !containsItem(items, token) {
-					items = append(items, token)
-					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 状态同步: %s", token))
+				foundIndex := findInventoryItemIndex(items, itemName)
+				if foundIndex >= 0 {
+					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 状态同步: %s (持有: %d)", itemName, items[foundIndex].Quantity))
+				} else {
+					items = append(items, InventoryItem{
+						Name:     itemName,
+						Quantity: deltaQty,
+					})
+					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 状态同步: %s (数量: %d)", itemName, deltaQty))
 				}
 			}
 		}
-		updated.Inventory = strings.Join(items, ", ")
+
+		var formatted []string
+		for _, itm := range items {
+			if itm.Quantity > 1 {
+				formatted = append(formatted, fmt.Sprintf("%sx%d", itm.Name, itm.Quantity))
+			} else {
+				formatted = append(formatted, itm.Name)
+			}
+		}
+		updated.Inventory = strings.Join(formatted, ", ")
+		updated.StructuredItems = items
+	} else if len(updated.StructuredItems) == 0 && len(items) > 0 {
+		updated.StructuredItems = items
 	}
 
 	// 2. Process Power / Level Progression
@@ -79,16 +122,6 @@ func ApplyStateMutation(p Protagonist, mutation StateMutation) (Protagonist, []s
 			updated.StructuredLevel.Realm = newRealm
 		}
 	}
-
-	// Update structured items
-	var structured []InventoryItem
-	for _, itm := range items {
-		structured = append(structured, InventoryItem{
-			Name:     itm,
-			Quantity: 1,
-		})
-	}
-	updated.StructuredItems = structured
 
 	return updated, auditTrail, nil
 }
@@ -165,6 +198,88 @@ func findItemIndex(items []string, target string) int {
 	cleanTarget := strings.TrimSpace(target)
 	for i, item := range items {
 		if item == cleanTarget || strings.Contains(item, cleanTarget) || strings.Contains(cleanTarget, item) {
+			return i
+		}
+	}
+	return -1
+}
+
+func parseItemAndQuantity(raw string) (name string, qty int) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", 1
+	}
+
+	// 1. Check multiplier suffix like "洗髓丹x3", "灵石*10"
+	if m := qtyMultiplierRegex.FindStringSubmatch(s); len(m) == 2 {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+			cleanName := strings.TrimSpace(s[:len(s)-len(m[0])])
+			if cleanName != "" {
+				return cleanName, n
+			}
+		}
+	}
+
+	// 2. Check Chinese unit suffix like "洗髓丹3颗", "灵石 100块"
+	if m := qtyChineseUnitRegex.FindStringSubmatch(s); len(m) == 3 {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+			cleanName := strings.TrimSpace(s[:len(s)-len(m[0])])
+			if cleanName != "" {
+				return cleanName, n
+			}
+		}
+	}
+
+	// 3. Check trailing number after whitespace like "灵石 10"
+	if m := qtyTrailingNumRegex.FindStringSubmatch(s); len(m) == 2 {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+			cleanName := strings.TrimSpace(s[:len(s)-len(m[0])])
+			if cleanName != "" {
+				return cleanName, n
+			}
+		}
+	}
+
+	return s, 1
+}
+
+func initInventoryItems(p Protagonist) []InventoryItem {
+	if len(p.StructuredItems) > 0 {
+		var copyItems []InventoryItem
+		for _, itm := range p.StructuredItems {
+			name := strings.TrimSpace(itm.Name)
+			qty := itm.Quantity
+			if qty <= 0 {
+				qty = 1
+			}
+			copyItems = append(copyItems, InventoryItem{
+				Name:       name,
+				Quantity:   qty,
+				Quality:    itm.Quality,
+				AcquiredAt: itm.AcquiredAt,
+			})
+		}
+		return copyItems
+	}
+
+	rawItems := parseInventoryItems(p.Inventory)
+	var items []InventoryItem
+	for _, raw := range rawItems {
+		name, qty := parseItemAndQuantity(raw)
+		if name != "" {
+			items = append(items, InventoryItem{
+				Name:     name,
+				Quantity: qty,
+			})
+		}
+	}
+	return items
+}
+
+func findInventoryItemIndex(items []InventoryItem, targetName string) int {
+	cleanTarget := strings.TrimSpace(targetName)
+	for i, itm := range items {
+		if itm.Name == cleanTarget {
 			return i
 		}
 	}

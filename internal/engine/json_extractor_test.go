@@ -32,6 +32,18 @@ func TestExtractAndCleanJSON(t *testing.T) {
 			raw:  `{"score": 85, "verdict": "ACCEPTED",}`,
 		},
 		{
+			name:      "Comma before brace inside string literal must be preserved",
+			raw:       `{"dialogue": "小心,}", "action": "拔剑"}`,
+			verifyKey: "dialogue",
+			expectVal: "小心,}",
+		},
+		{
+			name:      "Braces inside string with truncated outer JSON",
+			raw:       `{"spell": "符文 {天元, 归一}", "power": 99`,
+			verifyKey: "spell",
+			expectVal: "符文 {天元, 归一}",
+		},
+		{
 			name: "Conversational text preamble without code fences",
 			raw:  `好的，以下是剧情大纲：{"phase": "绝地反转", "tension": 9} 希望对你有帮助。`,
 		},
@@ -67,6 +79,16 @@ func TestExtractAndCleanJSON(t *testing.T) {
 
 			if !json.Valid([]byte(res)) {
 				t.Errorf("extracted JSON is invalid: %s", res)
+			}
+
+			if tt.verifyKey != "" {
+				var parsed map[string]interface{}
+				if err := json.Unmarshal([]byte(res), &parsed); err != nil {
+					t.Fatalf("unmarshal extracted json failed: %v", err)
+				}
+				if val, ok := parsed[tt.verifyKey].(string); !ok || val != tt.expectVal {
+					t.Errorf("expected %s=%q, got %q (in: %s)", tt.verifyKey, tt.expectVal, val, res)
+				}
 			}
 		})
 	}
