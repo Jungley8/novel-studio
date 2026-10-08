@@ -126,6 +126,93 @@ func ApplyStateMutation(p Protagonist, mutation StateMutation) (Protagonist, []s
 	return updated, auditTrail, nil
 }
 
+// RollbackStateMutation reverts the effects of a StateMutation from a withdrawn chapter,
+// restoring consumed inventory items, removing acquired items, and rewinding power level transitions.
+func RollbackStateMutation(p Protagonist, mutation StateMutation) (Protagonist, []string, error) {
+	updated := p
+	var auditTrail []string
+
+	// 1. Invert inventory delta
+	items := initInventoryItems(p)
+	rawDelta := strings.TrimSpace(mutation.InventoryDelta)
+
+	if rawDelta != "" {
+		deltaTokens := splitDeltaTokens(rawDelta)
+		for _, token := range deltaTokens {
+			token = strings.TrimSpace(token)
+			if token == "" {
+				continue
+			}
+
+			action, rawItem := detectItemAction(token)
+			itemName, deltaQty := parseItemAndQuantity(rawItem)
+			if itemName == "" {
+				continue
+			}
+			if deltaQty <= 0 {
+				deltaQty = 1
+			}
+
+			switch action {
+			case "ADD":
+				// Reversing an addition means removing it
+				foundIndex := findInventoryItemIndex(items, itemName)
+				if foundIndex >= 0 {
+					if items[foundIndex].Quantity > deltaQty {
+						items[foundIndex].Quantity -= deltaQty
+						auditTrail = append(auditTrail, fmt.Sprintf("[Ledger Rollback] 回滚移除物品: %s (扣减 %d, 剩余: %d)", itemName, deltaQty, items[foundIndex].Quantity))
+					} else {
+						items = append(items[:foundIndex], items[foundIndex+1:]...)
+						auditTrail = append(auditTrail, fmt.Sprintf("[Ledger Rollback] 回滚完全移除物品: %s", itemName))
+					}
+				}
+			case "REMOVE":
+				// Reversing a consumption means re-adding it
+				foundIndex := findInventoryItemIndex(items, itemName)
+				if foundIndex >= 0 {
+					items[foundIndex].Quantity += deltaQty
+					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger Rollback] 回滚归还已消耗物品: %s (增加 %d, 当前: %d)", itemName, deltaQty, items[foundIndex].Quantity))
+				} else {
+					items = append(items, InventoryItem{
+						Name:     itemName,
+						Quantity: deltaQty,
+					})
+					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger Rollback] 回滚恢复物品: %s (数量: %d)", itemName, deltaQty))
+				}
+			}
+		}
+
+		var formatted []string
+		for _, itm := range items {
+			if itm.Quantity > 1 {
+				formatted = append(formatted, fmt.Sprintf("%sx%d", itm.Name, itm.Quantity))
+			} else {
+				formatted = append(formatted, itm.Name)
+			}
+		}
+		updated.Inventory = strings.Join(formatted, ", ")
+		updated.StructuredItems = items
+	}
+
+	// 2. Rollback Power progression
+	if updated.StructuredLevel != nil && len(updated.StructuredLevel.History) > 0 {
+		lastIdx := len(updated.StructuredLevel.History) - 1
+		lastHist := updated.StructuredLevel.History[lastIdx]
+		updated.StructuredLevel.Realm = lastHist.FromRealm
+		updated.StructuredLevel.History = updated.StructuredLevel.History[:lastIdx]
+
+		namePart := strings.Split(updated.NameAndLevel, " ")[0]
+		if lastHist.FromRealm != "" {
+			updated.NameAndLevel = fmt.Sprintf("%s (%s)", namePart, lastHist.FromRealm)
+		} else {
+			updated.NameAndLevel = namePart
+		}
+		auditTrail = append(auditTrail, fmt.Sprintf("[Ledger Rollback] 境界回滚: %s ➔ %s", lastHist.ToRealm, lastHist.FromRealm))
+	}
+
+	return updated, auditTrail, nil
+}
+
 func parseInventoryItems(inv string) []string {
 	if strings.TrimSpace(inv) == "" {
 		return nil
