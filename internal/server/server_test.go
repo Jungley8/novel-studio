@@ -419,3 +419,119 @@ func TestServer_MatrixScenesAndAnalytics(t *testing.T) {
 		t.Errorf("expected tension points, got: %+v", tensionResp)
 	}
 }
+
+func TestServer_ConfigTest(t *testing.T) {
+	srv, _, cfg := setupTestServer(t)
+
+	// Mock OpenAI compatible server
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "Bearer invalid-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error": {"message": "invalid api key"}}`))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]string{
+						"role":    "assistant",
+						"content": "NovelStudio Connection OK",
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	// 1. Validation test: empty base / key / model
+	{
+		reqBody := `{"target": "custom", "api_base": "", "api_key": "", "model": ""}`
+		req := httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(reqBody))
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var res server.TestConfigResponse
+		_ = json.Unmarshal(w.Body.Bytes(), &res)
+		if res.Status != "error" || res.Error == "" {
+			t.Errorf("expected validation error, got: %+v", res)
+		}
+	}
+
+	// 2. Success test with mock server
+	{
+		testPayload := map[string]string{
+			"target":   "default",
+			"api_base": mockServer.URL,
+			"api_key":  "valid-secret-key",
+			"model":    "test-model",
+		}
+		b, _ := json.Marshal(testPayload)
+		req := httptest.NewRequest(http.MethodPost, "/api/config/test", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var res server.TestConfigResponse
+		_ = json.Unmarshal(w.Body.Bytes(), &res)
+		if res.Status != "ok" || !strings.Contains(res.Reply, "NovelStudio Connection OK") {
+			t.Errorf("expected success test response, got: %+v", res)
+		}
+	}
+
+	// 3. Unauthorized failure test
+	{
+		testPayload := map[string]string{
+			"target":   "default",
+			"api_base": mockServer.URL,
+			"api_key":  "invalid-key",
+			"model":    "test-model",
+		}
+		b, _ := json.Marshal(testPayload)
+		req := httptest.NewRequest(http.MethodPost, "/api/config/test", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var res server.TestConfigResponse
+		_ = json.Unmarshal(w.Body.Bytes(), &res)
+		if res.Status != "error" || !strings.Contains(res.Error, "401") {
+			t.Errorf("expected 401 error, got: %+v", res)
+		}
+	}
+
+	// 4. Role-based fallback test with masked key
+	{
+		cfg.APIBase = mockServer.URL
+		cfg.APIKey = "valid-secret-key"
+		cfg.ReasoningModel = "test-reasoner"
+
+		testPayload := map[string]string{
+			"target":  "reasoner",
+			"api_key": "val...-key", // masked key passed from UI
+			"model":   "",
+		}
+		b, _ := json.Marshal(testPayload)
+		req := httptest.NewRequest(http.MethodPost, "/api/config/test", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var res server.TestConfigResponse
+		_ = json.Unmarshal(w.Body.Bytes(), &res)
+		if res.Status != "ok" {
+			t.Errorf("expected fallback to unmasked real key to succeed, got: %+v", res)
+		}
+	}
+}
