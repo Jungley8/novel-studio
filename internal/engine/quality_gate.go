@@ -70,6 +70,9 @@ func (q *QualityGate) AuditWithHooks(
 		hList = append(hList, fmt.Sprintf("检出高频重复短语: %s", strings.Join(heuristic.TopRepeatedNgrams, ", ")))
 	}
 	runesCount := len([]rune(draftText))
+	if runesCount < 1200 {
+		hList = append(hList, fmt.Sprintf("章节篇幅偏短 (仅 %d 字，网文单章标准应在 2000-3000 字以上，请充实节拍五感与细节交锋)", runesCount))
+	}
 	if runesCount >= 300 && (heuristic.DialogueRatio < 0.10 || heuristic.DialogueRatio > 0.65) {
 		hList = append(hList, fmt.Sprintf("对话占比异常 (%.1f%%，建议保持在 15%%-55%% 之间)", heuristic.DialogueRatio*100))
 	}

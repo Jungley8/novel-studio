@@ -93,7 +93,6 @@ func (h *Harmonizer) initDefaultRules() {
 	h.perturbRules = map[string]string{
 		"走过去":  "大步踏过去",
 		"走入":   "跨步迈进",
-		"看着":   "乜斜着盯牢",
 		"站起来":  "霍然起身",
 		"十分":   "分明是",
 		"拿出了":  "怀里摸出",
@@ -103,7 +102,6 @@ func (h *Harmonizer) initDefaultRules() {
 		"忽然":   "冷不丁",
 		"缓慢":   "慢吞吞",
 		"剧烈":   "生猛",
-		"非常":   "端的是",
 		"仔细观察": "眯眼打量",
 		"心中明白": "心如明镜",
 	}
@@ -209,12 +207,12 @@ func (h *Harmonizer) SuggestHumanTouches(text string) []HumanTouchSuggestion {
 		})
 	}
 
-	// 4. Cadence suggestion
+	// 4. Cadence suggestion (长短交错，语法自然健全，杜绝电报残句)
 	suggestions = append(suggestions, HumanTouchSuggestion{
 		Category:        "CADENCE",
 		OriginalContext: "打斗与危机高潮段落",
-		Suggestion:      "将一处顺畅完整的动作链刻意切碎成1~3字短句，并故意删去后半句的解释（留白给读者脑补）。",
-		Rationale:       "大模型习惯逐帧解释动作起因与结果，人类写手在高潮处会省略主谓结构、直给冲击感。",
+		Suggestion:      "动作冲突处采用长短句交错推进，短句强化动作爆发，长句展开细节因果，保证主谓宾完整自然，杜绝单字成行与病态电报句。",
+		Rationale:       "真实优秀作家的语言是有血有肉、长短错落的呼吸律动，绝不是机械生硬的断句切片。",
 	})
 
 	return suggestions

@@ -32,6 +32,7 @@ type CanonHorizon struct {
 	ActiveCodexEntries  []*domain.CodexEntry    `json:"active_codex_entries,omitempty"`
 	CodexRelations      []domain.EntityRelation `json:"codex_relations,omitempty"`
 	CodexContextText    string                  `json:"codex_context_text,omitempty"`
+	NarrativeTone       string                  `json:"narrative_tone,omitempty"`
 }
 
 // CanonChronicle acts as the deep context assembler and horizon keeper.

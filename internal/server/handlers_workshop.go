@@ -52,9 +52,10 @@ func (s *Server) handleRenderScene(w http.ResponseWriter, r *http.Request, proje
 		return
 	}
 	var req struct {
-		ChapterIndex int                `json:"chapter_index"`
-		Beats        []domain.SceneBeat `json:"beats"`
-		WordsTarget  int                `json:"words_target"`
+		ChapterIndex   int                `json:"chapter_index"`
+		Beats          []domain.SceneBeat `json:"beats"`
+		WordsTarget    int                `json:"words_target"`
+		NarrativeStyle string             `json:"narrative_style"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		errorResponse(w, http.StatusBadRequest, err.Error())
@@ -72,7 +73,26 @@ func (s *Server) handleRenderScene(w http.ResponseWriter, r *http.Request, proje
 		return
 	}
 
-	content, _, err := s.orch.RenderScene(r.Context(), s.cfg.WriterModel, p, req.ChapterIndex, req.Beats, req.WordsTarget)
+	var horizon *engine.CanonHorizon
+	if s.chronicle != nil {
+		h, err := s.chronicle.AssembleHorizon(r.Context(), projectID, req.ChapterIndex)
+		if err == nil {
+			horizon = h
+		}
+	}
+	if horizon == nil {
+		horizon = &engine.CanonHorizon{
+			Project:          p,
+			TargetChapter:    req.ChapterIndex,
+			ProtagonistState: p.Protagonist,
+			WorldRules:       p.WorldRules,
+		}
+	}
+	if req.NarrativeStyle != "" {
+		horizon.NarrativeTone = req.NarrativeStyle
+	}
+
+	content, _, err := s.orch.RenderSceneWithHorizon(r.Context(), s.cfg.WriterModel, horizon, req.Beats, req.WordsTarget)
 	if err != nil {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
@@ -222,12 +242,14 @@ func (s *Server) handleRewriteDraft(w http.ResponseWriter, r *http.Request, proj
 		return
 	}
 	var req struct {
-		ChapterIndex  int                  `json:"chapter_index"`
-		OriginalDraft string               `json:"original_draft"`
-		Content       string               `json:"content"`
-		Issues        []string             `json:"issues"`
-		Suggestions   string               `json:"suggestions"`
-		Review        *domain.ReviewResult `json:"review"`
+		ChapterIndex   int                  `json:"chapter_index"`
+		OriginalDraft  string               `json:"original_draft"`
+		Content        string               `json:"content"`
+		Issues         []string             `json:"issues"`
+		Suggestions    string               `json:"suggestions"`
+		Review         *domain.ReviewResult `json:"review"`
+		WordsTarget    int                  `json:"words_target"`
+		NarrativeStyle string               `json:"narrative_style"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		errorResponse(w, http.StatusBadRequest, err.Error())
@@ -273,7 +295,10 @@ func (s *Server) handleRewriteDraft(w http.ResponseWriter, r *http.Request, proj
 		return
 	}
 
-	rewritten, _, err := s.orch.RewriteDraft(r.Context(), s.cfg.WriterModel, p, req.ChapterIndex, req.OriginalDraft, req.Review)
+	rewritten, _, err := s.orch.RewriteDraftWithOptions(r.Context(), s.cfg.WriterModel, p, req.ChapterIndex, req.OriginalDraft, req.Review, engine.RewriteOptions{
+		WordsTarget:    req.WordsTarget,
+		NarrativeStyle: req.NarrativeStyle,
+	})
 	if err != nil {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return

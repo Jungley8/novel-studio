@@ -51,6 +51,7 @@ type WorkshopProduceRequest struct {
 	WriterModel      string           `json:"writer_model,omitempty"`
 	ReviewerModel    string           `json:"reviewer_model,omitempty"`
 	WordsTarget      int              `json:"words_target,omitempty"`
+	NarrativeStyle   string           `json:"narrative_style,omitempty"`
 	AutoCommit       bool             `json:"auto_commit,omitempty"`
 	MaxRewriteLoops  int              `json:"max_rewrite_loops,omitempty"`
 	ResumeCheckpoint bool             `json:"resume_checkpoint,omitempty"`
@@ -187,6 +188,9 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	if err != nil {
 		return nil, fmt.Errorf("assemble canon horizon failed: %w", err)
 	}
+	if req.NarrativeStyle != "" {
+		horizon.NarrativeTone = req.NarrativeStyle
+	}
 	emit(WorkshopEvent{Phase: PhaseHorizon, Message: "正史视界组装完成 (3章密封正史与开放伏笔已就绪)"})
 
 	// 2. Derive Scene Beats (Skip if recovered from checkpoint)
@@ -308,7 +312,10 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			RewriteLoop: rewriteLoops,
 		})
 
-		revised, usage, rerr := w.orch.RewriteDraft(ctx, req.WriterModel, horizon.Project, req.ChapterIndex, currentDraft, auditReport.ToReviewResult())
+		revised, usage, rerr := w.orch.RewriteDraftWithOptions(ctx, req.WriterModel, horizon.Project, req.ChapterIndex, currentDraft, auditReport.ToReviewResult(), RewriteOptions{
+			WordsTarget:    req.WordsTarget,
+			NarrativeStyle: req.NarrativeStyle,
+		})
 		if rerr != nil {
 			break // fallback gracefully to current draft
 		}

@@ -211,14 +211,18 @@ func (o *Orchestrator) RenderSceneWithHorizon(
 	project := horizon.Project
 	chapterIndex := horizon.TargetChapter
 
+	toneDirective := buildNarrativeTonePrompt(horizon.NarrativeTone)
 	tensionDirective := buildTensionCurvePrompt(beats)
 	if tensionDirective == "" {
 		tensionDirective = "- 节奏平稳，长短交替推进"
 	}
 	platformDirective := buildPlatformStylePrompt(project.TargetPlatform)
 	dialogueRatioDirective := buildDialogueRatioPrompt(beats)
+	wordBudgetDirective := buildBeatWordBudgetPrompt(beats, wordsTarget)
 
-	systemPrompt := fmt.Sprintf(`你是一名冷峻、极具电影镜头感的网络小说名家。
+	systemPrompt := fmt.Sprintf(`你是一名专业成熟、文笔深厚扎实的小说名家。
+
+%s
 
 【声口约束】
 - 每个角色的对话必须有独特口头禅或语言习惯，区分出年龄、阶层、修炼体系差异。
@@ -242,9 +246,9 @@ func (o *Orchestrator) RenderSceneWithHorizon(
 【对话与叙述比例】
 %s
 
-【去 AI 味与像人一样写作铁律】
+【去 AI 味与自然中文写作铁律】
 1. 状语与副词克制法则（去AI味但必须保留自然健全语法）：
-   - 中文能不用状语就不用状语，能不用副词就不用副词。严禁使用“修饰性副词+动词”（如：极其、猛然、冷冷地、迅速地、慢条斯理地、几不可察地、前所未有地）。彻底禁用“...地”修饰动词。
+   - 能不用状语就不用状语，能不用副词就不用副词。严禁使用“修饰性副词+动词”（如：极其、猛然、冷冷地、迅速地、慢条斯理地、几不可察地、前所未有地）。彻底禁用“...地”修饰动词。
    - 画面感来自强动词和名词质感，绝不用副词给动词当拐杖（用“冲撞”代替“快速地跑”，用“抠案板”代替“紧张地抓着”）。
    - 【语法健全底线】：去AI味绝对不是剥离语法！严禁为了去状语而丢弃谓语或宾语，严禁写成残缺不全的电报式碎词短语。句子必须具备自然中文的主谓宾完整结构，读起来要像有血有肉的人类母语作家写出的小说，通顺、自然、有力，绝不能像电报机发出的短促字块。
 2. 禁绝一切模板化书面比喻（喻词清零）：
@@ -262,6 +266,7 @@ func (o *Orchestrator) RenderSceneWithHorizon(
    - 人物对话必须像真人说话，带口语惯性与市井质感（“打听这干啥？”、“算哪门子账”），严禁打乒乓球式的书面文雅对答。
 6. 严禁出现以下AI模式化废词：
    不由得、仿佛、宛若、嘴角勾起、眼神复杂、一时间、殊不知、与此同时、冷哼一声、倒吸一口凉气、暗自思忖、死寂一片、冷汗涔涔。`,
+		toneDirective,
 		tensionDirective,
 		platformDirective,
 		dialogueRatioDirective,
@@ -290,6 +295,8 @@ func (o *Orchestrator) RenderSceneWithHorizon(
 【主角状态参考】
 %s | 携带物品：%s%s%s
 
+%s
+
 【必须执行的场景节拍 (请严格按节拍顺序与因果展开)】
 %s
 
@@ -298,6 +305,7 @@ func (o *Orchestrator) RenderSceneWithHorizon(
 		horizon.WorldRules,
 		horizon.ProtagonistState.NameAndLevel, horizon.ProtagonistState.Inventory,
 		anchorSection, codexSection,
+		wordBudgetDirective,
 		string(beatsJSON),
 	)
 
@@ -385,6 +393,12 @@ func (o *Orchestrator) ReviewDraft(
 	}, usage, nil
 }
 
+// RewriteOptions configures targeted rewrite criteria.
+type RewriteOptions struct {
+	WordsTarget    int    `json:"words_target,omitempty"`
+	NarrativeStyle string `json:"narrative_style,omitempty"`
+}
+
 func (o *Orchestrator) RewriteDraft(
 	ctx context.Context,
 	writerModel string,
@@ -393,7 +407,24 @@ func (o *Orchestrator) RewriteDraft(
 	originalDraft string,
 	review *domain.ReviewResult,
 ) (string, TokenUsage, error) {
-	systemPrompt := `你是一名顶级网文精修专家。你的任务是根据主审的具体驳回意见，对原草稿进行定向精修与差分重构。
+	return o.RewriteDraftWithOptions(ctx, writerModel, project, chapterIndex, originalDraft, review, RewriteOptions{})
+}
+
+func (o *Orchestrator) RewriteDraftWithOptions(
+	ctx context.Context,
+	writerModel string,
+	project *domain.Project,
+	chapterIndex int,
+	originalDraft string,
+	review *domain.ReviewResult,
+	opts RewriteOptions,
+) (string, TokenUsage, error) {
+	toneDirective := buildNarrativeTonePrompt(opts.NarrativeStyle)
+
+	systemPrompt := fmt.Sprintf(`你是一名顶级网文精修专家。你的任务是根据主审的具体驳回意见，对原草稿进行定向精修与差分重构。
+
+%s
+
 精修与去AI味铁律：
 1. 严格修复主审指出的所有问题，逐条落实整改意见。
 2. 保持自然中文语法健全：严禁写成残缺不全的电报式碎词短语。主语、谓语、宾语要完整自然，严禁单字单词独行（如“响。”、“烫。”、“骨响。咔。”）。
@@ -401,18 +432,23 @@ func (o *Orchestrator) RewriteDraft(
 4. 拔除书面比喻：删掉所有“像...”、“如...”、“宛若...”式书面比喻，用真实骨肉感与物理破坏直接呈现。
 5. 拒绝微表情与慢动作：删掉“嘴角弧度”、“瞳孔针尖”、“眼角笑意”，动作保持粗粝主观聚焦。
 6. 严禁游戏技能战报：绝不能像网游战报一样生硬报出技能名或念出消耗数值。
-7. 【差分保护】集中火力解决病灶，直接输出精修重构后的完整正文，无需任何客套寒暄。`
+7. 【差分保护与篇幅充实】集中火力解决病灶，直接输出精修重构后的完整正文，无需任何客套寒暄。`, toneDirective)
 
 	issuesText := "无明显硬伤"
 	if len(review.Issues) > 0 {
 		issuesText = "- " + strings.Join(review.Issues, "\n- ")
 	}
 
+	var budgetNotice string
+	if opts.WordsTarget > 0 {
+		budgetNotice = fmt.Sprintf("\n【篇幅与字数底线要求】\n精修重构后全章篇幅必须达到 %d 字以上，细节充实饱满，严禁因删减修辞而导致字数缩水！\n", opts.WordsTarget)
+	}
+
 	userPrompt := fmt.Sprintf(`【重修任务】《%s》 第 %d 章
 【主编评分】%d 分 | 判决: %s
 【审查指出的硬伤】
 %s
-【整改建议】%s
+【整改建议】%s%s
 
 【原始草稿】
 %s
@@ -421,11 +457,76 @@ func (o *Orchestrator) RewriteDraft(
 		project.Title, chapterIndex,
 		review.Score, review.Verdict,
 		issuesText, review.Suggestions,
+		budgetNotice,
 		originalDraft,
 	)
 
 	ctxRole := ContextWithRole(ctx, RoleWriter)
 	return o.client.ChatCompletionWithUsage(ctxRole, writerModel, systemPrompt, userPrompt, 0.7)
+}
+
+// buildNarrativeTonePrompt returns tailored tone instructions for 5 common web novel narrative voices.
+func buildNarrativeTonePrompt(tone string) string {
+	switch tone {
+	case "hardboiled", "冷峻白描":
+		return `【叙事口吻：冷峻白描】
+- 语言硬朗克制，以纯粹的物理动作、物体质感和冷冽的感官细节推进，绝不滥情；
+- 拒绝任何无谓的感叹与悬浮修饰，字句像冰刀刻石，直击因果本质；
+- 语法自然严整，主谓宾完整自然，杜绝矫揉造作。`
+	case "high_tension", "热血张力":
+		return `【叙事口吻：热血张力】
+- 冲突爆发力极强，动作如暴雨倾泻，骨肉碰撞与气机逆乱的体感描写极度饱满；
+- 节奏紧绷，在危机与逆袭间形成强烈压迫感，长句铺陈危机，短句雷霆反击；
+- 严禁生硬念招式报数值，用实打实的肉身崩解与意志对决引爆爽点。`
+	case "classical", "古典志怪":
+		return `【叙事口吻：古典志怪】
+- 浸润中式民俗与诡异志怪氛围，文字古朴苍凉、微带阴冷与宿命感；
+- 渲染香火、阴司、符箓、残庙、泥胎木雕等真实民俗物态，笔调如青灯夜话；
+- 句式洗练严谨，富有古典中文特有的气韵与张力。`
+	case "vernacular", "市井烟火":
+		return `【叙事口吻：市井烟火】
+- 粗粝鲜活、地气充盈，充满底层江湖的生存智慧与人情世故；
+- 人物对白粗粝带劲，夹杂方言与江湖俚语，动作麻利，市井百态跃然纸上；
+- 叙述生动饱满，既有小人物的苟且机变，又有拔刀时的果决狠戾。`
+	case "cinematic", "电影全景":
+		return `【叙事口吻：电影全景】
+- 极具景深与镜头调度感，全景扫视与特写微距无缝切换，画面感与光影质感极其丰富；
+- 强调声效、空间景深与人物走位，群像交错有致，气象恢弘；
+- 兼顾宏观史诗感与微观骨肉细节，如一部高水准中式史诗电影。`
+	default:
+		return `【叙事口吻：冷峻写实】
+- 冷峻克制，富有电影镜头质感与物理物态张力；
+- 拒绝浮夸情绪与AI套路，长短句错落起伏，语法健全自然。`
+	}
+}
+
+// buildBeatWordBudgetPrompt enforces beat-level word budgets ensuring substantial chapter length.
+func buildBeatWordBudgetPrompt(beats []domain.SceneBeat, wordsTarget int) string {
+	if wordsTarget <= 0 {
+		wordsTarget = 2000
+	}
+	numBeats := len(beats)
+	if numBeats == 0 {
+		return fmt.Sprintf("【全章字数与篇幅要求】\n- 本章总篇幅必须达到 %d 字以上，细节充实饱满，严禁草草带过或压缩梗概！", wordsTarget)
+	}
+
+	avgPerBeat := wordsTarget / numBeats
+	if avgPerBeat < 400 {
+		avgPerBeat = 400
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("【全章字数与节拍篇幅预算 (至关重要！总字数必须达到 %d 字以上)】\n", wordsTarget))
+	sb.WriteString("- 严禁将情节写成粗略的大纲梗概！每个节拍必须充分展开环境五感、动作推拉、心理机锋与细节交锋。\n")
+	sb.WriteString(fmt.Sprintf("- 平均每个节拍预算：约 %d~%d 字，本章共 %d 个节拍，整章正文必须充实饱满，坚决达到 %d 字以上：\n", avgPerBeat, avgPerBeat+150, numBeats, wordsTarget))
+	for i, b := range beats {
+		phaseDesc := b.Phase
+		if phaseDesc == "" {
+			phaseDesc = fmt.Sprintf("第%d拍", i+1)
+		}
+		sb.WriteString(fmt.Sprintf("  * 节拍 %d（%s）：篇幅预算约 %d 字。深入展开细节，严禁两三句话匆忙了事。\n", i+1, phaseDesc, avgPerBeat))
+	}
+	return sb.String()
 }
 
 // buildTensionCurvePrompt dynamically generates rhythm density directives from beat tension values.
