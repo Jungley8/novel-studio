@@ -752,3 +752,97 @@ func TestSQLiteStore_MultiCharacterMutationCommit(t *testing.T) {
 		t.Errorf("expected progression notes to contain 震撼归心, got %s", gotChar2.Progressions[0].Notes)
 	}
 }
+
+func TestSQLiteStore_UncommitChapter(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test_novel.db")
+
+	s, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+	proj := &domain.Project{
+		ID:    "proj-uncommit",
+		Title: "回滚测试录",
+		Protagonist: domain.Protagonist{
+			NameAndLevel: "叶孤鸿 (凡人境)",
+			Inventory:    "粗布包袱",
+		},
+	}
+	if err := s.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	ch := &domain.Chapter{
+		ID:           "ch_uncommit_1",
+		ProjectID:    proj.ID,
+		ChapterIndex: 1,
+		Title:        "第一章 霜夜斩蛇",
+		CoreConflict: "山道遇妖蛇",
+		Beats: []domain.SceneBeat{
+			{Phase: "蓄力压迫", Tension: 4, Action: "蛇信吞吐"},
+			{Phase: "绝地反转", Tension: 8, Action: "拔剑怒斩"},
+		},
+		StateMutation: domain.StateMutation{
+			InventoryDelta: "获得物品: 灵蛇胆 (+1)",
+		},
+		Content: "寒夜如墨，冷风如刀。叶孤鸿握紧柴刀...",
+		Review: &domain.ReviewResult{
+			Verdict: domain.ReviewVerdictAccepted,
+			Score:   88,
+		},
+	}
+
+	// 1. Commit chapter
+	updatedProj, err := s.CommitChapter(ctx, proj.ID, ch)
+	if err != nil {
+		t.Fatalf("CommitChapter failed: %v", err)
+	}
+	if !strings.Contains(updatedProj.Protagonist.Inventory, "灵蛇胆") {
+		t.Fatalf("expected 灵蛇胆 in inventory, got %s", updatedProj.Protagonist.Inventory)
+	}
+
+	chs, err := s.ListChapters(ctx, proj.ID)
+	if err != nil || len(chs) != 1 {
+		t.Fatalf("expected 1 chapter, got %d (err: %v)", len(chs), err)
+	}
+
+	// 2. Uncommit chapter back to draft
+	cp, uncommittedProj, err := s.UncommitChapter(ctx, proj.ID, 1)
+	if err != nil {
+		t.Fatalf("UncommitChapter failed: %v", err)
+	}
+
+	// Check checkpoint
+	if cp == nil || cp.DraftText != ch.Content {
+		t.Fatalf("expected checkpoint with content, got %+v", cp)
+	}
+	if len(cp.Beats) != 2 {
+		t.Errorf("expected 2 beats in checkpoint, got %d", len(cp.Beats))
+	}
+	if cp.AuditReport == nil || cp.AuditReport.Score != 88 {
+		t.Errorf("expected audit score 88, got %+v", cp.AuditReport)
+	}
+
+	// Check chapter was deleted from canon chapters table
+	chsAfter, err := s.ListChapters(ctx, proj.ID)
+	if err != nil || len(chsAfter) != 0 {
+		t.Fatalf("expected 0 chapters after uncommit, got %d", len(chsAfter))
+	}
+
+	// Check checkpoint exists in store
+	storedCp, err := s.GetCheckpoint(ctx, proj.ID, 1)
+	if err != nil || storedCp == nil {
+		t.Fatalf("expected stored checkpoint, got %v", err)
+	}
+	if storedCp.DraftText != ch.Content {
+		t.Errorf("expected stored checkpoint content to match")
+	}
+
+	// Check protagonist inventory rolled back
+	if strings.Contains(uncommittedProj.Protagonist.Inventory, "灵蛇胆") {
+		t.Errorf("expected 灵蛇胆 removed from inventory after rollback, got %s", uncommittedProj.Protagonist.Inventory)
+	}
+}

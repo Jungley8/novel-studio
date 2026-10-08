@@ -16,9 +16,11 @@ type Store interface {
 
 	// Chapter lifecycle & atomic state mutation (Deep Module interface)
 	CommitChapter(ctx context.Context, projectID string, chapter *domain.Chapter) (*domain.Project, error)
+	UncommitChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, *domain.Project, error)
 	SaveChapter(ctx context.Context, chapter *domain.Chapter) error
 	GetChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.Chapter, error)
 	ListChapters(ctx context.Context, projectID string) ([]*domain.Chapter, error)
+	DeleteChapter(ctx context.Context, projectID string, chapterIndex int) error
 
 	// Plot Hooks (伏笔因果账本)
 	SavePlotHook(ctx context.Context, hook *domain.PlotHook) error

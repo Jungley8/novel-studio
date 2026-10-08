@@ -599,6 +599,168 @@ func (s *SQLiteStore) ListChapters(ctx context.Context, projectID string) ([]*do
 	return list, rows.Err()
 }
 
+func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, *domain.Project, error) {
+	if projectID == "" {
+		return nil, nil, errors.New("projectID cannot be empty")
+	}
+	if chapterIndex <= 0 {
+		return nil, nil, errors.New("chapterIndex must be greater than 0")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// 1. Fetch the chapter
+	query := `
+	SELECT id, project_id, chapter_index, title, core_conflict, beats_json, state_mutation_json,
+	       content, word_count, burstiness_score, linter_passed, COALESCE(review_json, ''), created_at
+	FROM chapters WHERE project_id = ? AND chapter_index = ?;
+	`
+	row := tx.QueryRowContext(ctx, query, projectID, chapterIndex)
+
+	var c domain.Chapter
+	var beatsJSON, mutationJSON, reviewJSON string
+	if err := row.Scan(
+		&c.ID, &c.ProjectID, &c.ChapterIndex, &c.Title, &c.CoreConflict,
+		&beatsJSON, &mutationJSON, &c.Content, &c.WordCount,
+		&c.BurstinessScore, &c.LinterPassed, &reviewJSON, &c.CreatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, errors.New("chapter not found")
+		}
+		return nil, nil, fmt.Errorf("scan chapter: %w", err)
+	}
+
+	_ = json.Unmarshal([]byte(beatsJSON), &c.Beats)
+	_ = json.Unmarshal([]byte(mutationJSON), &c.StateMutation)
+	if reviewJSON != "" {
+		var rev domain.ReviewResult
+		if err := json.Unmarshal([]byte(reviewJSON), &rev); err == nil {
+			c.Review = &rev
+		}
+	}
+
+	// 2. Fetch current project
+	var p domain.Project
+	var protagonistJSON string
+	pRow := tx.QueryRowContext(ctx, `SELECT id, title, target_platform, world_rules, protagonist_json, created_at, updated_at FROM projects WHERE id = ?`, projectID)
+	if err := pRow.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &protagonistJSON, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		return nil, nil, fmt.Errorf("query project: %w", err)
+	}
+	if err := json.Unmarshal([]byte(protagonistJSON), &p.Protagonist); err != nil {
+		return nil, nil, fmt.Errorf("unmarshal protagonist: %w", err)
+	}
+
+	// 3. Formulate checkpoint from chapter
+	phase := domain.CheckpointPhaseDrafted
+	var auditReport *domain.AuditReport
+	if c.Review != nil {
+		phase = domain.CheckpointPhaseAudited
+		auditReport = &domain.AuditReport{
+			Verdict:         c.Review.Verdict,
+			Score:           c.Review.Score,
+			BurstinessScore: c.BurstinessScore,
+			Issues:          c.Review.Issues,
+			Suggestions:     c.Review.Suggestions,
+			ResolvedHookIDs: c.Review.ResolvedHookIDs,
+			ReviewedAt:      c.Review.ReviewedAt,
+		}
+	}
+
+	cp := &domain.ChapterCheckpoint{
+		ProjectID:     projectID,
+		ChapterIndex:  chapterIndex,
+		Phase:         phase,
+		CoreConflict:  c.CoreConflict,
+		Beats:         c.Beats,
+		StateMutation: c.StateMutation,
+		DraftText:     c.Content,
+		AuditReport:   auditReport,
+		RewriteLoops:  0,
+		UpdatedAt:     time.Now(),
+	}
+
+	payload, err := json.Marshal(cp)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal checkpoint payload: %w", err)
+	}
+
+	cpQuery := `
+	INSERT INTO chapter_checkpoints (project_id, chapter_index, phase, core_conflict, payload_json, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?)
+	ON CONFLICT(project_id, chapter_index) DO UPDATE SET
+		phase = excluded.phase,
+		core_conflict = excluded.core_conflict,
+		payload_json = excluded.payload_json,
+		updated_at = excluded.updated_at;
+	`
+	if _, err := tx.ExecContext(ctx, cpQuery,
+		cp.ProjectID, cp.ChapterIndex, string(cp.Phase), cp.CoreConflict,
+		string(payload), cp.UpdatedAt,
+	); err != nil {
+		return nil, nil, fmt.Errorf("save checkpoint in tx: %w", err)
+	}
+
+	// 4. Delete the chapter from chapters table
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chapters WHERE project_id = ? AND chapter_index = ?`, projectID, chapterIndex); err != nil {
+		return nil, nil, fmt.Errorf("delete chapter in tx: %w", err)
+	}
+
+	// 5. Rollback protagonist mutations
+	rolledBackProtagonist, _, rerr := domain.RollbackStateMutation(p.Protagonist, c.StateMutation)
+	if rerr == nil {
+		p.Protagonist = rolledBackProtagonist
+	}
+
+	p.UpdatedAt = time.Now()
+	newProtagonistJSON, _ := json.Marshal(p.Protagonist)
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE projects SET protagonist_json = ?, updated_at = ? WHERE id = ?`,
+		string(newProtagonistJSON), p.UpdatedAt, p.ID,
+	); err != nil {
+		return nil, nil, fmt.Errorf("update project protagonist in tx: %w", err)
+	}
+
+	// 6. Revert resolved plot hooks if any were resolved in this chapter
+	if c.Review != nil && len(c.Review.ResolvedHookIDs) > 0 {
+		for _, hid := range c.Review.ResolvedHookIDs {
+			hid = strings.TrimSpace(hid)
+			if hid != "" {
+				_, _ = tx.ExecContext(ctx,
+					`UPDATE plot_hooks SET status = 'OPEN' WHERE project_id = ? AND (id = ? OR title = ?)`,
+					projectID, hid, hid,
+				)
+			}
+		}
+	}
+
+	// 7. Delete any codex progressions triggered from this chapter
+	_, _ = tx.ExecContext(ctx, `
+		DELETE FROM codex_progressions 
+		WHERE entry_id IN (SELECT id FROM codex_entries WHERE project_id = ?) 
+		  AND active_from_chapter = ?
+	`, projectID, chapterIndex)
+
+	if err := tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("commit tx: %w", err)
+	}
+	tx = nil
+
+	return cp, &p, nil
+}
+
+func (s *SQLiteStore) DeleteChapter(ctx context.Context, projectID string, chapterIndex int) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM chapters WHERE project_id = ? AND chapter_index = ?`, projectID, chapterIndex)
+	return err
+}
+
 func (s *SQLiteStore) SavePlotHook(ctx context.Context, h *domain.PlotHook) error {
 	if err := h.Validate(); err != nil {
 		return err

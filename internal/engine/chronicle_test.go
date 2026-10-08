@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -28,6 +29,28 @@ func (m *mockChronicleStore) SaveProject(ctx context.Context, project *domain.Pr
 func (m *mockChronicleStore) DeleteProject(ctx context.Context, id string) error { return nil }
 func (m *mockChronicleStore) CommitChapter(ctx context.Context, projectID string, chapter *domain.Chapter) (*domain.Project, error) {
 	return m.project, nil
+}
+func (m *mockChronicleStore) UncommitChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, *domain.Project, error) {
+	for i, c := range m.chapters {
+		if c.ChapterIndex == chapterIndex {
+			m.chapters = append(m.chapters[:i], m.chapters[i+1:]...)
+			return &domain.ChapterCheckpoint{
+				ProjectID:    projectID,
+				ChapterIndex: chapterIndex,
+				DraftText:    c.Content,
+			}, m.project, nil
+		}
+	}
+	return nil, nil, errors.New("chapter not found")
+}
+func (m *mockChronicleStore) DeleteChapter(ctx context.Context, projectID string, chapterIndex int) error {
+	for i, c := range m.chapters {
+		if c.ChapterIndex == chapterIndex {
+			m.chapters = append(m.chapters[:i], m.chapters[i+1:]...)
+			break
+		}
+	}
+	return nil
 }
 func (m *mockChronicleStore) SaveChapter(ctx context.Context, chapter *domain.Chapter) error {
 	return nil
