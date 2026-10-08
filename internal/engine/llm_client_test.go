@@ -294,3 +294,39 @@ func TestHTTPLLMClient_StreamCancellationLeakPrevention(t *testing.T) {
 		t.Fatal("goroutine blocked on sending to unconsumed stream channel: leak detected")
 	}
 }
+
+func TestHTTPLLMClient_RetryOnTransientErrors(t *testing.T) {
+	attempts := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			// First attempt returns 429 Too Many Requests
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"message":"rate limit exceeded"}}`))
+			return
+		}
+		// Second attempt succeeds
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"choices":[{"message":{"role":"assistant","content":"重试成功：推演就绪"}}],
+			"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}
+		}`))
+	}))
+	defer ts.Close()
+
+	client := engine.NewHTTPLLMClient(ts.URL, "test-key")
+	res, usage, err := client.ChatCompletionWithUsage(context.Background(), "test-model", "sys", "user", 0.7)
+	if err != nil {
+		t.Fatalf("expected successful retry, got error: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected exactly 2 attempts, got %d", attempts)
+	}
+	if res != "重试成功：推演就绪" {
+		t.Fatalf("unexpected content: %s", res)
+	}
+	if usage.TotalTokens != 30 {
+		t.Fatalf("unexpected tokens: %d", usage.TotalTokens)
+	}
+}

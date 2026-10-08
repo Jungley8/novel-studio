@@ -59,7 +59,7 @@ func NewHTTPLLMClient(baseURL, apiKey string) *HTTPLLMClient {
 	c := &HTTPLLMClient{
 		sessionID: fmt.Sprintf("novel-studio-%x", time.Now().UnixNano()),
 		httpClient: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: 300 * time.Second, // 300s timeout to support DeepSeek R1 and long-token reasoning
 		},
 	}
 	c.UpdateCredentials(baseURL, apiKey)
@@ -279,25 +279,49 @@ func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 		return "", zeroUsage, fmt.Errorf("marshal request failed: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return "", zeroUsage, fmt.Errorf("create request failed: %w", err)
-	}
+	var bodyBytes []byte
+	maxRetries := 3
 
-	c.applyHeaders(req, apiKey, endpoint)
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+		if err != nil {
+			return "", zeroUsage, fmt.Errorf("create request failed: %w", err)
+		}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", zeroUsage, fmt.Errorf("do HTTP request failed: %w", err)
-	}
-	defer resp.Body.Close()
+		c.applyHeaders(req, apiKey, endpoint)
 
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", zeroUsage, fmt.Errorf("read response body failed: %w", err)
-	}
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", zeroUsage, ctx.Err()
+			}
+			if attempt == maxRetries-1 {
+				return "", zeroUsage, fmt.Errorf("do HTTP request failed after %d attempts: %w", maxRetries, err)
+			}
+			time.Sleep(time.Duration(1<<attempt) * 500 * time.Millisecond)
+			continue
+		}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, err = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			if attempt == maxRetries-1 {
+				return "", zeroUsage, fmt.Errorf("read response body failed: %w", err)
+			}
+			time.Sleep(time.Duration(1<<attempt) * 500 * time.Millisecond)
+			continue
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			break
+		}
+
+		// Retry on 429 Rate Limit or 5xx Server Error
+		if (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) && attempt < maxRetries-1 {
+			time.Sleep(time.Duration(1<<attempt) * 750 * time.Millisecond)
+			continue
+		}
+
 		return "", zeroUsage, fmt.Errorf("LLM API returned HTTP %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -893,4 +917,3 @@ func (c *HTTPLLMClient) generateMockResponse(model, systemPrompt, userPrompt str
 
 	return "推演完成，因果闭环。", TokenUsage{PromptTokens: pTokens, CompletionTokens: 20, TotalTokens: pTokens + 20}, nil
 }
-

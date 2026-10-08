@@ -24,10 +24,10 @@ type HumanTouchSuggestion struct {
 
 // HarmonizeReport provides a summary of all anti-detection and compliance modifications.
 type HarmonizeReport struct {
-	HarmonizedItems    []HarmonizedItem        `json:"harmonized_items"`
-	SuggestedTouches   []HumanTouchSuggestion  `json:"suggested_touches"`
-	OriginalWordCount  int                     `json:"original_word_count"`
-	ProcessedWordCount int                     `json:"processed_word_count"`
+	HarmonizedItems    []HarmonizedItem       `json:"harmonized_items"`
+	SuggestedTouches   []HumanTouchSuggestion `json:"suggested_touches"`
+	OriginalWordCount  int                    `json:"original_word_count"`
+	ProcessedWordCount int                    `json:"processed_word_count"`
 }
 
 // Harmonizer handles domestic platform content harmonization and adversarial AI perturbation.
@@ -91,21 +91,21 @@ func (h *Harmonizer) initDefaultRules() {
 
 	// 3. Adversarial Lexical Jitter (Low-probability human phrasing replacing LLM high-PPL clichés)
 	h.perturbRules = map[string]string{
-		"走过去":   "大步踏过去",
-		"走入":    "跨步迈进",
-		"看着":    "乜斜着盯牢",
-		"站起来":   "霍然起身",
-		"十分":    "分明是",
-		"拿出了":   "怀里摸出",
-		"眼神复杂":  "嘴角紧抿",
-		"停顿了":   "手头微滞",
-		"立刻":    "当即",
-		"忽然":    "冷不丁",
-		"缓慢":    "慢吞吞",
-		"剧烈":    "生猛",
-		"非常":    "端的是",
-		"仔细观察":  "眯眼打量",
-		"心中明白":  "心如明镜",
+		"走过去":  "大步踏过去",
+		"走入":   "跨步迈进",
+		"看着":   "乜斜着盯牢",
+		"站起来":  "霍然起身",
+		"十分":   "分明是",
+		"拿出了":  "怀里摸出",
+		"眼神复杂": "嘴角紧抿",
+		"停顿了":  "手头微滞",
+		"立刻":   "当即",
+		"忽然":   "冷不丁",
+		"缓慢":   "慢吞吞",
+		"剧烈":   "生猛",
+		"非常":   "端的是",
+		"仔细观察": "眯眼打量",
+		"心中明白": "心如明镜",
 	}
 }
 

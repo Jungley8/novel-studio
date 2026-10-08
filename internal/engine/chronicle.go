@@ -191,7 +191,12 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 	// Layer 3: Cross-volume Historical Callbacks for long-arc foreshadowing
 	var cbSb strings.Builder
 	if len(older) > 0 {
-		var callbacks []string
+		type callbackItem struct {
+			desc     string
+			isUrgent bool
+		}
+		var items []callbackItem
+
 		for _, oldCh := range older {
 			chHooks := hooksByChapter[oldCh.ChapterIndex]
 			if len(chHooks) == 0 {
@@ -211,12 +216,44 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 				if excerpt != "" {
 					hookDesc.WriteString(fmt.Sprintf("\n  - 埋设时历史场景还原：“%s”", excerpt))
 				}
-				callbacks = append(callbacks, hookDesc.String())
+				isUrgent := h.TargetChapter <= targetChapter+2
+				items = append(items, callbackItem{
+					desc:     hookDesc.String(),
+					isUrgent: isUrgent,
+				})
 			}
 		}
-		if len(callbacks) > 0 {
+
+		if len(items) > 0 {
+			// Sort urgent items first to maintain high attention on imminent resolutions
+			var sorted []string
+			for _, it := range items {
+				if it.isUrgent {
+					sorted = append(sorted, it.desc)
+				}
+			}
+			for _, it := range items {
+				if !it.isUrgent {
+					sorted = append(sorted, it.desc)
+				}
+			}
+
+			// Context budgeting: keep up to 6 most relevant historical callbacks
+			maxCallbacks := 6
+			var selected []string
+			omittedCount := 0
+			if len(sorted) > maxCallbacks {
+				selected = sorted[:maxCallbacks]
+				omittedCount = len(sorted) - maxCallbacks
+			} else {
+				selected = sorted
+			}
+
 			cbSb.WriteString("【跨卷历史因果线索 (Historical Callbacks)】\n")
-			cbSb.WriteString(strings.Join(callbacks, "\n\n"))
+			cbSb.WriteString(strings.Join(selected, "\n\n"))
+			if omittedCount > 0 {
+				cbSb.WriteString(fmt.Sprintf("\n\n（另有 %d 处较远期伏笔持续发酵中，已精简现场摘录以保障模型核心注意力）", omittedCount))
+			}
 		}
 	}
 
