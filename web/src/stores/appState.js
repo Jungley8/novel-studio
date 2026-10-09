@@ -5,6 +5,18 @@ import { createWorkbenchActions } from './domain/workbenchActions';
 import { createMatrixActions } from './domain/matrixActions';
 import { createCodexActions } from './domain/codexActions';
 
+function loadStoredMessages() {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem('novel_studio_notifications');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (_) {}
+  return [];
+}
+
 export const state = reactive({
   // Navigation & View
   activeTab: 'workbench',
@@ -62,6 +74,9 @@ export const state = reactive({
   isReviewing: false,
   isRewriting: false,
   isSavingDraft: false,
+  isCommitting: false,
+  isSanitizing: false,
+  isLinting: false,
   lastSavedAt: null,
   workbench: {
     coreConflict: '',
@@ -110,6 +125,12 @@ export const state = reactive({
   showRelationModal: false,
   showHarmonizeModal: false,
   showHumanTouchesModal: false,
+  showMessageCenterModal: false,
+
+  // Message & Notification Center
+  enableSystemNotifications: true,
+  systemNotificationPermission: typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'unsupported',
+  messages: loadStoredMessages(),
 
   // Toasts
   toasts: [],
@@ -159,15 +180,146 @@ export const computedState = {
     const c = state.pipelineState.tokens.completion_tokens || 0;
     return (p * 0.14 + c * 0.28) / 1000000;
   }),
+  unreadMessageCount: computed(() => {
+    return state.messages.filter(m => !m.read).length;
+  }),
+  activeTasks: computed(() => {
+    const tasks = [];
+    if (state.pipelineState.active) {
+      tasks.push({
+        id: 'pipeline',
+        type: 'pipeline',
+        title: '全流程自主闭环推演',
+        desc: state.pipelineState.message || '自主推演进行中...',
+      });
+    }
+    if (state.isRenderingScene) {
+      tasks.push({
+        id: 'render',
+        type: 'render',
+        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章正文文学渲染`,
+        desc: `目标约 ${state.wordsTarget || 2000} 字 · 口吻风格: ${state.narrativeStyle}`,
+      });
+    }
+    if (state.isGeneratingBeats) {
+      tasks.push({
+        id: 'beats',
+        type: 'beats',
+        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章因果节拍推演`,
+        desc: '正在解析前序正史与冲突目标...',
+      });
+    }
+    if (state.isReviewing) {
+      tasks.push({
+        id: 'review',
+        type: 'review',
+        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章主编终审质检`,
+        desc: '正在多维度审校与打分...',
+      });
+    }
+    if (state.isRewriting) {
+      tasks.push({
+        id: 'rewrite',
+        type: 'rewrite',
+        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章定向返工精修`,
+        desc: `第 ${state.rewriteLoopCount} 轮局部差分微创返工...`,
+      });
+    }
+    if (state.isCommitting) {
+      tasks.push({
+        id: 'commit',
+        type: 'commit',
+        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章正史原子封存`,
+        desc: '正在持久化写入 SQLite 数据库...',
+      });
+    }
+    if (state.isSanitizing) {
+      tasks.push({
+        id: 'sanitize',
+        type: 'sanitize',
+        title: '确定性语法净洗',
+        desc: '正在剥离冒号与从句壳子...',
+      });
+    }
+    return tasks;
+  }),
 };
 
-// Toast Notifications Helper
-export function notify(title, message = '', type = 'info', duration = 3500) {
-  const id = Date.now() + Math.random().toString(36).substring(2, 6);
-  state.toasts.push({ id, title, message, type });
-  setTimeout(() => {
-    state.toasts = state.toasts.filter(t => t.id !== id);
-  }, duration);
+// Request Native Desktop / Web Notification Permission
+export async function requestNotificationPermission() {
+  if (typeof window === 'undefined' || !('Notification' in window)) {
+    notify('当前环境不支持桌面通知', '浏览器或系统未开放 Web Notification 接口', 'warning');
+    return 'unsupported';
+  }
+  try {
+    const perm = await Notification.requestPermission();
+    state.systemNotificationPermission = perm;
+    if (perm === 'granted') {
+      notify('桌面系统通知已授权', '后续章节渲染与推演完成时将弹出系统通知提醒', 'success');
+    } else {
+      notify('桌面系统通知未授权', '你可以在系统偏好设置或浏览器权限中开启通知', 'info');
+    }
+    return perm;
+  } catch (e) {
+    console.warn('requestNotificationPermission error:', e);
+    return 'denied';
+  }
+}
+
+// Send Native Desktop / System Notification
+export function sendSystemNotification(title, body = '') {
+  if (typeof window === 'undefined' || !('Notification' in window)) {
+    return;
+  }
+  if (Notification.permission === 'granted' && state.enableSystemNotifications) {
+    try {
+      const n = new Notification(title, {
+        body: body || title,
+        icon: '/favicon.ico',
+        tag: 'novel-studio-' + Date.now(),
+      });
+      n.onclick = () => {
+        window.focus?.();
+        n.close();
+      };
+    } catch (e) {
+      console.warn('sendSystemNotification failed:', e);
+    }
+  }
+}
+
+// Toast & Message Center Notifications Helper
+export function notify(title, message = '', type = 'info', duration = 3500, meta = {}) {
+  const id = 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+  if (duration > 0) {
+    state.toasts.push({ id, title, message, type });
+    setTimeout(() => {
+      state.toasts = state.toasts.filter(t => t.id !== id);
+    }, duration);
+  }
+
+  // Record in persistent Message Center
+  const newMsg = {
+    id,
+    title,
+    message: typeof message === 'string' ? message : JSON.stringify(message),
+    type,
+    timestamp: new Date().toISOString(),
+    read: false,
+    ...meta,
+  };
+  state.messages.unshift(newMsg);
+  if (state.messages.length > 100) {
+    state.messages.pop();
+  }
+  try {
+    localStorage.setItem('novel_studio_notifications', JSON.stringify(state.messages.slice(0, 50)));
+  } catch (_) {}
+
+  // Trigger Native Desktop Notification on task completion or failure
+  if (type === 'success' || type === 'error' || type === 'warning') {
+    sendSystemNotification(title, typeof message === 'string' ? message : '');
+  }
 }
 
 // Cross-Platform Global Dialogs Helper (Web & Desktop Native Window Compatible)
@@ -267,4 +419,33 @@ export const actions = {
   confirm: dialogs.confirm,
   alert: dialogs.alert,
   prompt: dialogs.prompt,
+  requestNotificationPermission,
+  markAllMessagesRead() {
+    state.messages.forEach(m => { m.read = true; });
+    try {
+      localStorage.setItem('novel_studio_notifications', JSON.stringify(state.messages.slice(0, 50)));
+    } catch (_) {}
+  },
+  markMessageRead(id) {
+    const msg = state.messages.find(m => m.id === id);
+    if (msg) {
+      msg.read = true;
+      try {
+        localStorage.setItem('novel_studio_notifications', JSON.stringify(state.messages.slice(0, 50)));
+      } catch (_) {}
+    }
+  },
+  clearAllMessages() {
+    state.messages = [];
+    try {
+      localStorage.removeItem('novel_studio_notifications');
+    } catch (_) {}
+  },
+  removeMessage(id) {
+    state.messages = state.messages.filter(m => m.id !== id);
+    try {
+      localStorage.setItem('novel_studio_notifications', JSON.stringify(state.messages.slice(0, 50)));
+    } catch (_) {}
+  },
 };
+

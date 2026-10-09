@@ -4,6 +4,7 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
   return {
     async runLinter() {
       if (!state.workbench.content) return;
+      state.isLinting = true;
       try {
         const rep = await api.lintAnalyze(state.workbench.content);
         if (rep) {
@@ -21,6 +22,8 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
         }
       } catch (e) {
         console.error('linter error:', e);
+      } finally {
+        state.isLinting = false;
       }
     },
 
@@ -340,6 +343,7 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
         notify('手稿为空', '手稿区暂无正文可供净洗', 'warning');
         return;
       }
+      state.isSanitizing = true;
       try {
         const res = await api.sanitizeAI(state.currentProject.id, {
           content: state.workbench.content,
@@ -352,15 +356,19 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
             notify(
               '确定性语法净洗完成',
               `已成功剥离 ${res.items_count} 处空转冒号、从句壳子与机械复述词`,
-              'success'
+              'success',
+              3500,
+              { taskType: 'sanitize', count: res.items_count }
             );
           } else {
-            notify('确定性语法净洗完成', '手稿行文未发现机械语法壳子', 'info');
+            notify('确定性语法净洗完成', '手稿行文未发现机械语法壳子', 'info', 3000, { taskType: 'sanitize' });
           }
         }
       } catch (err) {
         console.error('sanitizeAI failed:', err);
-        notify('语法净洗失败', err.message, 'error');
+        notify('语法净洗失败', err.message, 'error', 4500, { taskType: 'sanitize' });
+      } finally {
+        state.isSanitizing = false;
       }
     },
   };

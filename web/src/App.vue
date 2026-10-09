@@ -33,6 +33,7 @@
     <RelationModal />
     <HarmonizeModal />
     <HumanTouchesModal />
+    <MessageCenterModal />
 
     <!-- 全局轻量浮层通知 (Toast) -->
     <ToastContainer />
@@ -80,6 +81,7 @@ import ProgressionModal from './components/modals/ProgressionModal.vue';
 import RelationModal from './components/modals/RelationModal.vue';
 import HarmonizeModal from './components/modals/HarmonizeModal.vue';
 import HumanTouchesModal from './components/modals/HumanTouchesModal.vue';
+import MessageCenterModal from './components/modals/MessageCenterModal.vue';
 
 onMounted(async () => {
   await actions.loadConfig();

@@ -265,9 +265,10 @@
           <button 
             @click="confirmAndRenderScene"
             :disabled="state.isRenderingScene"
-            class="w-full py-2.5 bg-atelier-850 hover:bg-atelier-800 text-ink-100 font-medium text-xs rounded-lg border border-atelier-700 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
-            <RotateCcw class="w-3.5 h-3.5 text-brand-amber" />
-            <span>{{ state.isRenderingScene ? '重新渲染中...' : '重新生成正文初稿' }}</span>
+            class="w-full py-2.5 bg-atelier-850 hover:bg-atelier-800 text-ink-100 font-medium text-xs rounded-lg border border-atelier-700 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            <Loader2 v-if="state.isRenderingScene" class="w-3.5 h-3.5 text-brand-amber animate-spin" />
+            <RotateCcw v-else class="w-3.5 h-3.5 text-brand-amber" />
+            <span>{{ state.isRenderingScene ? '正文初稿深度渲染中 (约需10~30秒)...' : '重新生成正文初稿' }}</span>
           </button>
 
           <button 
@@ -285,8 +286,9 @@
               <ShieldAlert class="w-3.5 h-3.5" />
               <span>Step 4: 质检门禁终审</span>
             </span>
-            <button @click="handleReviewDraft" :disabled="state.isReviewing" class="text-[11px] text-brand-amber hover:underline cursor-pointer">
-              {{ state.isReviewing ? '终审中...' : '发起终审' }}
+            <button @click="handleReviewDraft" :disabled="state.isReviewing" class="text-[11px] text-brand-amber hover:underline cursor-pointer flex items-center gap-1 disabled:opacity-50">
+              <Loader2 v-if="state.isReviewing" class="w-3 h-3 animate-spin" />
+              <span>{{ state.isReviewing ? '终审质检中...' : '发起终审' }}</span>
             </button>
           </div>
 
@@ -353,10 +355,12 @@
             <div class="grid grid-cols-3 gap-1.5">
               <button 
                 @click="actions.runDeterministicSanitize" 
-                class="py-1.5 px-1 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded text-[11px] transition flex items-center justify-center gap-1 cursor-pointer"
+                :disabled="state.isSanitizing"
+                class="py-1.5 px-1 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded text-[11px] transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
                 title="零Token确定性清洗：剥离提示语冒号、当...时从句壳、解构这意味着复述、平滑破折号">
-                <Sparkles class="w-3 h-3 text-brand-amber" />
-                <span>语法净洗</span>
+                <Loader2 v-if="state.isSanitizing" class="w-3 h-3 text-brand-amber animate-spin" />
+                <Sparkles v-else class="w-3 h-3 text-brand-amber" />
+                <span>{{ state.isSanitizing ? '净洗中...' : '语法净洗' }}</span>
               </button>
               <button 
                 @click="openHarmonizeModal" 
@@ -476,10 +480,11 @@
 
           <button 
             @click="handleCommitChapter"
-            :disabled="!state.workbench.content.trim()"
-            class="w-full py-2.5 bg-brand-emerald hover:bg-emerald-500 text-atelier-950 font-bold text-xs rounded-lg shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
-            <Check class="w-4 h-4" />
-            <span>提交并原子封存第 {{ computedState.currentWorkingChapterIndex.value }} 章</span>
+            :disabled="state.isCommitting || !state.workbench.content.trim()"
+            class="w-full py-2.5 bg-brand-emerald hover:bg-emerald-500 text-atelier-950 font-bold text-xs rounded-lg shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            <Loader2 v-if="state.isCommitting" class="w-4 h-4 animate-spin" />
+            <Check v-else class="w-4 h-4" />
+            <span>{{ state.isCommitting ? '正在原子写入正史数据库...' : ('提交并原子封存第 ' + computedState.currentWorkingChapterIndex.value + ' 章') }}</span>
           </button>
         </div>
       </div>
@@ -563,10 +568,11 @@
           <button 
             @click="handleManualSaveDraft" 
             :disabled="state.isSavingDraft"
-            class="px-2.5 py-1 text-[11px] font-medium bg-brand-amber/15 hover:bg-brand-amber/25 text-brand-amber rounded-md border border-brand-amber/30 transition flex items-center gap-1 cursor-pointer"
+            class="px-2.5 py-1 text-[11px] font-medium bg-brand-amber/15 hover:bg-brand-amber/25 text-brand-amber rounded-md border border-brand-amber/30 transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
             title="手动将当前草稿及工步进度保存至本地数据库">
-            <Save class="w-3 h-3" />
-            <span class="hidden sm:inline">保存草稿</span>
+            <Loader2 v-if="state.isSavingDraft" class="w-3 h-3 animate-spin text-brand-amber" />
+            <Save v-else class="w-3 h-3" />
+            <span class="hidden sm:inline">{{ state.isSavingDraft ? '存盘中...' : '保存草稿' }}</span>
           </button>
 
           <button 
@@ -580,17 +586,22 @@
 
           <button 
             @click="actions.runLinter" 
-            class="px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded-md border border-atelier-750 transition flex items-center gap-1 cursor-pointer">
-            <Sparkles class="w-3 h-3 text-brand-amber" />
-            <span class="hidden sm:inline">反AI味质检</span>
+            :disabled="state.isLinting"
+            class="px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded-md border border-atelier-750 transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+            title="执行反AI味句长方差与套词质检">
+            <Loader2 v-if="state.isLinting" class="w-3 h-3 animate-spin text-brand-amber" />
+            <Sparkles v-else class="w-3 h-3 text-brand-amber" />
+            <span class="hidden sm:inline">{{ state.isLinting ? '质检中...' : '反AI味质检' }}</span>
           </button>
 
           <button 
             @click="actions.runDeterministicSanitize" 
-            class="hidden sm:flex px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded-md border border-atelier-750 transition items-center gap-1 cursor-pointer"
+            :disabled="state.isSanitizing"
+            class="hidden sm:flex px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded-md border border-atelier-750 transition items-center gap-1 cursor-pointer disabled:opacity-50"
             title="一键清洗空转冒号、当...时壳子与机械复述词">
-            <Sparkles class="w-3 h-3 text-brand-cyan" />
-            <span>语法净洗</span>
+            <Loader2 v-if="state.isSanitizing" class="w-3 h-3 animate-spin text-brand-cyan" />
+            <Sparkles v-else class="w-3 h-3 text-brand-cyan" />
+            <span>{{ state.isSanitizing ? '净洗中...' : '语法净洗' }}</span>
           </button>
 
           <button 
@@ -679,13 +690,86 @@
 
       <!-- 纯净排版正文文本框 (呼吸感居中稿纸) -->
       <div class="flex-1 flex overflow-y-auto p-4 md:p-8 justify-center">
-        <div class="w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl flex flex-col h-full bg-atelier-900/20 rounded-xl p-4 md:p-8 border border-atelier-800/40 shadow-inner transition-all">
+        <div class="w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl flex flex-col h-full bg-atelier-900/20 rounded-xl p-4 md:p-8 border border-atelier-800/40 shadow-inner transition-all relative">
+          
+          <!-- 异常报错通知横幅 -->
+          <div 
+            v-if="renderError"
+            class="mb-4 p-3.5 rounded-xl bg-brand-rose/15 border border-brand-rose/40 text-xs flex items-start justify-between gap-3 shrink-0 animate-fade-in">
+            <div class="space-y-1">
+              <div class="font-bold text-brand-rose flex items-center gap-1.5">
+                <AlertCircle class="w-4 h-4" />
+                <span>正文生成或处理异常</span>
+              </div>
+              <p class="text-[11px] text-ink-200 leading-relaxed font-sans select-text">{{ renderError }}</p>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <button 
+                @click="handleRenderScene" 
+                class="px-2.5 py-1 bg-brand-rose/20 hover:bg-brand-rose/30 text-brand-rose border border-brand-rose/40 rounded text-xs transition cursor-pointer font-bold">
+                重试渲染
+              </button>
+              <button 
+                @click="renderError = null" 
+                class="p-1 text-ink-400 hover:text-ink-200 cursor-pointer">
+                <X class="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          <!-- 正文初稿渲染中 动态动效横幅 (Generating Overlay Banner) -->
+          <div 
+            v-if="state.isRenderingScene"
+            class="mb-4 p-4 rounded-xl bg-atelier-950/95 border border-brand-amber/50 shadow-amber-glow/20 space-y-2.5 shrink-0 animate-subtle-pulse">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <Loader2 class="w-4 h-4 text-brand-amber animate-spin" />
+                <span class="text-xs font-bold text-brand-amber tracking-wide">
+                  作家大模型正在全力渲染第 {{ computedState.currentWorkingChapterIndex.value }} 章正文初稿...
+                </span>
+              </div>
+              <span class="text-xs font-mono font-bold px-2 py-0.5 rounded bg-brand-amber/15 text-brand-amber border border-brand-amber/30">
+                已耗时 {{ renderElapsedSec }}s
+              </span>
+            </div>
+            <div class="w-full bg-atelier-800 h-1.5 rounded-full overflow-hidden relative">
+              <div class="h-full bg-gradient-to-r from-brand-amber to-amber-400 animate-pulse rounded-full w-full"></div>
+            </div>
+            <div class="flex items-center justify-between text-[11px] text-ink-300">
+              <span>目标字数: <strong class="text-ink-100">{{ state.wordsTarget || 2000 }}</strong> 字 · 叙事风格: <strong class="text-ink-100">{{ currentToneName }}</strong></span>
+              <span class="text-ink-400">大模型文学生成通常耗时 10 ~ 30 秒，请稍候</span>
+            </div>
+          </div>
+
+          <!-- 定向返工精修中 动态动效横幅 -->
+          <div 
+            v-if="state.isRewriting"
+            class="mb-4 p-4 rounded-xl bg-atelier-950/95 border border-brand-amber/50 space-y-2.5 shrink-0 animate-subtle-pulse">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <Loader2 class="w-4 h-4 text-brand-amber animate-spin" />
+                <span class="text-xs font-bold text-brand-amber tracking-wide">
+                  正在针对主审意见执行第 {{ state.rewriteLoopCount }} 轮局部微创精修返工...
+                </span>
+              </div>
+              <span class="text-xs font-mono font-bold px-2 py-0.5 rounded bg-brand-amber/15 text-brand-amber border border-brand-amber/30">
+                已耗时 {{ rewriteElapsedSec }}s
+              </span>
+            </div>
+            <div class="w-full bg-atelier-800 h-1.5 rounded-full overflow-hidden relative">
+              <div class="h-full bg-gradient-to-r from-brand-amber to-amber-400 animate-pulse rounded-full w-full"></div>
+            </div>
+            <p class="text-[11px] text-ink-300">微创外科手术重构中，直接修复主审问题点与翻案腔病灶...</p>
+          </div>
+
           <textarea 
             id="prose-textarea"
             v-model="state.workbench.content"
             @input="handleProseInput"
+            :disabled="state.isRenderingScene || state.isRewriting"
             class="flex-1 w-full bg-transparent text-ink-100 text-base md:text-[17px] leading-[2.1] font-serif resize-none focus:outline-none placeholder-ink-500 selection:bg-brand-amber/30 selection:text-ink-50 tracking-wide prose-canvas"
-            placeholder="正文手稿由此展开……支持手动写作或依据左侧流水线进行文学渲染。"></textarea>
+            :class="{ 'opacity-60 cursor-wait': state.isRenderingScene || state.isRewriting }"
+            :placeholder="state.isRenderingScene ? '正文渲染生成中，预计需要 10 ~ 30 秒，请稍候……' : '正文手稿由此展开……支持手动写作或依据左侧流水线进行文学渲染。'"></textarea>
         </div>
       </div>
     </div>
@@ -753,7 +837,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { state, computedState, actions, notify, dialogs } from '../stores/appState';
 import { api } from '../api/client';
 import {
@@ -783,7 +867,10 @@ import {
   Plus,
   Settings,
   Save,
-  Trash2
+  Trash2,
+  AlertCircle,
+  AlertTriangle,
+  X
 } from 'lucide-vue-next';
 
 const workflowSteps = [
@@ -794,6 +881,23 @@ const workflowSteps = [
   { id: 5, shortLabel: '返工' },
   { id: 6, shortLabel: '归档' },
 ];
+
+const renderElapsedSec = ref(0);
+const rewriteElapsedSec = ref(0);
+const renderError = ref(null);
+let renderTimer = null;
+let rewriteTimer = null;
+
+const toneMap = {
+  hardboiled: '冷峻白描 (硬派克制 · 物理物态)',
+  high_tension: '热血张力 (暴风骤雨 · 极强冲突)',
+  classical: '古典志怪 (青灯夜话 · 诡谲苍凉)',
+  vernacular: '市井烟火 (粗粝鲜活 · 地气充盈)',
+  cinematic: '电影全景 (蒙太奇景深 · 恢弘画卷)'
+};
+const currentToneName = computed(() => {
+  return toneMap[state.narrativeStyle] || '冷峻白描';
+});
 
 const inspirationPresets = [
   { title: '拍卖截胡', desc: '低买高坑，暗藏乾坤', conflict: '主角在黑市拍卖会发现被掩盖的远古残器，反派欲恶意抬价加害，主角顺水推舟设局反坑反派万两灵石。' },
@@ -858,9 +962,17 @@ function appendHookToConflict(h) {
 async function handleDeriveBeats() {
   if (!state.currentProject || !state.workbench.coreConflict.trim()) return;
   state.isGeneratingBeats = true;
+  const targetIndex = computedState.currentWorkingChapterIndex.value;
+  notify(
+    '因果节拍推演启动',
+    `正在依据前序正史为第 ${targetIndex} 章推演四段论节拍...`,
+    'info',
+    3000,
+    { taskType: 'beats', chapterIndex: targetIndex, status: 'started' }
+  );
   try {
     const res = await api.deriveBeats(state.currentProject.id, {
-      chapter_index: computedState.currentWorkingChapterIndex.value,
+      chapter_index: targetIndex,
       core_conflict: state.workbench.coreConflict,
     });
     if (res.beats && res.beats.length) {
@@ -871,9 +983,16 @@ async function handleDeriveBeats() {
     }
     state.activeStep = 2;
     await actions.saveCheckpoint();
-    notify('节拍推演完成', '已根据前序正史生成因果四段论节拍', 'success');
+    notify(
+      '节拍推演完成',
+      `第 ${targetIndex} 章已生成因果四段论节拍及状态转移预判`,
+      'success',
+      3500,
+      { taskType: 'beats', chapterIndex: targetIndex, status: 'completed' }
+    );
   } catch (e) {
-    notify('推演节拍失败', e.message, 'error');
+    console.error('handleDeriveBeats error:', e);
+    notify('推演节拍失败', e.message || '模型响应超时', 'error', 5000, { taskType: 'beats', chapterIndex: targetIndex, status: 'failed' });
   } finally {
     state.isGeneratingBeats = false;
   }
@@ -883,9 +1002,25 @@ async function handleDeriveBeats() {
 async function handleRenderScene() {
   if (!state.currentProject) return;
   state.isRenderingScene = true;
+  renderError.value = null;
+  renderElapsedSec.value = 0;
+  if (renderTimer) clearInterval(renderTimer);
+  renderTimer = setInterval(() => {
+    renderElapsedSec.value++;
+  }, 1000);
+
+  const targetIndex = computedState.currentWorkingChapterIndex.value;
+  notify(
+    '正文初稿渲染已启动',
+    `第 ${targetIndex} 章文学渲染中 (目标 ${state.wordsTarget || 2000} 字 · 口吻: ${currentToneName.value})，大模型生成预计耗时 10 ~ 30 秒...`,
+    'info',
+    3500,
+    { taskType: 'render', chapterIndex: targetIndex, status: 'started' }
+  );
+
   try {
     const res = await api.renderScene(state.currentProject.id, {
-      chapter_index: computedState.currentWorkingChapterIndex.value,
+      chapter_index: targetIndex,
       beats: state.workbench.beats,
       words_target: state.wordsTarget || 2000,
       narrative_style: state.narrativeStyle || 'hardboiled',
@@ -894,11 +1029,29 @@ async function handleRenderScene() {
     state.activeStep = 3;
     await actions.runLinter();
     await actions.saveCheckpoint();
-    notify('正文初稿生成完毕', `完成约 ${state.workbench.content.length} 字文学渲染`, 'success');
+    notify(
+      '正文初稿渲染完成',
+      `第 ${targetIndex} 章完成约 ${state.workbench.content.length} 字正文渲染 (耗时 ${renderElapsedSec.value}s)`,
+      'success',
+      4500,
+      { taskType: 'render', chapterIndex: targetIndex, status: 'completed' }
+    );
   } catch (e) {
-    notify('渲染正文失败', e.message, 'error');
+    console.error('handleRenderScene error:', e);
+    renderError.value = e.message || '正文初稿渲染接口异常';
+    notify(
+      '渲染正文失败',
+      e.message || '模型响应超时或网络异常',
+      'error',
+      6000,
+      { taskType: 'render', chapterIndex: targetIndex, status: 'failed' }
+    );
   } finally {
     state.isRenderingScene = false;
+    if (renderTimer) {
+      clearInterval(renderTimer);
+      renderTimer = null;
+    }
   }
 }
 
@@ -919,18 +1072,44 @@ async function confirmAndRenderScene() {
 async function handleReviewDraft() {
   if (!state.currentProject || !state.workbench.content.trim()) return;
   state.isReviewing = true;
+  const targetIndex = computedState.currentWorkingChapterIndex.value;
+  notify(
+    '主编终审启动',
+    `正在对第 ${targetIndex} 章手稿进行反AI味与行文质感终审...`,
+    'info',
+    3000,
+    { taskType: 'review', chapterIndex: targetIndex, status: 'started' }
+  );
+
   try {
     const res = await api.reviewDraft(state.currentProject.id, {
-      chapter_index: computedState.currentWorkingChapterIndex.value,
+      chapter_index: targetIndex,
       content: state.workbench.content,
       beats: state.workbench.beats,
     });
     state.reviewResult = res;
     state.activeStep = res.verdict === 'ACCEPTED' ? 6 : 5;
     await actions.saveCheckpoint();
-    notify('主编终审完成', `得分: ${res.score} · 裁决: ${res.verdict}`, res.verdict === 'ACCEPTED' ? 'success' : 'info');
+    if (res.verdict === 'ACCEPTED') {
+      notify(
+        '主编终审通过',
+        `第 ${targetIndex} 章质检评定为合格 (${res.score}分)，可前往封存正史`,
+        'success',
+        4000,
+        { taskType: 'review', chapterIndex: targetIndex, status: 'accepted' }
+      );
+    } else {
+      notify(
+        '终审未达标，需定向返工',
+        `第 ${targetIndex} 章得分 ${res.score}分，存在 ${res.issues?.length || 0} 处问题建议修缮`,
+        'warning',
+        4500,
+        { taskType: 'review', chapterIndex: targetIndex, status: 'rejected' }
+      );
+    }
   } catch (e) {
-    notify('审查失败', e.message, 'error');
+    console.error('handleReviewDraft error:', e);
+    notify('审查失败', e.message || '终审接口异常', 'error', 5000, { taskType: 'review', chapterIndex: targetIndex, status: 'failed' });
   } finally {
     state.isReviewing = false;
   }
@@ -940,6 +1119,22 @@ async function handleReviewDraft() {
 async function handleRewriteDraft() {
   if (!state.currentProject || !state.workbench.content.trim()) return;
   state.isRewriting = true;
+  renderError.value = null;
+  rewriteElapsedSec.value = 0;
+  if (rewriteTimer) clearInterval(rewriteTimer);
+  rewriteTimer = setInterval(() => {
+    rewriteElapsedSec.value++;
+  }, 1000);
+
+  const targetIndex = computedState.currentWorkingChapterIndex.value;
+  notify(
+    '定向返工精修启动',
+    `正在根据主审意见执行第 ${state.rewriteLoopCount + 1} 轮局部差分微创精修...`,
+    'info',
+    3500,
+    { taskType: 'rewrite', chapterIndex: targetIndex, status: 'started' }
+  );
+
   try {
     const issues = state.reviewResult?.issues?.length 
       ? state.reviewResult.issues 
@@ -948,7 +1143,7 @@ async function handleRewriteDraft() {
       || '请重塑叙事节奏，补齐主谓宾完整结构，消除机械断句与模式化废词。';
 
     const res = await api.rewriteDraft(state.currentProject.id, {
-      chapter_index: computedState.currentWorkingChapterIndex.value,
+      chapter_index: targetIndex,
       original_draft: state.workbench.content,
       content: state.workbench.content,
       issues: issues,
@@ -967,17 +1162,30 @@ async function handleRewriteDraft() {
     await actions.runLinter();
     state.activeStep = 4;
     await actions.saveCheckpoint();
-    notify('针对性返工完成', '已采纳修改意见，正文已替换更新', 'success');
+    notify(
+      '针对性返工完成',
+      `已采纳主审修改意见，正文已替换更新 (耗时 ${rewriteElapsedSec.value}s)`,
+      'success',
+      4500,
+      { taskType: 'rewrite', chapterIndex: targetIndex, status: 'completed' }
+    );
   } catch (e) {
-    notify('返工失败', e.message, 'error');
+    console.error('handleRewriteDraft error:', e);
+    renderError.value = e.message || '针对性精修接口异常';
+    notify('返工失败', e.message || '模型响应超时', 'error', 6000, { taskType: 'rewrite', chapterIndex: targetIndex, status: 'failed' });
   } finally {
     state.isRewriting = false;
+    if (rewriteTimer) {
+      clearInterval(rewriteTimer);
+      rewriteTimer = null;
+    }
   }
 }
 
 // 提交归档
 async function handleCommitChapter() {
   if (!state.currentProject || !state.workbench.content.trim()) return;
+  state.isCommitting = true;
   const targetIndex = computedState.currentWorkingChapterIndex.value;
   try {
     const titleMatch = state.workbench.coreConflict.match(/^[^\n，。！？]+/);
@@ -994,7 +1202,13 @@ async function handleCommitChapter() {
     try {
       await api.clearCheckpoint(state.currentProject.id, targetIndex);
     } catch (_) {}
-    notify('章节已成功封存归档', `第 ${targetIndex} 章已记录入正史与状态账本`, 'success');
+    notify(
+      '章节已成功封存归档',
+      `第 ${targetIndex} 章已原子写入正史与状态账本 (${state.workbench.content.length} 字)`,
+      'success',
+      4500,
+      { taskType: 'commit', chapterIndex: targetIndex, status: 'completed' }
+    );
     state.editingChapterIndex = null;
     await actions.selectProject(state.currentProject.id);
     state.workbench.content = '';
@@ -1002,7 +1216,10 @@ async function handleCommitChapter() {
     state.reviewResult = null;
     state.activeStep = 1;
   } catch (e) {
-    notify('归档失败', e.message, 'error');
+    console.error('handleCommitChapter error:', e);
+    notify('归档失败', e.message || '原子写入正史失败', 'error', 5000, { taskType: 'commit', chapterIndex: targetIndex, status: 'failed' });
+  } finally {
+    state.isCommitting = false;
   }
 }
 
@@ -1141,5 +1358,11 @@ onMounted(() => {
   if (actions.restoreCheckpoint) {
     actions.restoreCheckpoint(computedState.currentWorkingChapterIndex.value);
   }
+});
+
+onUnmounted(() => {
+  if (renderTimer) clearInterval(renderTimer);
+  if (rewriteTimer) clearInterval(rewriteTimer);
+  if (proseDebounceTimer) clearTimeout(proseDebounceTimer);
 });
 </script>

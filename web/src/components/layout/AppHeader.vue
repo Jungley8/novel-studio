@@ -51,6 +51,31 @@
         <span>${{ computedState.pipelineCostUSD.value.toFixed(4) }}</span>
       </div>
 
+      <!-- 进行中的后台任务快捷状态条 -->
+      <button 
+        v-if="computedState.activeTasks.value.length > 0"
+        @click="state.showMessageCenterModal = true"
+        class="hidden lg:flex items-center gap-1.5 px-2.5 py-1 bg-brand-amber/15 border border-brand-amber/40 text-brand-amber rounded-md text-[11px] font-mono animate-subtle-pulse cursor-pointer"
+        title="点击展开正在运行的后台异步任务">
+        <Loader2 class="w-3 h-3 animate-spin" />
+        <span class="truncate max-w-[140px]">{{ computedState.activeTasks.value[0].title }}</span>
+      </button>
+
+      <!-- 消息中心入口 -->
+      <button 
+        @click="state.showMessageCenterModal = true"
+        class="relative flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-200 rounded-md border border-atelier-700 transition cursor-pointer"
+        title="查看系统消息与异步推演任务进度">
+        <Loader2 v-if="computedState.activeTasks.value.length > 0" class="w-3.5 h-3.5 text-brand-amber animate-spin" />
+        <Bell v-else class="w-3.5 h-3.5 text-brand-amber" />
+        <span class="hidden sm:inline">消息中心</span>
+        <span 
+          v-if="computedState.unreadMessageCount.value > 0"
+          class="px-1.5 py-0.2 min-w-4 text-[9px] font-mono font-bold bg-brand-rose text-white rounded-full flex items-center justify-center">
+          {{ computedState.unreadMessageCount.value }}
+        </span>
+      </button>
+
       <!-- 提示词透视按钮 -->
       <button 
         @click="state.showPromptInspectorModal = true"
@@ -87,7 +112,7 @@
 
 <script setup>
 import { state, computedState } from '../../stores/appState';
-import { Eye, MessageSquareText, Zap, Loader2, PanelLeft, PanelRight, Maximize2 } from 'lucide-vue-next';
+import { Eye, MessageSquareText, Zap, Loader2, PanelLeft, PanelRight, Maximize2, Bell } from 'lucide-vue-next';
 
 defineEmits(['trigger-pipeline']);
 </script>
