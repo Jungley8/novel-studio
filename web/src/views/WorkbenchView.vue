@@ -145,6 +145,13 @@
             <Sparkles v-else class="w-3.5 h-3.5" />
             <span>{{ state.isGeneratingBeats ? '大模型正在推演节拍...' : '推演四段论节拍 (Derive Beats)' }}</span>
           </button>
+
+          <button 
+            v-if="state.workbench.beats.some(b => b.action)"
+            @click="goToStep(2)"
+            class="w-full py-2 bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 text-xs rounded-lg border border-atelier-750 transition flex items-center justify-center gap-1 cursor-pointer">
+            <span>已有节拍矩阵，前往查看/编辑 ➔</span>
+          </button>
         </div>
 
         <!-- STEP 2: 因果节拍矩阵 -->
@@ -199,6 +206,13 @@
             <PenTool v-else class="w-3.5 h-3.5" />
             <span>{{ state.isRenderingScene ? '作家模型文学渲染中...' : '渲染正文初稿 (Render Prose)' }}</span>
           </button>
+
+          <button 
+            v-if="state.workbench.content.trim()"
+            @click="goToStep(3)"
+            class="w-full py-2 bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 text-xs rounded-lg border border-atelier-750 transition flex items-center justify-center gap-1 cursor-pointer">
+            <span>正文初稿已生成，前往工序配置 ➔</span>
+          </button>
         </div>
 
         <!-- STEP 3: 文学渲染与目标 -->
@@ -249,7 +263,7 @@
           </div>
 
           <button 
-            @click="handleRenderScene"
+            @click="confirmAndRenderScene"
             :disabled="state.isRenderingScene"
             class="w-full py-2.5 bg-atelier-850 hover:bg-atelier-800 text-ink-100 font-medium text-xs rounded-lg border border-atelier-700 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
             <RotateCcw class="w-3.5 h-3.5 text-brand-amber" />
@@ -356,6 +370,30 @@
             <div v-if="state.reviewResult.suggestions" class="text-[11px] text-ink-300 leading-relaxed bg-atelier-900 p-2 rounded">
               <strong class="text-ink-100">主编建议：</strong>{{ state.reviewResult.suggestions }}
             </div>
+
+            <!-- 终审后流转按钮 -->
+            <div class="pt-2 space-y-2">
+              <button 
+                v-if="state.reviewResult.verdict === 'ACCEPTED'"
+                @click="goToStep(6)"
+                class="w-full py-2.5 bg-brand-emerald hover:bg-emerald-500 text-atelier-950 font-bold text-xs rounded-lg shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer">
+                <CheckCircle2 class="w-3.5 h-3.5" />
+                <span>质检合格，前往封存归档 (Step 6) ➔</span>
+              </button>
+              <div v-else class="space-y-1.5">
+                <button 
+                  @click="goToStep(5)"
+                  class="w-full py-2.5 bg-gradient-to-r from-brand-amber to-amber-600 hover:from-brand-amber-hover hover:to-amber-500 text-atelier-950 font-bold text-xs rounded-lg shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer">
+                  <RefreshCw class="w-3.5 h-3.5" />
+                  <span>存在瑕疵，前往定向返工 (Step 5) ➔</span>
+                </button>
+                <button 
+                  @click="goToStep(6)"
+                  class="w-full py-1.5 bg-atelier-850 hover:bg-atelier-800 text-ink-400 hover:text-ink-200 text-[11px] rounded border border-atelier-750 transition flex items-center justify-center cursor-pointer">
+                  <span>忽略警告，强制前往归档 ➔</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -384,6 +422,19 @@
             <RotateCcw v-else class="w-3.5 h-3.5" />
             <span>{{ state.isRewriting ? '执行局部差分返工中...' : '执行针对性精修返工' }}</span>
           </button>
+
+          <div class="grid grid-cols-2 gap-2 pt-1">
+            <button 
+              @click="goToStep(4)"
+              class="py-2 bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 text-xs rounded-lg border border-atelier-750 transition flex items-center justify-center gap-1 cursor-pointer">
+              <span>← 返回重新终审</span>
+            </button>
+            <button 
+              @click="goToStep(6)"
+              class="py-2 bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 text-xs rounded-lg border border-atelier-750 transition flex items-center justify-center gap-1 cursor-pointer">
+              <span>前往封存归档 →</span>
+            </button>
+          </div>
         </div>
 
         <!-- STEP 6: 结算归档 -->
@@ -477,6 +528,33 @@
         </div>
 
         <div class="flex items-center gap-1.5 shrink-0">
+          <!-- 暂存状态提示 -->
+          <div v-if="state.isSavingDraft" class="hidden sm:flex items-center gap-1 text-[11px] text-brand-amber">
+            <Loader2 class="w-3 h-3 animate-spin" />
+            <span>存档中...</span>
+          </div>
+          <span v-else-if="state.lastSavedAt" class="hidden sm:inline text-[10px] text-ink-400 font-mono" :title="`上次存档: ${formatSaveTime(state.lastSavedAt)}`">
+            已存 {{ formatSaveTime(state.lastSavedAt) }}
+          </span>
+
+          <button 
+            @click="handleManualSaveDraft" 
+            :disabled="state.isSavingDraft"
+            class="px-2.5 py-1 text-[11px] font-medium bg-brand-amber/15 hover:bg-brand-amber/25 text-brand-amber rounded-md border border-brand-amber/30 transition flex items-center gap-1 cursor-pointer"
+            title="手动将当前草稿及工步进度保存至本地数据库">
+            <Save class="w-3 h-3" />
+            <span class="hidden sm:inline">保存草稿</span>
+          </button>
+
+          <button 
+            v-if="state.workbench.content || state.workbench.beats.some(b => b.action) || state.workbench.coreConflict"
+            @click="handleDiscardDraft" 
+            class="px-2 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-brand-rose/20 text-ink-400 hover:text-brand-rose rounded-md border border-atelier-750 hover:border-brand-rose/30 transition flex items-center gap-1 cursor-pointer"
+            title="清除当前草稿并重置当前章节工作区">
+            <Trash2 class="w-3 h-3" />
+            <span class="hidden md:inline">放弃草稿</span>
+          </button>
+
           <button 
             @click="actions.runLinter" 
             class="px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded-md border border-atelier-750 transition flex items-center gap-1 cursor-pointer">
@@ -574,7 +652,7 @@
           <textarea 
             id="prose-textarea"
             v-model="state.workbench.content"
-            @input="actions.runLinter"
+            @input="handleProseInput"
             class="flex-1 w-full bg-transparent text-ink-100 text-base md:text-[17px] leading-[2.1] font-serif resize-none focus:outline-none placeholder-ink-500 selection:bg-brand-amber/30 selection:text-ink-50 tracking-wide prose-canvas"
             placeholder="正文手稿由此展开……支持手动写作或依据左侧流水线进行文学渲染。"></textarea>
         </div>
@@ -672,7 +750,9 @@ import {
   PanelLeft,
   PanelRight,
   Plus,
-  Settings
+  Settings,
+  Save,
+  Trash2
 } from 'lucide-vue-next';
 
 const workflowSteps = [
@@ -759,6 +839,7 @@ async function handleDeriveBeats() {
       state.workbench.stateMutation = res.state_mutation;
     }
     state.activeStep = 2;
+    await actions.saveCheckpoint();
     notify('节拍推演完成', '已根据前序正史生成因果四段论节拍', 'success');
   } catch (e) {
     notify('推演节拍失败', e.message, 'error');
@@ -781,12 +862,22 @@ async function handleRenderScene() {
     state.workbench.content = res.content || '';
     state.activeStep = 3;
     await actions.runLinter();
+    await actions.saveCheckpoint();
     notify('正文初稿生成完毕', `完成约 ${state.workbench.content.length} 字文学渲染`, 'success');
   } catch (e) {
     notify('渲染正文失败', e.message, 'error');
   } finally {
     state.isRenderingScene = false;
   }
+}
+
+async function confirmAndRenderScene() {
+  if (state.workbench.content.trim()) {
+    if (!confirm('重新渲染将覆盖当前手稿内容，是否确认重新生成？')) {
+      return;
+    }
+  }
+  await handleRenderScene();
 }
 
 // 终审质检
@@ -801,6 +892,7 @@ async function handleReviewDraft() {
     });
     state.reviewResult = res;
     state.activeStep = res.verdict === 'ACCEPTED' ? 6 : 5;
+    await actions.saveCheckpoint();
     notify('主编终审完成', `得分: ${res.score} · 裁决: ${res.verdict}`, res.verdict === 'ACCEPTED' ? 'success' : 'info');
   } catch (e) {
     notify('审查失败', e.message, 'error');
@@ -839,6 +931,7 @@ async function handleRewriteDraft() {
     state.rewriteLoopCount++;
     await actions.runLinter();
     state.activeStep = 4;
+    await actions.saveCheckpoint();
     notify('针对性返工完成', '已采纳修改意见，正文已替换更新', 'success');
   } catch (e) {
     notify('返工失败', e.message, 'error');
@@ -934,7 +1027,7 @@ function openCustomInlinePrompt() {
   if (instr) runInlineAction('custom', instr);
 }
 
-function applyInlineResult() {
+async function applyInlineResult() {
   if (!inlineActionResult.value) return;
   if (lastSelectedText && lastSelectedText !== state.workbench.content && state.workbench.content.includes(lastSelectedText)) {
     state.workbench.content = state.workbench.content.replace(lastSelectedText, inlineActionResult.value.result);
@@ -944,7 +1037,36 @@ function applyInlineResult() {
   showInlineDiff.value = false;
   inlineActionResult.value = null;
   actions.runLinter();
+  await actions.saveCheckpoint();
   notify('已采纳改写结果', '正文已更新', 'success');
+}
+
+async function handleManualSaveDraft() {
+  const ok = await actions.saveCheckpoint({}, false);
+  if (ok) {
+    notify('草稿已保存', '当前章节全部工步与正文已同步存档至数据库', 'success');
+  }
+}
+
+async function handleDiscardDraft() {
+  await actions.discardCheckpoint(computedState.currentWorkingChapterIndex.value);
+}
+
+let proseDebounceTimer = null;
+function handleProseInput() {
+  actions.runLinter();
+  if (proseDebounceTimer) clearTimeout(proseDebounceTimer);
+  proseDebounceTimer = setTimeout(async () => {
+    if (state.currentProject && (state.workbench.content.trim() || state.workbench.coreConflict.trim())) {
+      await actions.saveCheckpoint({}, true);
+    }
+  }, 1500);
+}
+
+function formatSaveTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`;
 }
 
 function discardInlineResult() {

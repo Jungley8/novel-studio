@@ -61,6 +61,8 @@ export const state = reactive({
   isRenderingScene: false,
   isReviewing: false,
   isRewriting: false,
+  isSavingDraft: false,
+  lastSavedAt: null,
   workbench: {
     coreConflict: '',
     beats: [

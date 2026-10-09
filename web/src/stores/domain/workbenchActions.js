@@ -147,14 +147,48 @@ export function createWorkbenchActions(state, notify, helpers) {
       }
     },
 
+    async saveCheckpoint(customData = {}, silent = true) {
+      if (!state.currentProject) return;
+      const idx = state.editingChapterIndex || (state.chapters ? state.chapters.length + 1 : 1);
+      state.isSavingDraft = true;
+      try {
+        const payload = {
+          project_id: state.currentProject.id,
+          chapter_index: idx,
+          phase: state.reviewResult ? 'AUDITED' : (state.workbench.content ? 'DRAFTED' : 'BEATS_DERIVED'),
+          core_conflict: state.workbench.coreConflict || '',
+          beats: state.workbench.beats || [],
+          state_mutation: state.workbench.stateMutation || { inventory_delta: '', power_delta: '' },
+          draft_text: state.workbench.content || '',
+          audit_report: state.reviewResult || null,
+          rewrite_loops: state.rewriteLoopCount || 0,
+          ...customData,
+        };
+        await api.saveCheckpoint(state.currentProject.id, payload);
+        state.lastSavedAt = new Date();
+        if (!silent) {
+          notify('草稿断点已保存', `第 ${idx} 章当前手稿与工步已持久化存盘`, 'success', 2000);
+        }
+      } catch (err) {
+        console.error('save checkpoint failed:', err);
+        if (!silent) {
+          notify('保存草稿失败', err.message, 'error');
+        }
+      } finally {
+        state.isSavingDraft = false;
+      }
+    },
+
     async restoreCheckpoint(targetIndex) {
       if (!state.currentProject) return;
-      if (state.workbench.content && state.workbench.content.trim()) return;
+      if (state.workbench.content && state.workbench.content.trim() && !targetIndex) return;
       const idx = targetIndex || state.editingChapterIndex || (state.chapters ? state.chapters.length + 1 : 1);
       try {
         const cp = await api.getCheckpoint(state.currentProject.id, idx);
-        if (cp && cp.draft_text) {
-          state.workbench.content = cp.draft_text;
+        if (cp && (cp.draft_text || (cp.beats && cp.beats.length) || cp.core_conflict)) {
+          if (cp.draft_text) {
+            state.workbench.content = cp.draft_text;
+          }
           state.editingChapterIndex = cp.chapter_index;
           if (cp.core_conflict && !state.workbench.coreConflict) {
             state.workbench.coreConflict = cp.core_conflict;
@@ -176,15 +210,17 @@ export function createWorkbenchActions(state, notify, helpers) {
           }
           if (cp.phase === 'AUDITED' || cp.phase === 'REWRITING') {
             state.activeStep = cp.audit_report?.verdict === 'ACCEPTED' ? 6 : 5;
-          } else if (cp.phase === 'DRAFTED') {
+          } else if (cp.phase === 'DRAFTED' || cp.draft_text) {
             state.activeStep = 3;
-          } else if (cp.phase === 'BEATS_DERIVED') {
+          } else if (cp.phase === 'BEATS_DERIVED' || (cp.beats && cp.beats.length)) {
             state.activeStep = 2;
           }
-          if (this.runLinter) {
+          if (this.runLinter && state.workbench.content) {
             this.runLinter();
           }
-          notify('已自动恢复在途草稿断点', `已载入第 ${cp.chapter_index} 章在途推演草稿（共 ${cp.draft_text.length} 字）及质检报告`, 'info');
+          state.lastSavedAt = new Date();
+          const detail = cp.draft_text ? `共 ${cp.draft_text.length} 字手稿` : '包含已推演节拍';
+          notify('已自动恢复草稿断点', `已载入第 ${cp.chapter_index} 章断点（${detail}）`, 'info');
         }
       } catch (err) {
         console.warn('restore checkpoint failed:', err);
@@ -194,13 +230,22 @@ export function createWorkbenchActions(state, notify, helpers) {
     async discardCheckpoint(targetIndex) {
       if (!state.currentProject) return;
       const idx = targetIndex || state.editingChapterIndex || (state.chapters ? state.chapters.length + 1 : 1);
+      if (!confirm(`确定彻底废弃并清空第 ${idx} 章的在途草稿与节拍吗？`)) return;
       try {
         await api.clearCheckpoint(state.currentProject.id, idx);
         state.workbench.content = '';
+        state.workbench.coreConflict = '';
+        state.workbench.beats = [
+          { phase: '蓄力压迫', tension: 4, action: '', expectation_broken: '' },
+          { phase: '试探下套', tension: 6, action: '', expectation_broken: '' },
+          { phase: '绝地反转', tension: 9, action: '', expectation_broken: '' },
+          { phase: '章末留钩', tension: 8, action: '', expectation_broken: '' },
+        ];
         state.reviewResult = null;
         state.editingChapterIndex = null;
         state.activeStep = 1;
-        notify('草稿断点已废弃', `第 ${idx} 章在途草稿已清除`, 'info');
+        state.lastSavedAt = null;
+        notify('草稿断点已废弃', `第 ${idx} 章在途草稿与节拍已全部清除`, 'info');
       } catch (err) {
         notify('清除断点失败', err.message, 'error');
       }

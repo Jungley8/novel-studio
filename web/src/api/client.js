@@ -93,6 +93,7 @@ export const api = {
   reviewDraft: (projectId, data) => apiFetch(`/api/projects/${projectId}/review-draft`, { method: 'POST', body: JSON.stringify(data) }),
   rewriteDraft: (projectId, data) => apiFetch(`/api/projects/${projectId}/rewrite-draft`, { method: 'POST', body: JSON.stringify(data) }),
   getCheckpoint: (projectId, chapterIndex) => apiFetch(`/api/projects/${projectId}/checkpoint?chapter_index=${chapterIndex}`),
+  saveCheckpoint: (projectId, data) => apiFetch(`/api/projects/${projectId}/checkpoint`, { method: 'POST', body: JSON.stringify(data) }),
   clearCheckpoint: (projectId, chapterIndex) => apiFetch(`/api/projects/${projectId}/checkpoint?chapter_index=${chapterIndex}`, { method: 'DELETE' }),
   produceAutonomous: (projectId, data) => apiFetch(`/api/projects/${projectId}/workshop/produce`, { method: 'POST', body: JSON.stringify(data) }),
   inlineAction: (data) => apiFetch('/api/workshop/inline-action', { method: 'POST', body: JSON.stringify(data) }),
