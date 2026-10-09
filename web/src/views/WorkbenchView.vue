@@ -1076,6 +1076,9 @@ async function handleDiscardDraft() {
 let proseDebounceTimer = null;
 function handleProseInput() {
   actions.runLinter();
+  if (state.reviewResult) {
+    state.reviewResult = null;
+  }
   if (proseDebounceTimer) clearTimeout(proseDebounceTimer);
   proseDebounceTimer = setTimeout(async () => {
     if (state.currentProject && (state.workbench.content.trim() || state.workbench.coreConflict.trim())) {

@@ -170,11 +170,11 @@ export function createProjectActions(state, notify, helpers, dialogs) {
       state.workbench.beats = chapter.beats || [];
       state.workbench.coreConflict = chapter.core_conflict || '';
       state.workbench.stateMutation = chapter.state_mutation || { inventory_delta: '', power_delta: '' };
-      state.reviewResult = chapter.review || null;
+      state.reviewResult = null; // 载入工坊重修时清空历史终审，要求修改后重新触发质检
       state.editingChapterIndex = chapter.chapter_index;
       state.activeTab = 'workbench';
-      state.activeStep = chapter.review ? 5 : 3;
-      notify('已载入工作台', `第 ${chapter.chapter_index} 章成稿已填入画布`, 'success');
+      state.activeStep = 3; // 定位至手稿编辑画布
+      notify('已载入工作台', `第 ${chapter.chapter_index} 章成稿已填入画布，可修改后执行精修或自主推演`, 'success');
     },
   };
 }

@@ -46,9 +46,15 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
         state.workbench.coreConflict = conflict;
       }
 
+      // 立即将用户在工坊修改的最新手稿与节拍持久化到当前断点，避免仅在前端内存导致不同步
+      if (state.workbench.content?.trim() || state.workbench.coreConflict?.trim()) {
+        await this.saveCheckpoint({}, true);
+      }
+
       const payload = {
         chapter_index: nextIndex,
         core_conflict: conflict,
+        beats: (state.workbench.beats && state.workbench.beats.length > 0) ? state.workbench.beats : undefined,
         initial_draft: state.workbench.content?.trim() || '',
         words_target: state.wordsTarget || 2000,
         narrative_style: state.narrativeStyle || 'hardboiled',
@@ -57,6 +63,8 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
         enable_harmonize: true,
         resume_checkpoint: true,
       };
+
+      let completedResult = null;
 
       try {
         const url = `/api/projects/${state.currentProject.id}/workshop/produce?stream=true`;
@@ -115,18 +123,30 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
                     if (data.audit_report) {
                       state.reviewResult = data.audit_report;
                       if (data.audit_report.linter) {
-                        state.linterReport = data.audit_report.linter;
+                        state.linterReport = {
+                          ...data.audit_report.linter,
+                          hit_banned_words: Array.isArray(data.audit_report.linter.hit_banned_words) ? data.audit_report.linter.hit_banned_words : [],
+                          top_repeated_ngrams: Array.isArray(data.audit_report.linter.top_repeated_ngrams) ? data.audit_report.linter.top_repeated_ngrams : [],
+                        };
                       }
                     }
                   } else if (currentEvent === 'complete') {
+                    completedResult = data;
                     if (data.content) state.workbench.content = data.content;
                     if (data.beats) state.workbench.beats = data.beats;
-                    if (data.audit) state.reviewResult = data.audit;
+                    if (data.audit) {
+                      state.reviewResult = data.audit;
+                      if (data.audit.linter) {
+                        state.linterReport = {
+                          ...data.audit.linter,
+                          hit_banned_words: Array.isArray(data.audit.linter.hit_banned_words) ? data.audit.linter.hit_banned_words : [],
+                          top_repeated_ngrams: Array.isArray(data.audit.linter.top_repeated_ngrams) ? data.audit.linter.top_repeated_ngrams : [],
+                        };
+                      }
+                    }
                     if (data.total_usage) {
                       state.pipelineState.tokens = data.total_usage;
                     }
-                    state.pipelineState.message = `第 ${data.chapter_index} 章自主推演完毕并已入库！`;
-                    notify(`第 ${data.chapter_index} 章生产完成`, '手稿与因果状态已原子写入正史', 'success');
                   } else if (currentEvent === 'error') {
                     throw new Error(data.error || '自主推演遭遇未知异常');
                   }
@@ -137,23 +157,58 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
             }
           }
         } else {
-          const result = await res.json();
-          if (result.content) state.workbench.content = result.content;
-          if (result.beats) state.workbench.beats = result.beats;
-          if (result.audit) state.reviewResult = result.audit;
-          state.pipelineState.message = `第 ${result.chapter_index} 章自主推演完毕并已入库！`;
-          notify(`第 ${result.chapter_index} 章生产完成`, '手稿与因果状态已原子写入正史', 'success');
+          completedResult = await res.json();
+          if (completedResult.content) state.workbench.content = completedResult.content;
+          if (completedResult.beats) state.workbench.beats = completedResult.beats;
+          if (completedResult.audit) {
+            state.reviewResult = completedResult.audit;
+            if (completedResult.audit.linter) {
+              state.linterReport = {
+                ...completedResult.audit.linter,
+                hit_banned_words: Array.isArray(completedResult.audit.linter.hit_banned_words) ? completedResult.audit.linter.hit_banned_words : [],
+                top_repeated_ngrams: Array.isArray(completedResult.audit.linter.top_repeated_ngrams) ? completedResult.audit.linter.top_repeated_ngrams : [],
+              };
+            }
+          }
         }
 
-        if (helpers && helpers.selectProject) {
-          await helpers.selectProject(state.currentProject.id);
+        if (completedResult && completedResult.committed) {
+          state.pipelineState.message = `第 ${completedResult.chapter_index} 章自主推演完毕并已封存入库！`;
+          notify(`第 ${completedResult.chapter_index} 章生产完成`, '手稿与因果状态已原子写入正史', 'success');
+
+          if (helpers && helpers.selectProject) {
+            await helpers.selectProject(state.currentProject.id);
+          }
+          state.editingChapterIndex = null;
+          state.workbench.content = '';
+          state.workbench.coreConflict = '';
+          state.reviewResult = null;
+          state.activeStep = 1;
+        } else {
+          // 质检不达标（REVISION_NEEDED / REJECTED）或未触发入库
+          const audit = completedResult?.audit || state.reviewResult;
+          const verdict = audit?.verdict || '待返工';
+          const score = audit?.score ?? 0;
+          state.pipelineState.message = `第 ${nextIndex} 章推演质检评级为 ${verdict} (${score}分)，未达到自动封存入库标准，已保留在工作台中`;
+          notify(
+            '质检未达到自动归档标准',
+            `评级: ${verdict} (${score}分)，手稿未自动归档，已停留在返工工作台等待人工复核`,
+            'warning'
+          );
+
+          // 保持在当前章节工坊编辑状态，严禁清除 editingChapterIndex 或关闭工坊
+          state.editingChapterIndex = nextIndex;
+          // 定位至步骤 5 (针对性返工 / 审校面板)，展示问题与修改建议
+          state.activeStep = 5;
+          // 持久化当前草稿与终审结果至断点，刷新不丢失
+          await this.saveCheckpoint({}, true);
         }
-        state.editingChapterIndex = null;
         state.pipelineState.lastFinished = true;
       } catch (err) {
         console.error('runAutonomousPipeline error:', err);
         notify('自主推演中断', err.message, 'error');
         state.pipelineState.message = '自主推演失败: ' + err.message;
+        state.editingChapterIndex = nextIndex;
       } finally {
         state.pipelineState.active = false;
       }
