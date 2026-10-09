@@ -50,10 +50,61 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 		}
 
 		p.Framework = fw
+		if p.WorldRules == "" && len(fw.WorldAxioms) > 0 {
+			var sb strings.Builder
+			sb.WriteString("【世界底层规则与核心公理】\n")
+			for i, ax := range fw.WorldAxioms {
+				sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, ax))
+			}
+			p.WorldRules = sb.String()
+		}
+		if p.Protagonist.CoreGoal == "" {
+			p.Protagonist.CoreGoal = fw.ThemePremise
+		}
+
 		if err := s.store.SaveProject(ctx, p); err != nil {
 			errorResponse(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+
+		// 同步势力阵营至设定集 (Codex)
+		for _, fac := range fw.Factions {
+			if strings.TrimSpace(fac.Name) == "" {
+				continue
+			}
+			entry := &domain.CodexEntry{
+				ID:              fmt.Sprintf("codex_%s_fac_%d", projectID, time.Now().UnixNano()),
+				ProjectID:       projectID,
+				Category:        domain.CategoryFaction,
+				Name:            fac.Name,
+				Summary:         fmt.Sprintf("立场: %s | 威胁度: %s", fac.Alignment, fac.ThreatLevel),
+				DetailsMarkdown: fac.Doctrine,
+				TrackingMode:    domain.TrackingModeAutoMention,
+				CreatedAt:       time.Now(),
+				UpdatedAt:       time.Now(),
+			}
+			_ = s.store.SaveCodexEntry(ctx, entry)
+		}
+
+		// 同步关键角色谱系至设定集 (Codex)
+		for _, kc := range fw.KeyCharacters {
+			if strings.TrimSpace(kc.Name) == "" {
+				continue
+			}
+			entry := &domain.CodexEntry{
+				ID:              fmt.Sprintf("codex_%s_char_%d", projectID, time.Now().UnixNano()),
+				ProjectID:       projectID,
+				Category:        domain.CategoryCharacter,
+				Name:            kc.Name,
+				Summary:         fmt.Sprintf("定位: %s | 境界: %s | 动机: %s", kc.Role, kc.Realm, kc.Goal),
+				DetailsMarkdown: fmt.Sprintf("宿命终局: %s", kc.FateArc),
+				TrackingMode:    domain.TrackingModeAutoMention,
+				CreatedAt:       time.Now(),
+				UpdatedAt:       time.Now(),
+			}
+			_ = s.store.SaveCodexEntry(ctx, entry)
+		}
+
 		// Seed hooks
 		for i, sh := range fw.SeedHooks {
 			hook := &domain.PlotHook{
@@ -68,7 +119,7 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 			}
 			_ = s.store.SavePlotHook(ctx, hook)
 		}
-		jsonResponse(w, http.StatusOK, p)
+		jsonResponse(w, http.StatusOK, p.Framework)
 		return
 	}
 

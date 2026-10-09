@@ -633,23 +633,24 @@ func (o *Orchestrator) BootstrapFramework(
 你的任务是根据作者提供的书名、目标平台与核心灵感，推演并构建出一套宏大、自洽、严密且极具商业与文学张力的全书顶层架构总纲（Project Framework）。
 
 推演法则：
-1. 核心立意与世界公理 (World Axioms)：提炼 3-5 条底层不可逆的世界运转公理与天道真相（反乌托邦/克苏鲁/假仙真魔/因果宿命）。
-2. 战力阶梯 (Power Ladder)：设计 6-9 个严密境界，详细定义每个境界的能力、突破瓶颈与反噬代价（拒绝廉价数值堆砌）。
-3. 核心势力 (Factions)：设计 3-4 个主要势力宗门，明确其立场、核心主张、独门手段与威胁级别。
+1. 核心立意与世界规则 (World Axioms)：提炼 3-5 条底层不可逆的世界运转公理与核心铁律（依据小说题材自适应：修仙之天道反噬/科幻之物理公理/悬疑之因果闭环/奇幻之魔法代价/都市之社会法则）。
+2. 战力阶梯 (Power Ladder)：设计 6-9 个严密境界或实力层级，包含阶位序号(tier: 1..N)、破坏力表征、突破门槛与代价副作用（拒绝廉价数值堆砌）。
+3. 核心势力 (Factions)：设计 3-4 个主要势力宗门或组织财阀，明确其立场、核心主张、独门手段与威胁级别。
 4. 关键人物谱系 (Key Characters)：设计 3-5 位与主角命运交织的关键角色（引路导师、宿敌死仇、亦正亦邪同盟、远古残魂）。
-5. 分卷宏观大纲 (Volume Arcs)：设计前 3-4 卷的大纲，每卷包含：卷序号、卷名、卷主题、核心主线目标、终极大高潮情节、预估章数与核心回收伏笔。
+5. 分卷宏观大纲 (Volume Arcs)：设计前 3-4 卷的大纲，每卷包含：卷序号(volume_index: 1..N)、卷名、卷主题、核心主线目标、终极大高潮情节、预估章数与核心回收伏笔。
 6. 开局种子伏笔 (Seed Hooks)：设计 3-5 个开局前 3 章埋下的长线伏笔（包含目标回收章节 10-60 章）。
 
 输出格式：必须且仅输出标准合法的纯 JSON 格式：
 {
   "theme_premise": "核心主旨一句话描述",
-  "world_axioms": ["世界公理1", "世界公理2", "天道残酷真相3"],
+  "world_axioms": ["世界规则1", "核心公理2", "底层铁律3"],
   "power_ladder": [
     {
-      "realm": "境界名，如：练气期",
-      "description": "境界能力特征",
+      "tier": 1,
+      "realm": "境界名或能力阶段名",
+      "description": "破坏力与能力表征",
       "bottleneck": "突破门槛与关卡",
-      "drawback": "突破代价或天道反噬"
+      "drawback": "突破代价或能力副作用"
     }
   ],
   "factions": [
@@ -714,6 +715,17 @@ func (o *Orchestrator) BootstrapFramework(
 	var fw domain.ProjectFramework
 	if err := json.Unmarshal([]byte(cleanJSON), &fw); err != nil {
 		return nil, usage, fmt.Errorf("parse framework JSON failed (raw: %s): %w", resp, err)
+	}
+
+	for i := range fw.PowerLadder {
+		if fw.PowerLadder[i].Tier == 0 {
+			fw.PowerLadder[i].Tier = i + 1
+		}
+	}
+	for i := range fw.VolumeArcs {
+		if fw.VolumeArcs[i].VolumeIndex == 0 {
+			fw.VolumeArcs[i].VolumeIndex = i + 1
+		}
 	}
 
 	return &fw, usage, nil

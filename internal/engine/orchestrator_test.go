@@ -243,9 +243,13 @@ func TestOrchestrator_BootstrapFramework(t *testing.T) {
 	}
 	if len(fw.PowerLadder) != 2 {
 		t.Errorf("expected 2 power tiers, got %d", len(fw.PowerLadder))
+	} else if fw.PowerLadder[0].Tier != 1 || fw.PowerLadder[1].Tier != 2 {
+		t.Errorf("expected tiers 1 and 2, got %d and %d", fw.PowerLadder[0].Tier, fw.PowerLadder[1].Tier)
 	}
 	if len(fw.VolumeArcs) != 1 {
 		t.Errorf("expected 1 volume arc, got %d", len(fw.VolumeArcs))
+	} else if fw.VolumeArcs[0].VolumeIndex != 1 {
+		t.Errorf("expected volume_index 1, got %d", fw.VolumeArcs[0].VolumeIndex)
 	}
 	if len(fw.SeedHooks) != 1 {
 		t.Errorf("expected 1 seed hook, got %d", len(fw.SeedHooks))

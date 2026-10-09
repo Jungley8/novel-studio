@@ -77,11 +77,14 @@ export function createProjectActions(state, notify, helpers, dialogs) {
       if (!state.currentProject) return;
       state.isLoading = true;
       try {
-        const c = concept || state.currentProject.framework?.core_concept || state.currentProject.title;
-        state.currentProject.framework = await api.bootstrapFramework(state.currentProject.id, c);
-        notify('创世推演完成', '天道法则与战力天平已自动构建', 'success');
+        const c = concept || state.currentProject.framework?.theme_premise || state.currentProject.framework?.core_concept || state.currentProject.title;
+        const res = await api.bootstrapFramework(state.currentProject.id, c);
+        state.currentProject.framework = res.framework || res;
+        if (actionHelpers.loadCodexEntries) await actionHelpers.loadCodexEntries();
+        if (actionHelpers.loadCodexRelations) await actionHelpers.loadCodexRelations();
+        notify('设定推演完成', '世界规则、战力阶梯与分卷大纲已构建', 'success');
       } catch (e) {
-        notify('创世推演失败', e.message, 'error');
+        notify('推演设定失败', e.message, 'error');
       } finally {
         state.isLoading = false;
       }

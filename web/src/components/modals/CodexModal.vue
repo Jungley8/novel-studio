@@ -30,6 +30,7 @@
               v-model="form.category" 
               class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-lg p-2.5 text-xs text-ink-100 focus:outline-none focus:border-brand-amber/60 cursor-pointer">
               <option value="CHARACTER">👤 角色 (CHARACTER)</option>
+              <option value="FACTION">⚔️ 势力阵营 (FACTION)</option>
               <option value="LOCATION">🗺️ 地理场景 (LOCATION)</option>
               <option value="LORE">📜 设定公理 (LORE)</option>
               <option value="ITEM">💎 道具灵宝 (ITEM)</option>

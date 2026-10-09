@@ -50,12 +50,13 @@ type Protagonist struct {
 	StructuredItems []InventoryItem `json:"structured_items,omitempty"`
 }
 
-// PowerLadderTier represents a single cultivation realm with breakthrough requirements and drawbacks.
+// PowerLadderTier represents a single cultivation or power realm with breakthrough requirements and drawbacks.
 type PowerLadderTier struct {
+	Tier        int    `json:"tier,omitempty"`
 	Realm       string `json:"realm"`
 	Description string `json:"description"`
 	Bottleneck  string `json:"bottleneck"`
-	Drawback    string `json:"drawback"` // 突破代价或天道反噬
+	Drawback    string `json:"drawback"` // 突破代价或能力副作用
 }
 
 // Faction represents a sect, clan, or political force.

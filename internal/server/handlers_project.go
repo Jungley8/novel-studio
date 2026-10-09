@@ -504,19 +504,19 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 
 	projectID := fmt.Sprintf("proj_%d", time.Now().UnixNano())
 	var worldRules strings.Builder
-	worldRules.WriteString("【天道法则与核心世界公理】\n")
+	worldRules.WriteString("【世界底层规则与核心公理】\n")
 	for i, axiom := range fw.WorldAxioms {
 		worldRules.WriteString(fmt.Sprintf("%d. %s\n", i+1, axiom))
 	}
 	if len(fw.PowerLadder) > 0 {
-		worldRules.WriteString("\n【战力阶梯与突破反噬】\n")
+		worldRules.WriteString("\n【战力阶梯与能力代价】\n")
 		for _, tier := range fw.PowerLadder {
 			worldRules.WriteString(fmt.Sprintf("- %s: 关隘[%s] | 代价[%s]\n", tier.Realm, tier.Bottleneck, tier.Drawback))
 		}
 	}
 
-	initialRealm := "练气一层"
-	if len(fw.PowerLadder) > 0 {
+	initialRealm := "初入门槛"
+	if len(fw.PowerLadder) > 0 && fw.PowerLadder[0].Realm != "" {
 		initialRealm = fw.PowerLadder[0].Realm
 	}
 	proj := &domain.Project{
@@ -526,7 +526,7 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 		WorldRules:     strings.TrimSpace(worldRules.String()),
 		Protagonist: domain.Protagonist{
 			NameAndLevel: fmt.Sprintf("主角 (%s)", initialRealm),
-			Inventory:    "残破黑铁, 粗布短衫",
+			Inventory:    "随身物品待起草",
 			CoreGoal:     fw.ThemePremise,
 			HealthStatus: "良好",
 		},
@@ -538,6 +538,44 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 	if err := s.store.SaveProject(r.Context(), proj); err != nil {
 		errorResponse(w, http.StatusInternalServerError, "save project failed: "+err.Error())
 		return
+	}
+
+	// 同步势力阵营至设定集
+	for _, fac := range fw.Factions {
+		if strings.TrimSpace(fac.Name) == "" {
+			continue
+		}
+		entry := &domain.CodexEntry{
+			ID:              fmt.Sprintf("codex_%s_fac_%d", projectID, time.Now().UnixNano()),
+			ProjectID:       projectID,
+			Category:        domain.CategoryFaction,
+			Name:            fac.Name,
+			Summary:         fmt.Sprintf("立场: %s | 威胁度: %s", fac.Alignment, fac.ThreatLevel),
+			DetailsMarkdown: fac.Doctrine,
+			TrackingMode:    domain.TrackingModeAutoMention,
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
+		}
+		_ = s.store.SaveCodexEntry(r.Context(), entry)
+	}
+
+	// 同步关键人物至设定集
+	for _, kc := range fw.KeyCharacters {
+		if strings.TrimSpace(kc.Name) == "" {
+			continue
+		}
+		entry := &domain.CodexEntry{
+			ID:              fmt.Sprintf("codex_%s_char_%d", projectID, time.Now().UnixNano()),
+			ProjectID:       projectID,
+			Category:        domain.CategoryCharacter,
+			Name:            kc.Name,
+			Summary:         fmt.Sprintf("定位: %s | 境界: %s | 动机: %s", kc.Role, kc.Realm, kc.Goal),
+			DetailsMarkdown: fmt.Sprintf("宿命终局: %s", kc.FateArc),
+			TrackingMode:    domain.TrackingModeAutoMention,
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
+		}
+		_ = s.store.SaveCodexEntry(r.Context(), entry)
 	}
 
 	for i, sh := range fw.SeedHooks {

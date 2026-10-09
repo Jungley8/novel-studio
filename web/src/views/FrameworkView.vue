@@ -101,7 +101,7 @@
       <div class="space-y-1">
         <h3 class="text-sm font-serif font-bold text-ink-100">尚未生成宏观世界观</h3>
         <p class="text-xs text-ink-400 max-w-md mx-auto leading-relaxed">
-          先立规矩，小说才不容易卡文或战力崩溃。AI 将为你一键构建天道法则、战力阶梯、分卷规划与势力阵营。
+          先立规矩，小说才不容易卡文或战力崩溃。AI 将为你一键构建世界规则、战力阶梯、分卷规划与势力阵营。
         </p>
       </div>
       <button 
@@ -124,7 +124,7 @@
           </div>
           <p class="text-[10px] text-ink-400">一句话概括全书主线与核心看点。</p>
           <textarea 
-            v-model="state.currentProject.framework.core_concept" 
+            v-model="state.currentProject.framework.theme_premise" 
             rows="6" 
             class="w-full bg-atelier-950 border border-atelier-750 rounded-lg p-2.5 text-xs text-ink-100 font-serif focus:outline-none focus:border-brand-amber/60 leading-relaxed resize-none" 
             placeholder="输入全书核心设定与立意..."></textarea>
@@ -132,64 +132,59 @@
 
         <!-- 主角档案 -->
         <div 
-          v-if="state.currentProject.framework.protagonist" 
+          v-if="state.currentProject.protagonist" 
           class="p-4 bg-atelier-900 border border-atelier-750 rounded-xl space-y-2.5 lg:col-span-2 shadow-atelier-sm">
           <div class="flex items-center gap-2 text-xs font-serif font-bold text-brand-amber">
             <User class="w-3.5 h-3.5" />
             <span>主角档案</span>
           </div>
-          <p class="text-[10px] text-ink-400">主角姓名、初始境界、内在动机与致命缺陷。</p>
+          <p class="text-[10px] text-ink-400">主角姓名、当前境界、核心目标与健康状态。</p>
           
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
             <div>
-              <label class="text-ink-400 text-[11px] font-medium">主角姓名：</label>
+              <label class="text-ink-400 text-[11px] font-medium">姓名与境界：</label>
               <input 
-                v-model="state.currentProject.framework.protagonist.name" 
-                class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-ink-50 font-bold focus:outline-none focus:border-brand-amber/60">
+                v-model="state.currentProject.protagonist.name_and_level" 
+                class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-brand-amber font-mono font-bold focus:outline-none focus:border-brand-amber/60">
             </div>
             <div>
-              <label class="text-ink-400 text-[11px] font-medium">初始境界：</label>
+              <label class="text-ink-400 text-[11px] font-medium">战备/健康状态：</label>
               <input 
-                v-model="state.currentProject.framework.protagonist.initial_realm" 
-                class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-brand-amber font-mono focus:outline-none focus:border-brand-amber/60">
-            </div>
-            <div>
-              <label class="text-ink-400 text-[11px] font-medium">内在动机：</label>
-              <input 
-                v-model="state.currentProject.framework.protagonist.core_drive" 
-                class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60">
-            </div>
-            <div>
-              <label class="text-ink-400 text-[11px] font-medium">致命缺陷：</label>
-              <input 
-                v-model="state.currentProject.framework.protagonist.fatal_flaw" 
-                class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-rose-300 focus:outline-none focus:border-brand-amber/60">
+                v-model="state.currentProject.protagonist.health_status" 
+                class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-emerald-400 font-mono focus:outline-none focus:border-brand-amber/60">
             </div>
             <div class="sm:col-span-2">
-              <label class="text-ink-400 text-[11px] font-medium">核心金手指：</label>
+              <label class="text-ink-400 text-[11px] font-medium">当前主线目标与行事底线：</label>
               <input 
-                v-model="state.currentProject.framework.protagonist.special_trait" 
-                class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-brand-amber font-mono focus:outline-none focus:border-brand-amber/60">
+                v-model="state.currentProject.protagonist.core_goal" 
+                class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60">
+            </div>
+            <div class="sm:col-span-2">
+              <label class="text-ink-400 text-[11px] font-medium">随身携带道具 (Inventory)：</label>
+              <textarea 
+                v-model="state.currentProject.protagonist.inventory" 
+                rows="2"
+                class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md p-2 text-xs text-ink-300 font-mono focus:outline-none focus:border-brand-amber/60 resize-none leading-relaxed"></textarea>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- 天道法则 -->
+      <!-- 世界规则 -->
       <div class="p-4 bg-atelier-900 border border-atelier-750 rounded-xl space-y-3 shadow-atelier-sm">
         <div class="flex items-center justify-between">
           <div>
             <div class="flex items-center gap-2 text-xs font-serif font-bold text-brand-amber">
               <Scale class="w-3.5 h-3.5" />
-              <span>天道法则</span>
+              <span>世界规则</span>
             </div>
-            <p class="text-[11px] text-ink-400 mt-0.5">世界不可违背的底层物理与因果铁律，杜绝逻辑崩塌。</p>
+            <p class="text-[11px] text-ink-400 mt-0.5">全书不可违背的底层物理、运行铁律与因果约束。</p>
           </div>
           <button 
             @click="addFrameworkAxiom" 
             class="text-xs text-brand-amber hover:text-brand-amber-hover font-medium flex items-center gap-1 cursor-pointer">
             <Plus class="w-3 h-3" />
-            <span>添加法则</span>
+            <span>添加规则</span>
           </button>
         </div>
 
@@ -219,7 +214,7 @@
               <Layers class="w-3.5 h-3.5" />
               <span>战力阶梯</span>
             </div>
-            <p class="text-[11px] text-ink-400 mt-0.5">每层境界的破坏力、突破瓶颈与反噬代价。</p>
+            <p class="text-[11px] text-ink-400 mt-0.5">全书每层境界的破坏力、突破瓶颈与代价副作用。</p>
           </div>
           <button 
             @click="addFrameworkTier" 
@@ -237,7 +232,7 @@
                 <th class="py-2.5 px-3 w-36">境界名称</th>
                 <th class="py-2.5 px-3">破坏力表征</th>
                 <th class="py-2.5 px-3">突破瓶颈</th>
-                <th class="py-2.5 px-3">反噬代价</th>
+                <th class="py-2.5 px-3">代价与副作用</th>
                 <th class="py-2.5 px-2 w-10 text-center">操作</th>
               </tr>
             </thead>
@@ -246,25 +241,31 @@
                 v-for="(tier, tIdx) in state.currentProject.framework.power_ladder" 
                 :key="tIdx" 
                 class="hover:bg-atelier-850/50">
-                <td class="py-2 px-2 font-mono text-brand-amber font-bold text-center">{{ tier.tier }}</td>
+                <td class="py-2 px-2 font-mono text-brand-amber font-bold text-center">
+                  {{ tier.tier || (tIdx + 1) }}
+                </td>
                 <td class="py-2 px-3">
                   <input 
-                    v-model="tier.tier_name" 
+                    v-model="tier.realm" 
+                    placeholder="境界/阶段名称"
                     class="w-full bg-atelier-950 border border-atelier-750 rounded px-2 py-1 text-xs text-purple-300 font-semibold focus:outline-none focus:border-brand-amber/60">
                 </td>
                 <td class="py-2 px-3">
                   <input 
-                    v-model="tier.features" 
+                    v-model="tier.description" 
+                    placeholder="破坏力与能力表征"
                     class="w-full bg-atelier-950 border border-atelier-750 rounded px-2 py-1 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60">
                 </td>
                 <td class="py-2 px-3">
                   <input 
                     v-model="tier.bottleneck" 
+                    placeholder="突破门槛与关卡"
                     class="w-full bg-atelier-950 border border-atelier-750 rounded px-2 py-1 text-xs text-ink-300 focus:outline-none focus:border-brand-amber/60">
                 </td>
                 <td class="py-2 px-3">
                   <input 
                     v-model="tier.drawback" 
+                    placeholder="突破代价或能力反噬"
                     class="w-full bg-atelier-950 border border-atelier-750 rounded px-2 py-1 text-xs text-rose-300 focus:outline-none focus:border-brand-amber/60">
                 </td>
                 <td class="py-2 px-2 text-center">
@@ -309,25 +310,32 @@
               ✕
             </button>
             <div class="flex items-center gap-2">
-              <span class="text-xs font-mono font-bold text-brand-amber">第 {{ vol.volume }} 卷</span>
+              <span class="text-xs font-mono font-bold text-brand-amber shrink-0">
+                第 {{ vol.volume_index || (vIdx + 1) }} 卷
+              </span>
               <input 
                 v-model="vol.title" 
                 class="flex-1 bg-atelier-900 border border-atelier-750 rounded px-2 py-1 text-xs text-ink-100 font-serif font-bold focus:outline-none focus:border-brand-amber/60" 
                 placeholder="分卷标题">
-              <div class="flex items-center gap-1 text-[11px] text-ink-400 font-mono">
-                <span>第</span>
+              <div class="flex items-center gap-1 text-[11px] text-ink-400 font-mono shrink-0">
+                <span>预估</span>
                 <input 
-                  v-model.number="vol.start_chapter" 
+                  v-model.number="vol.estimated_chapters" 
                   type="number" 
-                  class="w-12 bg-atelier-900 border border-atelier-750 rounded px-1 py-0.5 text-center text-xs text-ink-200">
-                <span>-</span>
-                <input 
-                  v-model.number="vol.end_chapter" 
-                  type="number" 
+                  placeholder="30"
                   class="w-12 bg-atelier-900 border border-atelier-750 rounded px-1 py-0.5 text-center text-xs text-ink-200">
                 <span>章</span>
               </div>
             </div>
+
+            <div>
+              <label class="text-[10px] text-ink-400">本卷核心立意：</label>
+              <input 
+                v-model="vol.theme" 
+                class="w-full mt-0.5 bg-atelier-900 border border-atelier-750 rounded px-2 py-1 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60" 
+                placeholder="例如：微末崛起，潜龙勿用">
+            </div>
+
             <div>
               <label class="text-[10px] text-ink-400">本卷核心目标：</label>
               <textarea 
@@ -338,7 +346,7 @@
             <div>
               <label class="text-[10px] text-brand-amber">卷终高潮爆发点：</label>
               <textarea 
-                v-model="vol.climax_event" 
+                v-model="vol.climax" 
                 rows="2" 
                 class="w-full mt-0.5 bg-atelier-900 border border-brand-amber/30 rounded p-1.5 text-xs text-brand-amber focus:outline-none focus:border-brand-amber resize-none font-serif"></textarea>
             </div>
@@ -346,7 +354,7 @@
         </div>
       </div>
 
-      <!-- 势力阵营 -->
+      <!-- 势力阵营 (属于设定集实体) -->
       <div class="p-4 bg-atelier-900 border border-atelier-750 rounded-xl space-y-3 shadow-atelier-sm">
         <div class="flex items-center justify-between">
           <div>
@@ -354,14 +362,23 @@
               <Swords class="w-3.5 h-3.5" />
               <span>势力阵营</span>
             </div>
-            <p class="text-[11px] text-ink-400 mt-0.5">各大派系、立场冲突与暗线图谋。</p>
+            <p class="text-[11px] text-ink-400 mt-0.5">各大组织派系、阵营立场与独门手段（同步收录于设定集）。</p>
           </div>
-          <button 
-            @click="addFrameworkFaction" 
-            class="text-xs text-brand-amber hover:text-brand-amber-hover font-medium flex items-center gap-1 cursor-pointer">
-            <Plus class="w-3 h-3" />
-            <span>添加势力</span>
-          </button>
+          <div class="flex items-center gap-2">
+            <button 
+              @click="syncFactionsToCodex" 
+              class="text-xs text-brand-amber hover:text-brand-amber-hover font-medium flex items-center gap-1 cursor-pointer bg-brand-amber/10 px-2 py-1 rounded border border-brand-amber/30"
+              title="将所有势力一键同步至设定集与关系图谱">
+              <Share2 class="w-3 h-3" />
+              <span>同步至设定集</span>
+            </button>
+            <button 
+              @click="addFrameworkFaction" 
+              class="text-xs text-brand-amber hover:text-brand-amber-hover font-medium flex items-center gap-1 cursor-pointer">
+              <Plus class="w-3 h-3" />
+              <span>添加势力</span>
+            </button>
+          </div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -380,22 +397,23 @@
                 class="flex-1 bg-atelier-900 border border-atelier-750 rounded px-2 py-1 text-xs text-ink-100 font-bold focus:outline-none focus:border-brand-amber/60" 
                 placeholder="势力名称">
               <input 
-                v-model="fac.stance" 
-                class="w-24 bg-atelier-900 border border-atelier-750 rounded px-2 py-1 text-xs text-brand-amber font-mono text-center focus:outline-none focus:border-brand-amber/60" 
-                placeholder="立场">
+                v-model="fac.alignment" 
+                class="w-28 bg-atelier-900 border border-atelier-750 rounded px-2 py-1 text-xs text-brand-amber font-mono text-center focus:outline-none focus:border-brand-amber/60" 
+                placeholder="阵营立场">
             </div>
             <div>
-              <label class="text-[10px] text-ink-400">权力根基与底蕴：</label>
+              <label class="text-[10px] text-ink-400">核心主张与独门手段：</label>
               <input 
-                v-model="fac.power_base" 
+                v-model="fac.doctrine" 
                 class="w-full mt-0.5 bg-atelier-900 border border-atelier-750 rounded px-2 py-1 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60">
             </div>
             <div>
-              <label class="text-[10px] text-rose-400">暗线图谋：</label>
+              <label class="text-[10px] text-rose-400">威胁级别与宿怨：</label>
               <textarea 
-                v-model="fac.secret_agenda" 
+                v-model="fac.threat_level" 
                 rows="2" 
-                class="w-full mt-0.5 bg-atelier-900 border border-atelier-750 rounded p-1.5 text-xs text-rose-200 focus:outline-none focus:border-rose-400/60 resize-none font-serif"></textarea>
+                placeholder="例如：极高，与主角家族有血海深仇"
+                class="w-full mt-0.5 bg-atelier-900 border border-rose-500/30 rounded p-1.5 text-xs text-rose-200 focus:outline-none focus:border-rose-400/60 resize-none font-serif"></textarea>
             </div>
           </div>
         </div>
@@ -405,7 +423,8 @@
 </template>
 
 <script setup>
-import { state, actions } from '../stores/appState';
+import { onMounted, watch } from 'vue';
+import { state, actions, notify } from '../stores/appState';
 import { 
   Compass, 
   Sparkles, 
@@ -418,8 +437,53 @@ import {
   Swords, 
   Plus,
   Sliders,
-  Loader2
+  Loader2,
+  Share2
 } from 'lucide-vue-next';
+
+function normalizeFramework() {
+  const fw = state.currentProject?.framework;
+  if (!fw) return;
+  // 核心立意规范
+  if (!fw.theme_premise && fw.core_concept) {
+    fw.theme_premise = fw.core_concept;
+  }
+  // 战力阶梯规范
+  if (Array.isArray(fw.power_ladder)) {
+    fw.power_ladder.forEach((t, i) => {
+      if (!t.tier) t.tier = i + 1;
+      if (!t.realm && t.tier_name) t.realm = t.tier_name;
+      if (!t.description && t.features) t.description = t.features;
+    });
+  }
+  // 分卷规划规范
+  if (Array.isArray(fw.volume_arcs)) {
+    fw.volume_arcs.forEach((v, i) => {
+      if (!v.volume_index && v.volume) v.volume_index = v.volume;
+      if (!v.volume_index) v.volume_index = i + 1;
+      if (!v.climax && v.climax_event) v.climax = v.climax_event;
+      if (!v.estimated_chapters && v.end_chapter && v.start_chapter) {
+        v.estimated_chapters = v.end_chapter - v.start_chapter + 1;
+      }
+    });
+  }
+  // 势力阵营规范
+  if (Array.isArray(fw.factions)) {
+    fw.factions.forEach(f => {
+      if (!f.alignment && f.stance) f.alignment = f.stance;
+      if (!f.doctrine && f.power_base) f.doctrine = f.power_base;
+      if (!f.threat_level && f.secret_agenda) f.threat_level = f.secret_agenda;
+    });
+  }
+}
+
+watch(() => state.currentProject?.framework, () => {
+  normalizeFramework();
+}, { deep: true, immediate: true });
+
+onMounted(() => {
+  normalizeFramework();
+});
 
 function setProjectWordsTarget(target) {
   if (!state.currentProject) return;
@@ -449,8 +513,8 @@ function addFrameworkTier() {
   const nextTier = state.currentProject.framework.power_ladder.length + 1;
   state.currentProject.framework.power_ladder.push({
     tier: nextTier,
-    tier_name: '',
-    features: '',
+    realm: '',
+    description: '',
     bottleneck: '',
     drawback: '',
   });
@@ -465,12 +529,12 @@ function addFrameworkVolume() {
   state.currentProject.framework.volume_arcs = state.currentProject.framework.volume_arcs || [];
   const nextVol = state.currentProject.framework.volume_arcs.length + 1;
   state.currentProject.framework.volume_arcs.push({
-    volume: nextVol,
+    volume_index: nextVol,
     title: `第 ${nextVol} 卷`,
-    start_chapter: (nextVol - 1) * 30 + 1,
-    end_chapter: nextVol * 30,
+    theme: '',
+    estimated_chapters: 30,
     core_goal: '',
-    climax_event: '',
+    climax: '',
   });
 }
 
@@ -483,13 +547,38 @@ function addFrameworkFaction() {
   state.currentProject.framework.factions = state.currentProject.framework.factions || [];
   state.currentProject.framework.factions.push({
     name: '',
-    stance: '中立',
-    power_base: '',
-    secret_agenda: '',
+    alignment: '中立',
+    doctrine: '',
+    threat_level: '中等',
   });
 }
 
 function removeFrameworkFaction(idx) {
   state.currentProject.framework.factions.splice(idx, 1);
+}
+
+async function syncFactionsToCodex() {
+  const fw = state.currentProject?.framework;
+  if (!fw || !Array.isArray(fw.factions) || fw.factions.length === 0) {
+    notify('暂无势力', '请先添加或推演势力阵营', 'info');
+    return;
+  }
+  let addedCount = 0;
+  for (const fac of fw.factions) {
+    if (!fac.name.trim()) continue;
+    const exists = (state.codexEntries || []).some(e => e.name === fac.name.trim());
+    if (!exists) {
+      await actions.createCodexEntry?.({
+        name: fac.name.trim(),
+        category: 'FACTION',
+        summary: `立场: ${fac.alignment || '中立'} | 威胁: ${fac.threat_level || '中等'}`,
+        details_markdown: fac.doctrine || '',
+        tracking_mode: 'AUTO_MENTION',
+      });
+      addedCount++;
+    }
+  }
+  await actions.loadCodexEntries?.();
+  notify('同步完成', `已将 ${addedCount} 个新势力同步至设定集与图谱`, 'success');
 }
 </script>

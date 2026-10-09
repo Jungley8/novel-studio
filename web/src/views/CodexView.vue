@@ -279,12 +279,14 @@ import {
   Sparkles, 
   GitCommit, 
   Share2,
+  Swords,
   X 
 } from 'lucide-vue-next';
 
 const categories = [
   { key: 'ALL', label: '全部', icon: BookOpen },
   { key: 'CHARACTER', label: '角色', icon: User },
+  { key: 'FACTION', label: '势力', icon: Swords },
   { key: 'LOCATION', label: '地理场景', icon: Compass },
   { key: 'LORE', label: '设定公理', icon: Scroll },
   { key: 'ITEM', label: '道具灵宝', icon: Gem },

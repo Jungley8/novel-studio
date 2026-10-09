@@ -97,7 +97,7 @@
       <div class="p-5 bg-atelier-900 border border-atelier-750 rounded-xl space-y-3.5 shadow-atelier-sm">
         <div class="flex items-center gap-2 text-xs font-serif font-bold text-brand-amber border-b border-atelier-800 pb-2.5">
           <Scale class="w-4 h-4" />
-          <span>世界底层物理公理 (Rule Engine)</span>
+          <span>全书底层规则 (Rule Engine)</span>
         </div>
         <p class="text-[11px] text-ink-400 leading-relaxed">
           模型在推演剧情与渲染正文时绝对不可违背的底层物理铁律与世界观约束。
