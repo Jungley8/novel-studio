@@ -314,4 +314,3 @@ func TestChapterWorkshop_AutoCommit_TolerantAdmitWhenMaxLoopsReached(t *testing.
 		t.Errorf("expected verdict NOT to be ACCEPTED when score is 50")
 	}
 }
-

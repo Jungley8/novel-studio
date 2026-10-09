@@ -924,4 +924,3 @@ func TestServer_Bootstrap_ProtagonistCodexAndRelations(t *testing.T) {
 		t.Errorf("expected seeded checkpoint for chapter 1, got %+v", cp)
 	}
 }
-
