@@ -18,4 +18,10 @@ if (typeof window !== 'undefined') {
   };
 }
 
-createApp(App).mount('#app');
+const app = createApp(App);
+
+app.config.errorHandler = (err, instance, info) => {
+  console.error('[Global Vue Error]', err, info);
+};
+
+app.mount('#app');

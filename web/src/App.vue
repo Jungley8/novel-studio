@@ -43,8 +43,14 @@
 </template>
 
 <script setup>
-import { onMounted } from 'vue';
+import { onMounted, onErrorCaptured } from 'vue';
 import { state, actions } from './stores/appState';
+
+onErrorCaptured((err, instance, info) => {
+  console.error('[App onErrorCaptured]', err, info);
+  actions.showToast?.(`界面渲染异常: ${err?.message || '未知错误'}`, 'error');
+  return false;
+});
 
 // 基础布局与通用组件
 import AppSidebar from './components/layout/AppSidebar.vue';

@@ -113,7 +113,7 @@
           </div>
 
           <!-- 伏笔回收药丸 -->
-          <div v-if="computedState.activeHooksList.value.length > 0">
+          <div v-if="(computedState.activeHooksList.value || []).length > 0">
             <span class="text-[10px] uppercase font-mono tracking-wider text-ink-400 block mb-1.5">待回收因果伏笔：</span>
             <div class="flex flex-wrap gap-1">
               <button 
@@ -194,8 +194,8 @@
               <ShieldCheck class="w-3 h-3" />
               <span>状态机预判结算：</span>
             </span>
-            <div class="text-ink-300">战力：<span class="text-ink-100">{{ state.workbench.stateMutation.power_delta || '无' }}</span></div>
-            <div class="text-ink-300">物品：<span class="text-ink-100">{{ state.workbench.stateMutation.inventory_delta || '无' }}</span></div>
+            <div class="text-ink-300">战力：<span class="text-ink-100">{{ state.workbench?.stateMutation?.power_delta || '无' }}</span></div>
+            <div class="text-ink-300">物品：<span class="text-ink-100">{{ state.workbench?.stateMutation?.inventory_delta || '无' }}</span></div>
           </div>
 
           <button 
@@ -294,14 +294,14 @@
           <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 space-y-1.5">
             <div class="flex justify-between items-center text-xs">
               <span class="text-ink-300">句长突发度 (Burstiness)</span>
-              <span class="font-mono font-bold" :class="state.linterReport.burstiness_score >= 45 ? 'text-brand-emerald' : 'text-brand-rose'">
-                {{ state.linterReport.burstiness_score }} 分
+              <span class="font-mono font-bold" :class="(state.linterReport?.burstiness_score || 0) >= 45 ? 'text-brand-emerald' : 'text-brand-rose'">
+                {{ state.linterReport?.burstiness_score ?? 0 }} 分
               </span>
             </div>
             <div class="w-full bg-atelier-800 h-1.5 rounded-full overflow-hidden">
               <div 
-                :style="{ width: Math.min(100, state.linterReport.burstiness_score) + '%' }" 
-                :class="state.linterReport.burstiness_score >= 45 ? 'bg-brand-emerald' : 'bg-brand-rose'" 
+                :style="{ width: Math.min(100, state.linterReport?.burstiness_score || 0) + '%' }" 
+                :class="(state.linterReport?.burstiness_score || 0) >= 45 ? 'bg-brand-emerald' : 'bg-brand-rose'" 
                 class="h-full transition-all"></div>
             </div>
             <p class="text-[10px] text-ink-400">长短句剧烈交替可瓦解 AI 机械感 (≥ 45 达标)。</p>
@@ -311,12 +311,12 @@
           <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 space-y-1">
             <div class="flex justify-between items-center text-xs">
               <span class="text-ink-300">模式化套词：</span>
-              <span class="font-mono text-xs font-bold" :class="state.linterReport.hit_banned_words.length === 0 ? 'text-brand-emerald' : 'text-brand-rose'">
-                {{ state.linterReport.hit_banned_words.length }} 处命中
+              <span class="font-mono text-xs font-bold" :class="(state.linterReport?.hit_banned_words || []).length === 0 ? 'text-brand-emerald' : 'text-brand-rose'">
+                {{ (state.linterReport?.hit_banned_words || []).length }} 处命中
               </span>
             </div>
-            <div v-if="state.linterReport.hit_banned_words.length > 0" class="flex flex-wrap gap-1 mt-1">
-              <span v-for="w in state.linterReport.hit_banned_words" :key="w" class="text-[10px] bg-brand-rose/10 text-brand-rose border border-brand-rose/25 px-1.5 py-0.5 rounded font-mono">
+            <div v-if="(state.linterReport?.hit_banned_words || []).length > 0" class="flex flex-wrap gap-1 mt-1">
+              <span v-for="w in (state.linterReport?.hit_banned_words || [])" :key="w" class="text-[10px] bg-brand-rose/10 text-brand-rose border border-brand-rose/25 px-1.5 py-0.5 rounded font-mono">
                 {{ w }}
               </span>
             </div>
@@ -547,7 +547,7 @@
           </button>
 
           <button 
-            v-if="state.workbench.content || state.workbench.beats.some(b => b.action) || state.workbench.coreConflict"
+            v-if="state.workbench?.content || (state.workbench?.beats || []).some(b => b.action) || state.workbench?.coreConflict"
             @click="handleDiscardDraft" 
             class="px-2 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-brand-rose/20 text-ink-400 hover:text-brand-rose rounded-md border border-atelier-750 hover:border-brand-rose/30 transition flex items-center gap-1 cursor-pointer"
             title="清除当前草稿并重置当前章节工作区">
@@ -780,9 +780,9 @@ const inlineActionButtons = [
 ];
 
 const lastChapterTail = computed(() => {
-  if (!state.chapters.length) return '';
+  if (!state.chapters || !state.chapters.length) return '';
   const last = state.chapters[state.chapters.length - 1];
-  if (!last.content) return '';
+  if (!last || !last.content) return '';
   const runes = Array.from(last.content);
   return runes.slice(Math.max(0, runes.length - 120)).join('');
 });
@@ -794,10 +794,10 @@ function tensionBadgeClass(tension) {
 }
 
 function stepBadge(id) {
-  if (id === 1) return state.workbench.coreConflict ? true : false;
-  if (id === 2) return state.workbench.beats.some(b => b.action) ? true : false;
-  if (id === 3) return state.workbench.content ? true : false;
-  if (id === 4) return state.reviewResult ? true : false;
+  if (id === 1) return Boolean(state.workbench?.coreConflict);
+  if (id === 2) return (state.workbench?.beats || []).some(b => b.action);
+  if (id === 3) return Boolean(state.workbench?.content);
+  if (id === 4) return Boolean(state.reviewResult);
   if (id === 5) return state.reviewResult?.verdict === 'REVISION_NEEDED';
   return false;
 }

@@ -5,7 +5,19 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
     async runLinter() {
       if (!state.workbench.content) return;
       try {
-        state.linterReport = await api.lintAnalyze(state.workbench.content);
+        const rep = await api.lintAnalyze(state.workbench.content);
+        if (rep) {
+          state.linterReport = {
+            burstiness_score: rep.burstiness_score || 0,
+            hit_banned_words: Array.isArray(rep.hit_banned_words) ? rep.hit_banned_words : [],
+            top_repeated_ngrams: Array.isArray(rep.top_repeated_ngrams) ? rep.top_repeated_ngrams : [],
+            passed: Boolean(rep.passed),
+            message: rep.message || '',
+            dialogue_ratio: rep.dialogue_ratio || 0,
+            paragraph_variance: rep.paragraph_variance || 0,
+            exclamation_density: rep.exclamation_density || 0,
+          };
+        }
       } catch (e) {
         console.error('linter error:', e);
       }
@@ -202,7 +214,11 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
           if (cp.audit_report) {
             state.reviewResult = cp.audit_report;
             if (cp.audit_report.linter) {
-              state.linterReport = cp.audit_report.linter;
+              state.linterReport = {
+                ...cp.audit_report.linter,
+                hit_banned_words: Array.isArray(cp.audit_report.linter.hit_banned_words) ? cp.audit_report.linter.hit_banned_words : [],
+                top_repeated_ngrams: Array.isArray(cp.audit_report.linter.top_repeated_ngrams) ? cp.audit_report.linter.top_repeated_ngrams : [],
+              };
             }
           }
           if (cp.rewrite_loops) {

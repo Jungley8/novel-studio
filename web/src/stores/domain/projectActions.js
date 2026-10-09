@@ -145,7 +145,11 @@ export function createProjectActions(state, notify, helpers, dialogs) {
           state.workbench.stateMutation = res.checkpoint.state_mutation || { inventory_delta: '', power_delta: '' };
           state.reviewResult = res.checkpoint.audit_report || null;
           if (res.checkpoint.audit_report?.linter) {
-            state.linterReport = res.checkpoint.audit_report.linter;
+            state.linterReport = {
+              ...res.checkpoint.audit_report.linter,
+              hit_banned_words: Array.isArray(res.checkpoint.audit_report.linter.hit_banned_words) ? res.checkpoint.audit_report.linter.hit_banned_words : [],
+              top_repeated_ngrams: Array.isArray(res.checkpoint.audit_report.linter.top_repeated_ngrams) ? res.checkpoint.audit_report.linter.top_repeated_ngrams : [],
+            };
           }
         }
         state.editingChapterIndex = chapterIndex;
