@@ -452,6 +452,22 @@ func (s *Server) handleProjectStateMachine(w http.ResponseWriter, r *http.Reques
 			errorResponse(w, http.StatusInternalServerError, "save project failed: "+err.Error())
 			return
 		}
+
+		protID := fmt.Sprintf("codex_%s_pro", projectID)
+		protEntry, _ := s.store.GetCodexEntry(ctx, projectID, protID)
+		if protEntry != nil {
+			protName := "主角"
+			if parts := strings.Split(prot.NameAndLevel, "("); len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
+				protName = strings.TrimSpace(parts[0])
+			}
+			protEntry.Name = protName
+			protEntry.Aliases = []string{"主角", prot.NameAndLevel}
+			protEntry.Summary = fmt.Sprintf("全书主角 | 状态: %s | 动机: %s", prot.HealthStatus, prot.CoreGoal)
+			protEntry.DetailsMarkdown = fmt.Sprintf("【主角实时档案】\n- 设定/境界：%s\n- 核心长线追求：%s\n- 随身底牌与物品：%s\n- 当前状态：%s", prot.NameAndLevel, prot.CoreGoal, prot.Inventory, prot.HealthStatus)
+			protEntry.UpdatedAt = time.Now()
+			_ = s.store.SaveCodexEntry(ctx, protEntry)
+		}
+
 		jsonResponse(w, http.StatusOK, proj.Protagonist)
 	default:
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -545,6 +561,25 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 		errorResponse(w, http.StatusInternalServerError, "save project failed: "+err.Error())
 		return
 	}
+
+	// 同步主角至设定集 (Codex)
+	protName := "主角"
+	if parts := strings.Split(proj.Protagonist.NameAndLevel, "("); len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
+		protName = strings.TrimSpace(parts[0])
+	}
+	protEntry := &domain.CodexEntry{
+		ID:              fmt.Sprintf("codex_%s_pro", projectID),
+		ProjectID:       projectID,
+		Category:        domain.CategoryCharacter,
+		Name:            protName,
+		Aliases:         []string{"主角", proj.Protagonist.NameAndLevel},
+		Summary:         fmt.Sprintf("全书主角 | 初始境界: %s | 核心长线动机: %s", initialRealm, fw.ThemePremise),
+		DetailsMarkdown: fmt.Sprintf("【全书核心主角档案】\n- 初始境界：%s\n- 核心终极目标：%s\n- 随身底牌与物品：%s\n- 当前状态：%s", initialRealm, proj.Protagonist.CoreGoal, proj.Protagonist.Inventory, proj.Protagonist.HealthStatus),
+		TrackingMode:    domain.TrackingModeAutoMention,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+	_ = s.store.SaveCodexEntry(r.Context(), protEntry)
 
 	// 同步势力阵营至设定集
 	for _, fac := range fw.Factions {

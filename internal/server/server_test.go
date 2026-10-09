@@ -805,3 +805,123 @@ func TestServer_SuggestConflict(t *testing.T) {
 		t.Errorf("expected %q, got %q", expected, coreConflict)
 	}
 }
+
+func TestServer_Bootstrap_ProtagonistCodexAndRelations(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	cfgPath := filepath.Join(tmpDir, "cfg.json")
+	s, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+
+	callCount := 0
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		callCount++
+		var content string
+		switch callCount {
+		case 1:
+			// BootstrapFramework response
+			content = `{
+				"theme_premise": "凡人弑神",
+				"world_axioms": ["神明寄生天道"],
+				"power_ladder": [{"tier": 1, "realm": "凡胎境", "bottleneck": "无灵根", "drawback": "寿元损耗"}],
+				"factions": [{"name": "青云宗", "alignment": "伪善中立", "doctrine": "血祭凡人", "threat_level": "极高"}],
+				"key_characters": [{"name": "陆无涯", "role": "宗主", "realm": "化神境", "goal": "飞升成神", "fate_arc": "被主角手刃"}],
+				"volume_arcs": [{"volume_index": 1, "title": "青云血祭", "core_goal": "逃离血祭", "climax": "斩杀执事", "estimated_chapters": 30}],
+				"seed_hooks": [{"title": "残破铜镜", "details": "古物线索", "created_chapter": 1, "target_chapter": 10}]
+			}`
+		case 2:
+			// ExtractCodexRelations response
+			content = `[
+				{
+					"source_name": "主角",
+					"target_name": "青云宗",
+					"relation_type": "OPPOSES",
+					"description": "隐忍对抗血祭秩序"
+				}
+			]`
+		default:
+			// SuggestChapterConflict response
+			content = "核心冲突：主角在血祭前夕撞破执事阴谋，必须在一炷香内藏匿残破铜镜。"
+		}
+
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]string{
+						"role":    "assistant",
+						"content": content,
+					},
+				},
+			},
+			"usage": map[string]int{"prompt_tokens": 50, "completion_tokens": 50, "total_tokens": 100},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIBase = mockServer.URL
+	cfg.APIKey = "sk-test"
+	llmClient := engine.NewHTTPLLMClient(mockServer.URL, "sk-test")
+	orch := engine.NewOrchestrator(llmClient)
+	linter := engine.NewLinter(nil)
+
+	srv, err := server.New(cfg, cfgPath, s, llmClient, orch, linter)
+	if err != nil {
+		t.Fatalf("server.New failed: %v", err)
+	}
+
+	// Call POST /api/projects/bootstrap
+	body := `{"title": "万古凡仙", "target_platform": "起点仙侠", "concept": "凡人弑神"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/bootstrap", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var createdProj domain.Project
+	if err := json.Unmarshal(w.Body.Bytes(), &createdProj); err != nil {
+		t.Fatalf("unmarshal created project failed: %v", err)
+	}
+
+	ctx := context.Background()
+	// 1. Verify that Protagonist was created as a CodexEntry!
+	entries, err := s.ListCodexEntries(ctx, createdProj.ID, "")
+	if err != nil {
+		t.Fatalf("ListCodexEntries failed: %v", err)
+	}
+	var hasProtagonist bool
+	for _, e := range entries {
+		if e.Category == domain.CategoryCharacter && (e.Name == "主角" || strings.Contains(e.Summary, "全书主角")) {
+			hasProtagonist = true
+			break
+		}
+	}
+	if !hasProtagonist {
+		t.Errorf("expected Protagonist to be auto-registered in CodexEntry, got entries: %+v", entries)
+	}
+
+	// 2. Verify that relation between Protagonist and 青云宗 was established!
+	relations, err := s.ListCodexRelations(ctx, createdProj.ID, "")
+	if err != nil {
+		t.Fatalf("ListCodexRelations failed: %v", err)
+	}
+	if len(relations) == 0 {
+		t.Errorf("expected at least 1 codex relation involving Protagonist, got 0")
+	}
+
+	// 3. Verify chapter 1 initial checkpoint was seeded with conflict
+	cp, err := s.GetCheckpoint(ctx, createdProj.ID, 1)
+	if err != nil {
+		t.Fatalf("GetCheckpoint failed: %v", err)
+	}
+	if cp == nil || cp.CoreConflict == "" {
+		t.Errorf("expected seeded checkpoint for chapter 1, got %+v", cp)
+	}
+}
+

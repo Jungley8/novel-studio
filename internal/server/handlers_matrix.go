@@ -67,6 +67,32 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 
+		// 同步主角至设定集 (Codex)
+		initialRealm := "初入门槛"
+		if len(fw.PowerLadder) > 0 && fw.PowerLadder[0].Realm != "" {
+			initialRealm = fw.PowerLadder[0].Realm
+		}
+		if p.Protagonist.NameAndLevel == "" {
+			p.Protagonist.NameAndLevel = fmt.Sprintf("主角 (%s)", initialRealm)
+		}
+		protName := "主角"
+		if parts := strings.Split(p.Protagonist.NameAndLevel, "("); len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
+			protName = strings.TrimSpace(parts[0])
+		}
+		protEntry := &domain.CodexEntry{
+			ID:              fmt.Sprintf("codex_%s_pro", projectID),
+			ProjectID:       projectID,
+			Category:        domain.CategoryCharacter,
+			Name:            protName,
+			Aliases:         []string{"主角", p.Protagonist.NameAndLevel},
+			Summary:         fmt.Sprintf("全书主角 | 初始境界: %s | 核心长线动机: %s", initialRealm, fw.ThemePremise),
+			DetailsMarkdown: fmt.Sprintf("【全书核心主角档案】\n- 初始境界：%s\n- 核心终极目标：%s\n- 随身底牌与物品：%s\n- 当前状态：%s", initialRealm, p.Protagonist.CoreGoal, p.Protagonist.Inventory, p.Protagonist.HealthStatus),
+			TrackingMode:    domain.TrackingModeAutoMention,
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
+		}
+		_ = s.store.SaveCodexEntry(ctx, protEntry)
+
 		// 同步势力阵营至设定集 (Codex)
 		for _, fac := range fw.Factions {
 			if strings.TrimSpace(fac.Name) == "" {
