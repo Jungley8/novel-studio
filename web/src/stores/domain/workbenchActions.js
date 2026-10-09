@@ -58,6 +58,7 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
       state.activeStep = 1;
       const nextIdx = state.chapters.length + 1;
       await this.suggestChapterConflict(nextIdx);
+      await this.runAutonomousPipeline();
     },
 
     async runAutonomousPipeline() {

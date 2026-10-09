@@ -176,7 +176,9 @@
             <textarea 
               v-model="state.workbench.coreConflict"
               rows="3" 
+              :disabled="state.pipelineState.active || state.isSuggestingConflict"
               class="w-full bg-atelier-950 border border-atelier-750 rounded-lg p-2.5 text-xs text-ink-100 placeholder-ink-500 resize-none focus-ring font-sans leading-relaxed"
+              :class="{ 'opacity-60 cursor-not-allowed': state.pipelineState.active || state.isSuggestingConflict }"
               placeholder="例如：主角在拍卖会上洞悉残破丹炉藏有神念，引诱宿敌抬价反遭反噬..."></textarea>
           </div>
 
@@ -828,9 +830,33 @@
             </div>
           </div>
 
+          <!-- 全自动流水线运行中 沉浸式动态看板 -->
+          <div 
+            v-if="state.pipelineState.active"
+            class="mb-4 p-4 rounded-xl bg-atelier-950/95 border border-brand-amber/60 shadow-amber-glow/20 space-y-2.5 shrink-0 animate-subtle-pulse">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <Loader2 class="w-4 h-4 text-brand-amber animate-spin" />
+                <span class="text-xs font-bold text-brand-amber tracking-wide">
+                  全自动流水线执行中 · 阶段: {{ state.pipelineState.phase || 'RUNNING' }}
+                </span>
+              </div>
+              <span v-if="state.pipelineState.tokens?.total_tokens" class="text-xs font-mono font-bold px-2 py-0.5 rounded bg-brand-amber/15 text-brand-amber border border-brand-amber/30">
+                已消耗 {{ state.pipelineState.tokens.total_tokens }} Tokens
+              </span>
+            </div>
+            <div class="w-full bg-atelier-800 h-1.5 rounded-full overflow-hidden relative">
+              <div class="h-full bg-gradient-to-r from-brand-amber to-amber-400 animate-pulse rounded-full w-full"></div>
+            </div>
+            <div class="flex items-center justify-between text-[11px] text-ink-300">
+              <span class="font-medium text-ink-100">{{ state.pipelineState.message || '正在全力推演正文流水线，请稍候...' }}</span>
+              <span class="text-ink-400 font-mono">画布已锁定输入</span>
+            </div>
+          </div>
+
           <!-- 正文初稿渲染中 动态动效横幅 (Generating Overlay Banner) -->
           <div 
-            v-if="state.isRenderingScene"
+            v-if="state.isRenderingScene && !state.pipelineState.active"
             class="mb-4 p-4 rounded-xl bg-atelier-950/95 border border-brand-amber/50 shadow-amber-glow/20 space-y-2.5 shrink-0 animate-subtle-pulse">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
@@ -854,7 +880,7 @@
 
           <!-- 定向返工精修中 动态动效横幅 -->
           <div 
-            v-if="state.isRewriting"
+            v-if="state.isRewriting && !state.pipelineState.active"
             class="mb-4 p-4 rounded-xl bg-atelier-950/95 border border-brand-amber/50 space-y-2.5 shrink-0 animate-subtle-pulse">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
@@ -877,10 +903,10 @@
             id="prose-textarea"
             v-model="state.workbench.content"
             @input="handleProseInput"
-            :disabled="state.isRenderingScene || state.isRewriting"
+            :disabled="state.isRenderingScene || state.isRewriting || state.pipelineState.active"
             class="flex-1 w-full bg-transparent text-ink-100 text-base md:text-[17px] leading-[2.1] font-serif resize-none focus:outline-none placeholder-ink-500 selection:bg-brand-amber/30 selection:text-ink-50 tracking-wide prose-canvas"
-            :class="{ 'opacity-60 cursor-wait': state.isRenderingScene || state.isRewriting }"
-            :placeholder="state.isRenderingScene ? '正文起草中，预计需要 10 ~ 30 秒，请稍候……' : '在此起草正文，可直接写作或由 AI 起草。'"></textarea>
+            :class="{ 'opacity-60 cursor-wait': state.isRenderingScene || state.isRewriting || state.pipelineState.active }"
+            :placeholder="state.pipelineState.active ? '全自动流水线执行中，正文输入已锁定以防止竞态覆盖……' : (state.isRenderingScene ? '正文起草中，预计需要 10 ~ 30 秒，请稍候……' : '在此起草正文，可直接写作或由 AI 起草。')"></textarea>
         </div>
       </div>
     </div>
