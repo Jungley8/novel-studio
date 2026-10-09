@@ -158,3 +158,48 @@ func TestLinter_DetectTelegraphicFragmentation(t *testing.T) {
 		t.Errorf("normal prose should not be flagged as telegraphic fragmentation")
 	}
 }
+
+func TestLinter_ScanEmpiricalAITells(t *testing.T) {
+	empiricalText := `真正的胜利不是战胜强敌，而是超越自我。
+核心是：必须保住灵根。
+他在宗门内采集、分拣、炼制、封存了数百瓶灵丹。
+这柄飞剑犹如一位智慧的导师，指引着他的前路。`
+
+	tells := engine.ScanEmpiricalAITells(empiricalText)
+	if len(tells) == 0 {
+		t.Fatalf("expected empirical tells to be detected, got 0")
+	}
+
+	hasContrarian := false
+	hasColonPrompt := false
+	hasDunhao := false
+	hasAnthro := false
+
+	for _, tell := range tells {
+		if strings.Contains(tell, "翻案腔") {
+			hasContrarian = true
+		}
+		if strings.Contains(tell, "提示语冒号") {
+			hasColonPrompt = true
+		}
+		if strings.Contains(tell, "顿号") {
+			hasDunhao = true
+		}
+		if strings.Contains(tell, "拟人喻体") {
+			hasAnthro = true
+		}
+	}
+
+	if !hasContrarian {
+		t.Errorf("expected '翻案腔' tell, got: %v", tells)
+	}
+	if !hasColonPrompt {
+		t.Errorf("expected '提示语冒号' tell, got: %v", tells)
+	}
+	if !hasDunhao {
+		t.Errorf("expected '顿号密集' tell, got: %v", tells)
+	}
+	if !hasAnthro {
+		t.Errorf("expected '拟人喻体' tell, got: %v", tells)
+	}
+}

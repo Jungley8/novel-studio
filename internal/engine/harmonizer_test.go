@@ -86,3 +86,34 @@ func TestHarmonizer_FullProcess(t *testing.T) {
 		t.Errorf("expected suggested touches in report")
 	}
 }
+
+func TestHarmonizer_DeterministicSanitize(t *testing.T) {
+	h := NewHarmonizer()
+
+	rawText := "说白了，核心是：先斩断退路。当黑夜笼罩荒原时，顾渊看到了曙光——那是剑气长芒。对于寻常修士而言，此地乃是绝地。阵法轰鸣。这意味着决战已至。"
+	sanitized, items := h.DeterministicSanitize(rawText)
+
+	if len(items) == 0 {
+		t.Fatalf("expected deterministic sanitized items, got 0")
+	}
+
+	// Verify patterns were scrubbed
+	if strings.Contains(sanitized, "说白了") {
+		t.Errorf("expected '说白了' to be removed")
+	}
+	if strings.Contains(sanitized, "核心是：") {
+		t.Errorf("expected '核心是：' to be removed")
+	}
+	if strings.Contains(sanitized, "当黑夜笼罩荒原时，") {
+		t.Errorf("expected '当...时，' clause to be unwrapped")
+	}
+	if strings.Contains(sanitized, "——") {
+		t.Errorf("expected dramatic dash to be normalized")
+	}
+	if strings.Contains(sanitized, "对于寻常修士而言，") {
+		t.Errorf("expected '对于...而言，' to be unwrapped")
+	}
+	if strings.Contains(sanitized, "这意味着") {
+		t.Errorf("expected '这意味着' to be removed")
+	}
+}

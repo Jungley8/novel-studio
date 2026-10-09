@@ -775,3 +775,28 @@ func (s *Server) handleSuggestHumanTouches(w http.ResponseWriter, r *http.Reques
 		"suggestions": suggestions,
 	})
 }
+
+func (s *Server) handleSanitizeAI(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if s.workshop == nil || s.workshop.Harmonizer() == nil {
+		errorResponse(w, http.StatusInternalServerError, "harmonizer not configured")
+		return
+	}
+	harmonizer := s.workshop.Harmonizer()
+	sanitized, items := harmonizer.DeterministicSanitize(req.Content)
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"sanitized_content": sanitized,
+		"items":             items,
+		"items_count":       len(items),
+	})
+}

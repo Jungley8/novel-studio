@@ -151,6 +151,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 		s.handleProjectHarmonize(w, r, projectID)
 	case "suggest-human-touches":
 		s.handleSuggestHumanTouches(w, r, projectID)
+	case "sanitize-ai":
+		s.handleSanitizeAI(w, r, projectID)
 	default:
 		errorResponse(w, http.StatusNotFound, "not found")
 	}

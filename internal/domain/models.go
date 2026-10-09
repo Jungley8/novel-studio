@@ -274,6 +274,7 @@ type LinterResult struct {
 	ParagraphVariance  int      `json:"paragraph_variance"`
 	TopRepeatedNgrams  []string `json:"top_repeated_ngrams,omitempty"`
 	ExclamationDensity float64  `json:"exclamation_density"`
+	EmpiricalTells     []string `json:"empirical_tells"`
 	Passed             bool     `json:"passed"`
 	Message            string   `json:"message"`
 }

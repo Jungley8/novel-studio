@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -83,6 +84,7 @@ func (l *Linter) Analyze(text string) domain.LinterResult {
 			ParagraphVariance:  0,
 			TopRepeatedNgrams:  []string{},
 			ExclamationDensity: 0,
+			EmpiricalTells:     []string{},
 			Passed:             false,
 			Message:            "文本为空",
 		}
@@ -108,6 +110,12 @@ func (l *Linter) Analyze(text string) domain.LinterResult {
 	simileCount := CountSimileClichés(text)
 	if simileCount >= 3 {
 		hits = append(hits, fmt.Sprintf("书面比喻泛滥(命中%d处公式化比喻)", simileCount))
+	}
+
+	// 2.8 Scan empirical AI writing tells (翻案腔, 密集顿号, 提示语冒号, 翻译腔壳子等)
+	empiricalTells := ScanEmpiricalAITells(text)
+	for _, tell := range empiricalTells {
+		hits = append(hits, tell)
 	}
 
 	// 3. Compute Burstiness (sentence length standard deviation)
@@ -168,6 +176,7 @@ func (l *Linter) Analyze(text string) domain.LinterResult {
 		ParagraphVariance:  paraVariance,
 		TopRepeatedNgrams:  topNgrams,
 		ExclamationDensity: exclDensity,
+		EmpiricalTells:     empiricalTells,
 		Passed:             passed,
 		Message:            msg,
 	}
@@ -465,4 +474,82 @@ func DetectTelegraphicFragmentation(text string) (bool, string) {
 	}
 
 	return false, ""
+}
+
+// ScanEmpiricalAITells scans for the high-confidence empirical AI writing tells identified in empirical writing studies.
+func ScanEmpiricalAITells(text string) []string {
+	var tells []string
+
+	// 1. 翻案腔 (Contrarian False Dilemmas): 不是...而是..., 看似...实则..., 与其说...不如说...
+	contrarianRegexes := []*regexp.Regexp{
+		regexp.MustCompile(`(不是|并非)[^\n。！？]{1,25}而是`),
+		regexp.MustCompile(`看似[^\n。！？]{1,25}(实则|其实)`),
+		regexp.MustCompile(`与其说[^\n。！？]{1,25}不如说`),
+		regexp.MustCompile(`表面[^\n。！？]{1,25}(实际|实则)`),
+		regexp.MustCompile(`你以为[^\n。！？]{1,25}其实`),
+		regexp.MustCompile(`不在于[^\n。！？]{1,25}而在于`),
+	}
+	for _, re := range contrarianRegexes {
+		if m := re.FindString(text); m != "" {
+			tells = append(tells, fmt.Sprintf("翻案腔虚立假靶子(%s)", m))
+		}
+	}
+
+	// 2. 密集顿号罗列 (Dense Dunhao in single clause)
+	clauses := strings.FieldsFunc(text, func(r rune) bool {
+		return r == '，' || r == '。' || r == '！' || r == '？' || r == '；' || r == '\n' || r == ',' || r == '.' || r == ';'
+	})
+	denseDunhaoCount := 0
+	for _, c := range clauses {
+		dh := strings.Count(c, "、")
+		if dh >= 3 {
+			denseDunhaoCount++
+		}
+	}
+	if denseDunhaoCount > 0 {
+		tells = append(tells, fmt.Sprintf("单句密集顿号罗列清单(%d处并列超标)", denseDunhaoCount))
+	}
+
+	// 3. 提示语+冒号空转
+	colonPromptRe := regexp.MustCompile(`(一句话总结|核心是|关键在于|原因如下|结论是|本质上|换句话说)[：:]`)
+	if m := colonPromptRe.FindString(text); m != "" {
+		tells = append(tells, fmt.Sprintf("提示语冒号空转句(%s)", m))
+	}
+
+	// 4. 机械时间从句壳子 (当...时，)
+	whenRe := regexp.MustCompile(`当[^\n，。！？]{2,25}时，`)
+	whenMatches := whenRe.FindAllString(text, -1)
+	if len(whenMatches) >= 2 {
+		tells = append(tells, fmt.Sprintf("机械时间从句壳子'当...时'(命中%d处)", len(whenMatches)))
+	}
+
+	// 5. 前置话题壳 (对于...来说/而言，)
+	topicRe := regexp.MustCompile(`(对于|就|关于)[^\n，。！？]{2,20}(来说|而言)，`)
+	topicMatches := topicRe.FindAllString(text, -1)
+	if len(topicMatches) >= 2 {
+		tells = append(tells, fmt.Sprintf("前置话题壳'对于...而言'(命中%d处)", len(topicMatches)))
+	}
+
+	// 6. 揭晓式破折号 (——)
+	dashCount := strings.Count(text, "——")
+	if dashCount >= 2 {
+		tells = append(tells, fmt.Sprintf("揭晓式破折号停顿滥用(%d处)", dashCount))
+	}
+
+	// 7. 机械复述提示词 (这意味着/这表明)
+	repeatPromptRe := regexp.MustCompile(`[。；]\s*(这意味着|这表明|这说明)[，,]?`)
+	if m := repeatPromptRe.FindString(text); m != "" {
+		tells = append(tells, "机械复述句提示词(这意味着/这表明)")
+	}
+
+	// 8. 理想化职业拟人喻体
+	anthroRe := regexp.MustCompile(`(像|宛如|犹如|相当于)(一位|一个)(智慧的|全能的|不知疲倦的|沉默的)?(导师|管家|秘书|助手|顾问|审查员)`)
+	if m := anthroRe.FindString(text); m != "" {
+		tells = append(tells, fmt.Sprintf("理想化工具职业拟人喻体(%s)", m))
+	}
+
+	if tells == nil {
+		tells = []string{}
+	}
+	return tells
 }

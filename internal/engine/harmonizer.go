@@ -2,6 +2,7 @@ package engine
 
 import (
 	"math/rand"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -11,7 +12,7 @@ import (
 type HarmonizedItem struct {
 	Original    string `json:"original"`
 	Replacement string `json:"replacement"`
-	Category    string `json:"category"` // "GORE" | "VULGAR" | "SENSITIVE"
+	Category    string `json:"category"` // "GORE" | "VULGAR" | "SENSITIVE" | "SYNTAX_AI_TELL"
 }
 
 // HumanTouchSuggestion provides actionable advice for human-in-the-loop imperfection injection.
@@ -218,18 +219,134 @@ func (h *Harmonizer) SuggestHumanTouches(text string) []HumanTouchSuggestion {
 	return suggestions
 }
 
-// FullProcess runs both censor harmonization and adversarial perturbation, returning a comprehensive report.
+// Precompiled deterministic AI syntax tells patterns
+var (
+	reColonPrompt  = regexp.MustCompile(`(一句话总结|核心是|关键在于|原因如下|结论是|本质上|换句话说)[：:]\s*`)
+	reWhenClause   = regexp.MustCompile(`当([^\n，。！？]{2,30})时，`)
+	reTopicShell   = regexp.MustCompile(`(对于|就|关于)([^，。！？\n]{2,20})(来说|而言)，`)
+	reThisMeans    = regexp.MustCompile(`([。；])\s*(这意味着|这表明|这说明|换句话说)[，,]?\s*`)
+	reStarter      = regexp.MustCompile(`(说白了|说穿了|先说结论)[，,]?\s*`)
+	reDramaticDash = regexp.MustCompile(`([^\n—]{2,})——([^\n，。！？]{2,})`)
+)
+
+// DeterministicSanitize applies instant zero-token AST & regex syntax cleansing for mechanical AI writing tells.
+func (h *Harmonizer) DeterministicSanitize(text string) (string, []HarmonizedItem) {
+	if strings.TrimSpace(text) == "" {
+		return text, []HarmonizedItem{}
+	}
+
+	var items []HarmonizedItem
+	result := text
+
+	// 1. 提示语冒号消除: (一句话总结|核心是|关键在于|原因如下|结论是|本质上|换句话说)[：:] -> 剥离
+	if matches := reColonPrompt.FindAllString(result, -1); len(matches) > 0 {
+		for _, m := range matches {
+			items = append(items, HarmonizedItem{
+				Original:    m,
+				Replacement: "(已剔除空转提示语)",
+				Category:    "SYNTAX_AI_TELL",
+			})
+		}
+		result = reColonPrompt.ReplaceAllString(result, "")
+	}
+
+	// 2. "当……时，" 机械时间从句壳子消除 -> "……，"
+	if matches := reWhenClause.FindAllStringSubmatch(result, -1); len(matches) > 0 {
+		for _, m := range matches {
+			orig := m[0]
+			repl := m[1] + "，"
+			items = append(items, HarmonizedItem{
+				Original:    orig,
+				Replacement: repl,
+				Category:    "SYNTAX_AI_TELL",
+			})
+		}
+		result = reWhenClause.ReplaceAllString(result, "$1，")
+	}
+
+	// 3. 前置话题壳消除: (对于|就|关于)([^，。！？\n]{2,20})(来说|而言)， -> "$2，"
+	if matches := reTopicShell.FindAllStringSubmatch(result, -1); len(matches) > 0 {
+		for _, m := range matches {
+			orig := m[0]
+			repl := m[2] + "，"
+			items = append(items, HarmonizedItem{
+				Original:    orig,
+				Replacement: repl,
+				Category:    "SYNTAX_AI_TELL",
+			})
+		}
+		result = reTopicShell.ReplaceAllString(result, "$2，")
+	}
+
+	// 4. "这意味着/这表明" 机械复述引导词消除
+	if matches := reThisMeans.FindAllStringSubmatch(result, -1); len(matches) > 0 {
+		for _, m := range matches {
+			orig := m[0]
+			repl := "，"
+			items = append(items, HarmonizedItem{
+				Original:    orig,
+				Replacement: repl,
+				Category:    "SYNTAX_AI_TELL",
+			})
+		}
+		result = reThisMeans.ReplaceAllString(result, "，")
+	}
+
+	// 5. 禁用起手式消除: (说白了|说穿了|先说结论)[，,]?
+	if matches := reStarter.FindAllString(result, -1); len(matches) > 0 {
+		for _, m := range matches {
+			items = append(items, HarmonizedItem{
+				Original:    m,
+				Replacement: "(已剔除起手式)",
+				Category:    "SYNTAX_AI_TELL",
+			})
+		}
+		result = reStarter.ReplaceAllString(result, "")
+	}
+
+	// 6. 揭晓式破折号消除: "……——……" 替换为自然逗号
+	if matches := reDramaticDash.FindAllStringSubmatch(result, -1); len(matches) > 0 {
+		for _, m := range matches {
+			orig := m[0]
+			repl := m[1] + "，" + m[2]
+			items = append(items, HarmonizedItem{
+				Original:    orig,
+				Replacement: repl,
+				Category:    "SYNTAX_AI_TELL",
+			})
+		}
+		result = reDramaticDash.ReplaceAllString(result, "$1，$2")
+	}
+
+	if items == nil {
+		items = []HarmonizedItem{}
+	}
+	return result, items
+}
+
+// FullProcess runs censor harmonization, deterministic AI syntax sanitize, and adversarial perturbation.
 func (h *Harmonizer) FullProcess(text string, perturbIntensity float64) (string, HarmonizeReport) {
 	origRunes := len([]rune(text))
 
 	// 1. Censor Harmonization (Safety & Compliance)
 	harmonizedText, items := h.HarmonizeSensitiveWords(text)
 
-	// 2. Adversarial Perturbation (Anti-AI Likelihood Jitter)
-	finalText := h.Perturb(harmonizedText, perturbIntensity)
+	// 2. Deterministic AI Syntax Cleansing (Zero-token AI tells stripping)
+	sanitizedText, syntaxItems := h.DeterministicSanitize(harmonizedText)
+	items = append(items, syntaxItems...)
 
-	// 3. Suggest Human Touches (Human-in-the-loop assistance)
+	// 3. Adversarial Perturbation (Anti-AI Likelihood Jitter)
+	finalText := h.Perturb(sanitizedText, perturbIntensity)
+
+	// 4. Suggest Human Touches (Human-in-the-loop assistance)
 	suggestions := h.SuggestHumanTouches(finalText)
+
+	if items == nil {
+		items = []HarmonizedItem{}
+	}
+	if suggestions == nil {
+		suggestions = []HumanTouchSuggestion{}
+	}
 
 	return finalText, HarmonizeReport{
 		HarmonizedItems:    items,
