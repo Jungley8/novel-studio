@@ -662,12 +662,12 @@ func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, cha
 	phase := domain.CheckpointPhaseDrafted
 	var auditReport *domain.AuditReport
 	if c.Review != nil {
-		phase = domain.CheckpointPhaseAudited
+		phase = domain.CheckpointPhaseDrafted
 		auditReport = &domain.AuditReport{
-			Verdict:         c.Review.Verdict,
+			Verdict:         domain.ReviewVerdictRevision,
 			Score:           c.Review.Score,
 			BurstinessScore: c.BurstinessScore,
-			Issues:          c.Review.Issues,
+			Issues:          append([]string{"已从正史撤回为在途草稿，需重新审校与针对性精修"}, c.Review.Issues...),
 			Suggestions:     c.Review.Suggestions,
 			ResolvedHookIDs: c.Review.ResolvedHookIDs,
 			ReviewedAt:      c.Review.ReviewedAt,

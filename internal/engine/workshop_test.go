@@ -199,6 +199,22 @@ func TestChapterWorkshop_ResumeCheckpoint(t *testing.T) {
 	if resFresh.Content != "新草稿内容" {
 		t.Errorf("expected fresh content '新草稿内容', got %s", resFresh.Content)
 	}
+
+	// Test C: When user provides explicit InitialDraft, it MUST override checkpoint's stale text
+	mockStoreWithCP.cp = savedCheckpoint
+	reqUserDraft := WorkshopProduceRequest{
+		ProjectID:        "p-cp",
+		ChapterIndex:     2,
+		ResumeCheckpoint: true,
+		InitialDraft:     "这是用户在工坊中手动精修修改的最新稿子，必须以此为准。",
+	}
+	resUserDraft, err := workshop.ProduceChapter(context.Background(), reqUserDraft)
+	if err != nil {
+		t.Fatalf("ProduceChapter with user initial draft failed: %v", err)
+	}
+	if resUserDraft.Content != "这是用户在工坊中手动精修修改的最新稿子，必须以此为准。" {
+		t.Errorf("expected user draft to override checkpoint, got: %s", resUserDraft.Content)
+	}
 }
 
 type mockCheckpointWorkshopStore struct {

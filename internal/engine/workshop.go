@@ -43,21 +43,22 @@ type ProgressCallback func(event WorkshopEvent)
 
 // WorkshopProduceRequest defines parameters for autonomous chapter production.
 type WorkshopProduceRequest struct {
-	ProjectID        string           `json:"project_id"`
-	ChapterIndex     int              `json:"chapter_index"`
-	CoreConflict     string           `json:"core_conflict"`
-	InitialDraft     string           `json:"initial_draft,omitempty"`
-	ReasoningModel   string           `json:"reasoning_model,omitempty"`
-	WriterModel      string           `json:"writer_model,omitempty"`
-	ReviewerModel    string           `json:"reviewer_model,omitempty"`
-	WordsTarget      int              `json:"words_target,omitempty"`
-	NarrativeStyle   string           `json:"narrative_style,omitempty"`
-	AutoCommit       bool             `json:"auto_commit,omitempty"`
-	MaxRewriteLoops  int              `json:"max_rewrite_loops,omitempty"`
-	ResumeCheckpoint bool             `json:"resume_checkpoint,omitempty"`
-	EnableHarmonize  bool             `json:"enable_harmonize,omitempty"`
-	PerturbIntensity float64          `json:"perturb_intensity,omitempty"`
-	OnProgress       ProgressCallback `json:"-"`
+	ProjectID        string             `json:"project_id"`
+	ChapterIndex     int                `json:"chapter_index"`
+	CoreConflict     string             `json:"core_conflict"`
+	Beats            []domain.SceneBeat `json:"beats,omitempty"`
+	InitialDraft     string             `json:"initial_draft,omitempty"`
+	ReasoningModel   string             `json:"reasoning_model,omitempty"`
+	WriterModel      string             `json:"writer_model,omitempty"`
+	ReviewerModel    string             `json:"reviewer_model,omitempty"`
+	WordsTarget      int                `json:"words_target,omitempty"`
+	NarrativeStyle   string             `json:"narrative_style,omitempty"`
+	AutoCommit       bool               `json:"auto_commit,omitempty"`
+	MaxRewriteLoops  int                `json:"max_rewrite_loops,omitempty"`
+	ResumeCheckpoint bool               `json:"resume_checkpoint,omitempty"`
+	EnableHarmonize  bool               `json:"enable_harmonize,omitempty"`
+	PerturbIntensity float64            `json:"perturb_intensity,omitempty"`
+	OnProgress       ProgressCallback   `json:"-"`
 }
 
 // WorkshopProduceResult represents the end-to-end outcome of a chapter workshop run.
@@ -183,6 +184,27 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		_ = w.store.ClearCheckpoint(ctx, req.ProjectID, req.ChapterIndex)
 	}
 
+	// Override beats from request if explicitly provided and not recovered from checkpoint
+	if beatsOut == nil && len(req.Beats) > 0 {
+		beatsOut = &DeriveBeatsOutput{
+			Beats: req.Beats,
+		}
+	}
+
+	// Caller/UI explicit draft ALWAYS takes precedence over checkpoint!
+	if strings.TrimSpace(req.InitialDraft) != "" {
+		draftText = strings.TrimSpace(req.InitialDraft)
+		// Explicit draft submitted by caller requires fresh quality audit & rewrite loop budget
+		auditReport = nil
+		rewriteLoops = 0
+		emit(WorkshopEvent{
+			Phase:       PhaseDrafted,
+			Message:     fmt.Sprintf("已载入最新手稿草稿 (共 %d 字)，将在当前手稿基础上执行质检与闭环推演", len([]rune(draftText))),
+			DraftText:   draftText,
+			TotalTokens: totalUsage.TotalTokens,
+		})
+	}
+
 	// 1. Synthesize Canon Horizon
 	horizon, err := w.chronicle.AssembleHorizon(ctx, req.ProjectID, req.ChapterIndex)
 	if err != nil {
@@ -193,7 +215,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	}
 	emit(WorkshopEvent{Phase: PhaseHorizon, Message: "正史视界组装完成 (3章密封正史与开放伏笔已就绪)"})
 
-	// 2. Derive Scene Beats (Skip if recovered from checkpoint)
+	// 2. Derive Scene Beats (Skip if recovered from checkpoint or provided in request)
 	if beatsOut == nil {
 		bOut, bErr := w.orch.DeriveBeatsWithHorizon(ctx, req.ReasoningModel, horizon, req.CoreConflict)
 		if bErr != nil {
@@ -219,24 +241,15 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		})
 	}
 
-	// 3. Render Literary Scene Draft (Skip if recovered from checkpoint or initial draft provided)
+	// 3. Render Literary Scene Draft (Skip if already recovered from checkpoint or explicit draft provided)
 	if draftText == "" {
-		if strings.TrimSpace(req.InitialDraft) != "" {
-			draftText = strings.TrimSpace(req.InitialDraft)
-			emit(WorkshopEvent{
-				Phase:       PhaseDrafted,
-				Message:     fmt.Sprintf("已载入前版手稿草稿 (共 %d 字)，将在前版基础上执行质检与针对性返工", len([]rune(draftText))),
-				DraftText:   draftText,
-				TotalTokens: totalUsage.TotalTokens,
-			})
-		} else {
-			emit(WorkshopEvent{Phase: PhaseRendering, Message: "正在进行文学高张力渲染..."})
-			rendered, usage, rErr := w.orch.RenderSceneWithHorizon(ctx, req.WriterModel, horizon, beatsOut.Beats, req.WordsTarget)
-			if rErr != nil {
-				return nil, fmt.Errorf("render scene draft failed: %w", rErr)
-			}
-			draftText = rendered
-			addUsage(usage)
+		emit(WorkshopEvent{Phase: PhaseRendering, Message: "正在进行文学高张力渲染..."})
+		rendered, usage, rErr := w.orch.RenderSceneWithHorizon(ctx, req.WriterModel, horizon, beatsOut.Beats, req.WordsTarget)
+		if rErr != nil {
+			return nil, fmt.Errorf("render scene draft failed: %w", rErr)
+		}
+		draftText = rendered
+		addUsage(usage)
 
 			// Optional: Apply Censor Harmonization & Adversarial Perturbation
 			if req.EnableHarmonize || req.PerturbIntensity > 0 {
@@ -270,7 +283,6 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 				DraftText:   draftText,
 				TotalTokens: totalUsage.TotalTokens,
 			})
-		}
 	}
 
 	// 4. Audit via Quality Gate (with plot hooks resolution awareness)

@@ -822,8 +822,14 @@ func TestSQLiteStore_UncommitChapter(t *testing.T) {
 	if len(cp.Beats) != 2 {
 		t.Errorf("expected 2 beats in checkpoint, got %d", len(cp.Beats))
 	}
+	if cp.Phase != domain.CheckpointPhaseDrafted {
+		t.Errorf("expected checkpoint phase %s, got %s", domain.CheckpointPhaseDrafted, cp.Phase)
+	}
 	if cp.AuditReport == nil || cp.AuditReport.Score != 88 {
 		t.Errorf("expected audit score 88, got %+v", cp.AuditReport)
+	}
+	if cp.AuditReport.Verdict != domain.ReviewVerdictRevision {
+		t.Errorf("expected verdict REVISION_NEEDED for uncommitted draft, got %s", cp.AuditReport.Verdict)
 	}
 
 	// Check chapter was deleted from canon chapters table
