@@ -43,5 +43,23 @@ export function createMatrixActions(state, notify, helpers, dialogs) {
         console.error('load analytics error:', e);
       }
     },
+
+    async generateMatrixScenes(payload) {
+      if (!state.currentProject) return;
+      state.isLoading = true;
+      try {
+        const scenes = await api.generateMatrixScenes(state.currentProject.id, payload);
+        if (helpers && helpers.loadMatrixOverview) {
+          await helpers.loadMatrixOverview();
+        } else {
+          await this.loadMatrixOverview();
+        }
+        notify('大纲场次拆解完成', `已智能规划 ${scenes.length} 个戏剧场次`, 'success');
+      } catch (e) {
+        notify('AI 拆解大纲失败', e.message, 'error');
+      } finally {
+        state.isLoading = false;
+      }
+    },
   };
 }

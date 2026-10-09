@@ -25,31 +25,49 @@ func ExtractAndCleanJSON(raw string) (string, error) {
 		}
 	}
 
-	// 2. Try balanced brace extraction for objects { ... }
-	if candidate := extractBalanced(trimmed, '{', '}'); candidate != "" {
-		if valid := attemptValidateAndSanitize(candidate); valid != "" {
-			return valid, nil
-		}
-	}
-
-	// 3. Try balanced bracket extraction for arrays [ ... ]
-	if candidate := extractBalanced(trimmed, '[', ']'); candidate != "" {
-		if valid := attemptValidateAndSanitize(candidate); valid != "" {
-			return valid, nil
-		}
-	}
-
-	// 4. Fallback: slice from first { to last }
 	firstBrace := strings.Index(trimmed, "{")
-	lastBrace := strings.LastIndex(trimmed, "}")
-	if firstBrace != -1 && lastBrace > firstBrace {
-		candidate := trimmed[firstBrace : lastBrace+1]
-		if valid := attemptValidateAndSanitize(candidate); valid != "" {
-			return valid, nil
+	firstBracket := strings.Index(trimmed, "[")
+
+	// If bracket appears before brace, prioritize array extraction
+	if firstBracket != -1 && (firstBrace == -1 || firstBracket < firstBrace) {
+		if candidate := extractBalanced(trimmed, '[', ']'); candidate != "" {
+			if valid := attemptValidateAndSanitize(candidate); valid != "" {
+				return valid, nil
+			}
+		}
+		if candidate := extractBalanced(trimmed, '{', '}'); candidate != "" {
+			if valid := attemptValidateAndSanitize(candidate); valid != "" {
+				return valid, nil
+			}
+		}
+		lastBracket := strings.LastIndex(trimmed, "]")
+		if lastBracket != -1 && lastBracket > firstBracket {
+			candidate := trimmed[firstBracket : lastBracket+1]
+			if valid := attemptValidateAndSanitize(candidate); valid != "" {
+				return valid, nil
+			}
+		}
+	} else {
+		if candidate := extractBalanced(trimmed, '{', '}'); candidate != "" {
+			if valid := attemptValidateAndSanitize(candidate); valid != "" {
+				return valid, nil
+			}
+		}
+		if candidate := extractBalanced(trimmed, '[', ']'); candidate != "" {
+			if valid := attemptValidateAndSanitize(candidate); valid != "" {
+				return valid, nil
+			}
+		}
+		lastBrace := strings.LastIndex(trimmed, "}")
+		if firstBrace != -1 && lastBrace > firstBrace {
+			candidate := trimmed[firstBrace : lastBrace+1]
+			if valid := attemptValidateAndSanitize(candidate); valid != "" {
+				return valid, nil
+			}
 		}
 	}
 
-	// 5. One last attempt on the entire trimmed string
+	// One last attempt on the entire trimmed string
 	if valid := attemptValidateAndSanitize(trimmed); valid != "" {
 		return valid, nil
 	}

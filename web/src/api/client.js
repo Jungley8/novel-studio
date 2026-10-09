@@ -54,9 +54,11 @@ export const api = {
   createHook: (projectId, data) => apiFetch(`/api/projects/${projectId}/hooks`, { method: 'POST', body: JSON.stringify(data) }),
   updateHook: (projectId, data) => apiFetch(`/api/projects/${projectId}/hooks`, { method: 'POST', body: JSON.stringify(data) }),
   deleteHook: (id) => apiFetch(`/api/hooks/${id}`, { method: 'DELETE' }),
+  extractPlotHooks: (projectId) => apiFetch(`/api/projects/${projectId}/hooks/ai-extract`, { method: 'POST' }),
 
   // The Matrix
   getMatrixOverview: (projectId) => apiFetch(`/api/projects/${projectId}/matrix`),
+  generateMatrixScenes: (projectId, data) => apiFetch(`/api/projects/${projectId}/matrix/ai-generate`, { method: 'POST', body: JSON.stringify(data) }),
   listScenes: (projectId, chapterId) => {
     const q = chapterId ? `?chapter_id=${encodeURIComponent(chapterId)}` : '';
     return apiFetch(`/api/projects/${projectId}/scenes${q}`);
@@ -76,6 +78,7 @@ export const api = {
   },
   getCodexEntry: (projectId, id) => apiFetch(`/api/projects/${projectId}/codex/${id}`),
   createCodexEntry: (projectId, data) => apiFetch(`/api/projects/${projectId}/codex`, { method: 'POST', body: JSON.stringify(data) }),
+  generateCodexEntry: (projectId, data) => apiFetch(`/api/projects/${projectId}/codex/ai-generate`, { method: 'POST', body: JSON.stringify(data) }),
   updateCodexEntry: (projectId, id, data) => apiFetch(`/api/projects/${projectId}/codex/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteCodexEntry: (projectId, id) => apiFetch(`/api/projects/${projectId}/codex/${id}`, { method: 'DELETE' }),
   createCodexProgression: (projectId, entryId, data) => apiFetch(`/api/projects/${projectId}/codex/${entryId}/progressions`, { method: 'POST', body: JSON.stringify(data) }),
@@ -85,7 +88,11 @@ export const api = {
   },
   createCodexRelation: (projectId, data) => apiFetch(`/api/projects/${projectId}/codex/relations`, { method: 'POST', body: JSON.stringify(data) }),
   deleteCodexRelation: (projectId, id) => apiFetch(`/api/projects/${projectId}/codex/relations/${id}`, { method: 'DELETE' }),
+  extractCodexRelations: (projectId) => apiFetch(`/api/projects/${projectId}/codex/relations/ai-extract`, { method: 'POST' }),
   scanCodex: (projectId, text) => apiFetch(`/api/projects/${projectId}/codex/scan`, { method: 'POST', body: JSON.stringify({ text }) }),
+
+  // State Machine
+  analyzeStateMachine: (projectId) => apiFetch(`/api/projects/${projectId}/statemachine/ai-analyze`, { method: 'POST' }),
 
   // Manuscript & Workshop Actions
   deriveBeats: (projectId, data) => apiFetch(`/api/projects/${projectId}/derive-beats`, { method: 'POST', body: JSON.stringify(data) }),

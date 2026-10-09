@@ -251,3 +251,201 @@ func TestOrchestrator_BootstrapFramework(t *testing.T) {
 		t.Errorf("expected 1 seed hook, got %d", len(fw.SeedHooks))
 	}
 }
+
+func TestOrchestrator_GenerateCodexEntry(t *testing.T) {
+	mockJSON := `{
+		"name": "天残老祖",
+		"aliases": ["残魔", "幽冥尊者"],
+		"category": "CHARACTER",
+		"summary": "深藏古墓的邪道大能，主角的残酷导师",
+		"details_markdown": "曾横压东荒三百年，如今神魂衰朽，欲夺舍重修。",
+		"tracking_mode": "AUTO_MENTION",
+		"archetype": "MENTOR",
+		"voice_tone": "沙哑阴冷，暗藏杀机",
+		"core_motivation": "寻找完美肉身延寿",
+		"current_disposition": "WARY"
+	}`
+
+	mock := &mockLLMClient{response: mockJSON}
+	orch := engine.NewOrchestrator(mock)
+
+	p := &domain.Project{ID: "proj-1", Title: "逆天魔尊"}
+	entry, _, err := orch.GenerateCodexEntry(context.Background(), "deepseek-reasoner", p, engine.CodexGenerateRequest{
+		Name:     "天残老祖",
+		Category: domain.CategoryCharacter,
+		Prompt:   "神秘老魔头",
+	})
+	if err != nil {
+		t.Fatalf("GenerateCodexEntry failed: %v", err)
+	}
+	if entry.Name != "天残老祖" {
+		t.Errorf("expected name 天残老祖, got %s", entry.Name)
+	}
+	if entry.ProjectID != "proj-1" {
+		t.Errorf("expected project ID proj-1, got %s", entry.ProjectID)
+	}
+	if len(entry.Aliases) != 2 {
+		t.Errorf("expected 2 aliases, got %d", len(entry.Aliases))
+	}
+}
+
+func TestOrchestrator_ExtractCodexRelations(t *testing.T) {
+	mockJSON := `[
+		{
+			"source_name": "楚风",
+			"target_name": "残骨铁印",
+			"relation_type": "POSSESSES",
+			"description": "主角的核心本命法宝"
+		},
+		{
+			"source_name": "楚风",
+			"target_name": "厉魔尊",
+			"relation_type": "NEMESIS",
+			"description": "灭门宿敌，不死不休"
+		}
+	]`
+
+	mock := &mockLLMClient{response: mockJSON}
+	orch := engine.NewOrchestrator(mock)
+
+	p := &domain.Project{ID: "proj-1"}
+	entries := []*domain.CodexEntry{
+		{ID: "e1", Name: "楚风", Category: domain.CategoryCharacter},
+		{ID: "e2", Name: "残骨铁印", Category: domain.CategoryItem},
+		{ID: "e3", Name: "厉魔尊", Category: domain.CategoryCharacter},
+	}
+
+	rels, _, err := orch.ExtractCodexRelations(context.Background(), "deepseek-reasoner", p, entries, "楚风手持残骨铁印，死战厉魔尊。")
+	if err != nil {
+		t.Fatalf("ExtractCodexRelations failed: %v", err)
+	}
+	if len(rels) != 2 {
+		t.Fatalf("expected 2 relations, got %d", len(rels))
+	}
+	if rels[0].SourceEntryID != "e1" || rels[0].TargetEntryID != "e2" {
+		t.Errorf("expected e1 -> e2, got %s -> %s", rels[0].SourceEntryID, rels[0].TargetEntryID)
+	}
+	if rels[1].RelationType != "NEMESIS" {
+		t.Errorf("expected relation NEMESIS, got %s", rels[1].RelationType)
+	}
+}
+
+func TestOrchestrator_GenerateMatrixScenes(t *testing.T) {
+	mockJSON := `[
+		{
+			"scene_index": 1,
+			"title": "暗市夺印",
+			"dramatic_goal": "拍下残骨铁印",
+			"conflict_barrier": "黑煞门横插一脚抬价",
+			"tension_level": 7,
+			"prose_content": "拍卖会暗流涌动，主角沉着以幻影符脱身。"
+		},
+		{
+			"scene_index": 2,
+			"title": "雨夜袭杀",
+			"dramatic_goal": "突出重围，反杀追兵",
+			"conflict_barrier": "黑煞门三名筑基长老伏击",
+			"tension_level": 9,
+			"prose_content": "雨夜惊雷，主角初现剑意一剑荡平。"
+		}
+	]`
+
+	mock := &mockLLMClient{response: mockJSON}
+	orch := engine.NewOrchestrator(mock)
+
+	p := &domain.Project{ID: "proj-1"}
+	scenes, _, err := orch.GenerateMatrixScenes(context.Background(), "deepseek-reasoner", p, engine.MatrixSceneGenerateRequest{
+		VolumeIndex:  1,
+		ChapterIndex: 5,
+		ChapterTitle: "雨夜断魂",
+		CoreConflict: "夺宝后被追杀伏击",
+	})
+	if err != nil {
+		t.Fatalf("GenerateMatrixScenes failed: %v", err)
+	}
+	if len(scenes) != 2 {
+		t.Fatalf("expected 2 scenes, got %d", len(scenes))
+	}
+	if scenes[0].TensionLevel != 7 {
+		t.Errorf("expected tension 7, got %d", scenes[0].TensionLevel)
+	}
+	if scenes[1].Title != "雨夜袭杀" {
+		t.Errorf("expected scene title 雨夜袭杀, got %s", scenes[1].Title)
+	}
+}
+
+func TestOrchestrator_AnalyzeProtagonistState(t *testing.T) {
+	mockJSON := `{
+		"name_and_level": "楚风 (练气六层)",
+		"inventory": "残骨铁印x1, 灵石x20",
+		"core_goal": "前往万剑宗拜山",
+		"health_status": "内息平稳，肉身增强",
+		"breakthrough_event": {
+			"happened": true,
+			"from_realm": "练气五层",
+			"to_realm": "练气六层",
+			"reason": "融合残印精血顿悟"
+		}
+	}`
+
+	mock := &mockLLMClient{response: mockJSON}
+	orch := engine.NewOrchestrator(mock)
+
+	p := &domain.Project{
+		ID: "proj-1",
+		Protagonist: domain.Protagonist{
+			NameAndLevel: "楚风 (练气五层)",
+			Inventory:    "青铜残片x1",
+		},
+	}
+	chapters := []*domain.Chapter{
+		{ChapterIndex: 1, Title: "第一章", Content: "楚风融合精血，突破练气六层。"},
+	}
+
+	updated, _, err := orch.AnalyzeProtagonistState(context.Background(), "deepseek-reasoner", p, chapters)
+	if err != nil {
+		t.Fatalf("AnalyzeProtagonistState failed: %v", err)
+	}
+	if updated.NameAndLevel != "楚风 (练气六层)" {
+		t.Errorf("expected level 练气六层, got %s", updated.NameAndLevel)
+	}
+	if updated.StructuredLevel == nil || len(updated.StructuredLevel.History) != 1 {
+		t.Fatalf("expected 1 history breakthrough event")
+	}
+	if updated.StructuredLevel.History[0].ToRealm != "练气六层" {
+		t.Errorf("expected to_realm 练气六层, got %s", updated.StructuredLevel.History[0].ToRealm)
+	}
+}
+
+func TestOrchestrator_ExtractPlotHooks(t *testing.T) {
+	mockJSON := `[
+		{
+			"title": "残骨铁印的第二道器灵",
+			"details": "铁印内部隐隐传来远古封印哀鸣",
+			"created_chapter": 2,
+			"target_chapter": 15
+		}
+	]`
+
+	mock := &mockLLMClient{response: mockJSON}
+	orch := engine.NewOrchestrator(mock)
+
+	p := &domain.Project{ID: "proj-1"}
+	chapters := []*domain.Chapter{
+		{ChapterIndex: 2, Title: "异变", CoreConflict: "铁印共鸣", Content: "残印内部传来阵阵异响。"},
+	}
+
+	hooks, _, err := orch.ExtractPlotHooks(context.Background(), "deepseek-reasoner", p, chapters, nil)
+	if err != nil {
+		t.Fatalf("ExtractPlotHooks failed: %v", err)
+	}
+	if len(hooks) != 1 {
+		t.Fatalf("expected 1 hook, got %d", len(hooks))
+	}
+	if hooks[0].Title != "残骨铁印的第二道器灵" {
+		t.Errorf("expected hook title 残骨铁印的第二道器灵, got %s", hooks[0].Title)
+	}
+	if hooks[0].TargetChapter != 15 {
+		t.Errorf("expected target chapter 15, got %d", hooks[0].TargetChapter)
+	}
+}

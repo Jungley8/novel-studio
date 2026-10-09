@@ -35,6 +35,9 @@ export function createProjectActions(state, notify, helpers, dialogs) {
         if (helpers && helpers.loadCodexEntries) {
           await helpers.loadCodexEntries();
         }
+        if (helpers && helpers.loadCodexRelations) {
+          await helpers.loadCodexRelations();
+        }
         if (helpers && helpers.loadAnalytics) {
           await helpers.loadAnalytics();
         }
@@ -79,6 +82,34 @@ export function createProjectActions(state, notify, helpers, dialogs) {
         notify('创世推演完成', '天道法则与战力天平已自动构建', 'success');
       } catch (e) {
         notify('创世推演失败', e.message, 'error');
+      } finally {
+        state.isLoading = false;
+      }
+    },
+
+    async analyzeStateMachine() {
+      if (!state.currentProject) return;
+      state.isLoading = true;
+      try {
+        const prot = await api.analyzeStateMachine(state.currentProject.id);
+        state.currentProject.protagonist = prot;
+        notify('状态机分析完成', '主角最新境界与随身物品已同步更新', 'success');
+      } catch (e) {
+        notify('状态推演分析失败', e.message, 'error');
+      } finally {
+        state.isLoading = false;
+      }
+    },
+
+    async extractPlotHooks() {
+      if (!state.currentProject) return;
+      state.isLoading = true;
+      try {
+        const newHooks = await api.extractPlotHooks(state.currentProject.id);
+        state.hooks = await api.listHooks(state.currentProject.id);
+        notify('伏笔挖掘完成', `AI 已从剧情中提炼出 ${newHooks.length} 条长线伏笔`, 'success');
+      } catch (e) {
+        notify('AI 挖掘伏笔失败', e.message, 'error');
       } finally {
         state.isLoading = false;
       }

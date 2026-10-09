@@ -98,7 +98,17 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleProjectChapters(w, r, projectID)
 	case "hooks":
-		s.handleProjectHooks(w, r, projectID)
+		subParts := []string{}
+		if len(parts) > 2 {
+			subParts = parts[2:]
+		}
+		s.handleProjectHooks(w, r, projectID, subParts)
+	case "statemachine":
+		subParts := []string{}
+		if len(parts) > 2 {
+			subParts = parts[2:]
+		}
+		s.handleProjectStateMachine(w, r, projectID, subParts)
 	case "derive-beats":
 		s.handleDeriveBeats(w, r, projectID)
 	case "render-scene":
@@ -118,7 +128,11 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleProjectCodex(w, r, projectID, subParts)
 	case "matrix":
-		s.handleProjectMatrix(w, r, projectID)
+		subParts := []string{}
+		if len(parts) > 2 {
+			subParts = parts[2:]
+		}
+		s.handleProjectMatrix(w, r, projectID, subParts)
 	case "scenes":
 		subParts := []string{}
 		if len(parts) > 2 {
@@ -320,8 +334,32 @@ func (s *Server) handleProjectCheckpoint(w http.ResponseWriter, r *http.Request,
 	}
 }
 
-func (s *Server) handleProjectHooks(w http.ResponseWriter, r *http.Request, projectID string) {
+func (s *Server) handleProjectHooks(w http.ResponseWriter, r *http.Request, projectID string, subParts []string) {
 	ctx := r.Context()
+	if len(subParts) > 0 && subParts[0] == "ai-extract" {
+		if r.Method != http.MethodPost {
+			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		proj, err := s.store.GetProject(ctx, projectID)
+		if err != nil {
+			errorResponse(w, http.StatusNotFound, "project not found")
+			return
+		}
+		chapters, _ := s.store.ListChapters(ctx, projectID)
+		existingHooks, _ := s.store.ListPlotHooks(ctx, projectID)
+		newHooks, _, err := s.orch.ExtractPlotHooks(ctx, s.cfg.ReasoningModel, proj, chapters, existingHooks)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, "ai extract plot hooks failed: "+err.Error())
+			return
+		}
+		for i := range newHooks {
+			_ = s.store.SavePlotHook(ctx, &newHooks[i])
+		}
+		jsonResponse(w, http.StatusOK, newHooks)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		hooks, err := s.store.ListPlotHooks(ctx, projectID)
@@ -348,6 +386,67 @@ func (s *Server) handleProjectHooks(w http.ResponseWriter, r *http.Request, proj
 			return
 		}
 		jsonResponse(w, http.StatusCreated, h)
+	default:
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleProjectStateMachine(w http.ResponseWriter, r *http.Request, projectID string, subParts []string) {
+	ctx := r.Context()
+	if len(subParts) > 0 && subParts[0] == "ai-analyze" {
+		if r.Method != http.MethodPost {
+			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		proj, err := s.store.GetProject(ctx, projectID)
+		if err != nil {
+			errorResponse(w, http.StatusNotFound, "project not found")
+			return
+		}
+		chapters, err := s.store.ListChapters(ctx, projectID)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		updated, _, err := s.orch.AnalyzeProtagonistState(ctx, s.cfg.ReasoningModel, proj, chapters)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, "analyze protagonist state failed: "+err.Error())
+			return
+		}
+		proj.Protagonist = *updated
+		if err := s.store.SaveProject(ctx, proj); err != nil {
+			errorResponse(w, http.StatusInternalServerError, "save project failed: "+err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, proj.Protagonist)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		proj, err := s.store.GetProject(ctx, projectID)
+		if err != nil {
+			errorResponse(w, http.StatusNotFound, "project not found")
+			return
+		}
+		jsonResponse(w, http.StatusOK, proj.Protagonist)
+	case http.MethodPost:
+		var prot domain.Protagonist
+		if err := json.NewDecoder(r.Body).Decode(&prot); err != nil {
+			errorResponse(w, http.StatusBadRequest, "invalid json: "+err.Error())
+			return
+		}
+		proj, err := s.store.GetProject(ctx, projectID)
+		if err != nil {
+			errorResponse(w, http.StatusNotFound, "project not found")
+			return
+		}
+		proj.Protagonist = prot
+		if err := s.store.SaveProject(ctx, proj); err != nil {
+			errorResponse(w, http.StatusInternalServerError, "save project failed: "+err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, proj.Protagonist)
 	default:
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
 	}

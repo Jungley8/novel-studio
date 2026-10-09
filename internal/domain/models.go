@@ -105,7 +105,7 @@ type Project struct {
 	WorldRules            string            `json:"world_rules"`
 	Protagonist           Protagonist       `json:"protagonist"`
 	Framework             *ProjectFramework `json:"framework,omitempty"`
-	DefaultWordsTarget    int               `json:"default_words_target,omitempty"`   // e.g. 2000, 3000, 4000
+	DefaultWordsTarget    int               `json:"default_words_target,omitempty"`    // e.g. 2000, 3000, 4000
 	DefaultNarrativeStyle string            `json:"default_narrative_style,omitempty"` // e.g. "hardboiled", "fastpaced", "classical", "slang", "omniscient"
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`

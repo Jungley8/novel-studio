@@ -14,12 +14,23 @@
         </div>
       </div>
 
-      <button 
-        @click="actions.saveCurrentProject" 
-        class="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-md shadow-amber-glow transition cursor-pointer">
-        <Save class="w-3.5 h-3.5" />
-        <span>保存状态</span>
-      </button>
+      <div class="flex items-center gap-2.5">
+        <button 
+          @click="runAIAnalyzeState" 
+          :disabled="isAnalyzing"
+          class="flex items-center gap-1.5 px-3 py-1.5 bg-brand-amber/10 hover:bg-brand-amber/20 text-brand-amber border border-brand-amber/30 font-medium text-xs rounded-md shadow-amber-glow transition cursor-pointer disabled:opacity-50"
+          title="根据最新剧情自动推演主角境界突破与物品变化">
+          <Sparkles class="w-3.5 h-3.5" :class="{ 'animate-spin': isAnalyzing }" />
+          <span>{{ isAnalyzing ? '推演中...' : '智能推演' }}</span>
+        </button>
+
+        <button 
+          @click="actions.saveCurrentProject" 
+          class="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-md shadow-amber-glow transition cursor-pointer">
+          <Save class="w-3.5 h-3.5" />
+          <span>保存状态</span>
+        </button>
+      </div>
     </div>
 
     <!-- 状态机两栏核心网格 -->
@@ -238,6 +249,7 @@
 </template>
 
 <script setup>
+import { ref } from 'vue';
 import { state, computedState, actions } from '../stores/appState';
 import { 
   Cpu, 
@@ -248,8 +260,20 @@ import {
   Users,
   Plus,
   Edit3,
-  GitCommit
+  GitCommit,
+  Sparkles
 } from 'lucide-vue-next';
+
+const isAnalyzing = ref(false);
+
+async function runAIAnalyzeState() {
+  isAnalyzing.value = true;
+  try {
+    await actions.analyzeStateMachine();
+  } finally {
+    isAnalyzing.value = false;
+  }
+}
 
 function formatArchetype(arc) {
   const map = {

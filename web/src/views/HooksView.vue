@@ -24,6 +24,15 @@
         </div>
 
         <button 
+          @click="runAIExtractHooks" 
+          :disabled="isExtracting || state.chapters.length === 0"
+          class="flex items-center gap-1.5 px-3 py-1.5 bg-brand-amber/10 hover:bg-brand-amber/20 text-brand-amber border border-brand-amber/30 font-medium text-xs rounded-md shadow-amber-glow transition cursor-pointer disabled:opacity-50"
+          title="AI 智能从全书章节中挖掘未回收伏笔与暗线">
+          <Sparkles class="w-3.5 h-3.5" :class="{ 'animate-spin': isExtracting }" />
+          <span>{{ isExtracting ? '挖掘中...' : '智能挖掘' }}</span>
+        </button>
+
+        <button 
           @click="actions.createPlotHook('新设伏笔', '', (state.chapters.length || 0) + 3)" 
           class="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-md shadow-amber-glow transition cursor-pointer">
           <Plus class="w-3.5 h-3.5" />
@@ -114,6 +123,18 @@
 </template>
 
 <script setup>
+import { ref } from 'vue';
 import { state, computedState, actions } from '../stores/appState';
-import { Anchor, Plus } from 'lucide-vue-next';
+import { Anchor, Plus, Sparkles } from 'lucide-vue-next';
+
+const isExtracting = ref(false);
+
+async function runAIExtractHooks() {
+  isExtracting.value = true;
+  try {
+    await actions.extractPlotHooks();
+  } finally {
+    isExtracting.value = false;
+  }
+}
 </script>

@@ -123,6 +123,7 @@ import {
   Anchor,
   Archive,
   BarChart3,
+  Network,
   Settings,
   Plus,
   ChevronDown,
@@ -151,6 +152,7 @@ const navGroups = computed(() => [
     title: '成果阅览',
     items: [
       { id: 'chapters', label: '章节目录', desc: '已完稿章节的归档与浏览', icon: Archive, badge: `${state.chapters.length}章` },
+      { id: 'graph', label: '关系图谱', desc: '实体与势力错综关联图', icon: Network, badge: state.codexRelations.length ? `${state.codexRelations.length}条` : '' },
       { id: 'analytics', label: '全书体检', desc: '篇幅节奏、字数与走势', icon: BarChart3 },
     ]
   },
@@ -166,6 +168,10 @@ function selectTab(tabId) {
   state.activeTab = tabId;
   if (tabId === 'matrix') actions.loadMatrixOverview();
   if (tabId === 'codex') actions.loadCodexEntries();
+  if (tabId === 'graph') {
+    actions.loadCodexEntries();
+    actions.loadCodexRelations();
+  }
   if (tabId === 'analytics') actions.loadAnalytics();
 }
 </script>

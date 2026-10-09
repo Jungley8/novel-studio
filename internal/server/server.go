@@ -139,8 +139,6 @@ func errorResponse(w http.ResponseWriter, status int, msg string) {
 	jsonResponse(w, status, map[string]string{"error": msg})
 }
 
-
-
 func (s *Server) handleLinter(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")

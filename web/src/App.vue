@@ -17,6 +17,7 @@
         <StateMachineView v-show="state.activeTab === 'statemachine'" />
         <HooksView v-show="state.activeTab === 'hooks'" />
         <ChaptersView v-show="state.activeTab === 'chapters'" />
+        <GraphView v-show="state.activeTab === 'graph'" />
         <AnalyticsView v-show="state.activeTab === 'analytics'" />
         <SettingsView v-show="state.activeTab === 'config'" />
       </div>
@@ -59,7 +60,7 @@ import AppHeader from './components/layout/AppHeader.vue';
 import ToastContainer from './components/common/ToastContainer.vue';
 import GlobalDialogModal from './components/common/GlobalDialogModal.vue';
 
-// 9 大业务功能视图
+// 10 大业务功能视图
 import WorkbenchView from './views/WorkbenchView.vue';
 import MatrixView from './views/MatrixView.vue';
 import CodexView from './views/CodexView.vue';
@@ -67,6 +68,7 @@ import FrameworkView from './views/FrameworkView.vue';
 import StateMachineView from './views/StateMachineView.vue';
 import HooksView from './views/HooksView.vue';
 import ChaptersView from './views/ChaptersView.vue';
+import GraphView from './views/GraphView.vue';
 import AnalyticsView from './views/AnalyticsView.vue';
 import SettingsView from './views/SettingsView.vue';
 

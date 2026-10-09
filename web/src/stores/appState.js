@@ -66,8 +66,9 @@ export const state = reactive({
   activeSceneForMarkers: null,
   sceneMarkersList: [],
 
-  // The Codex
+  // The Codex & Relations Graph
   codexEntries: [],
+  codexRelations: [],
   codexCategoryFilter: 'ALL',
   activeCodexForSub: null,
 
@@ -418,6 +419,7 @@ const workbenchActs = createWorkbenchActions(state, notify, actionHelpers, dialo
 // Register cross-domain helper functions for inter-module workflows
 actionHelpers.loadMatrixOverview = matrixActs.loadMatrixOverview;
 actionHelpers.loadCodexEntries = codexActs.loadCodexEntries;
+actionHelpers.loadCodexRelations = codexActs.loadCodexRelations;
 actionHelpers.loadAnalytics = matrixActs.loadAnalytics;
 actionHelpers.selectProject = projectActs.selectProject;
 actionHelpers.restoreCheckpoint = workbenchActs.restoreCheckpoint;

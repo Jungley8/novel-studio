@@ -25,6 +25,14 @@
         </button>
 
         <button 
+          @click="showAIGenerateModal = true"
+          class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md border border-brand-amber/40 bg-brand-amber/10 hover:bg-brand-amber/20 text-brand-amber shadow-amber-glow transition cursor-pointer"
+          title="AI 智能构思设定词条">
+          <Sparkles class="w-3.5 h-3.5" />
+          <span>智能构思</span>
+        </button>
+
+        <button 
           @click="openCreateCodexEntry"
           class="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 text-xs font-bold rounded-md shadow-amber-glow transition cursor-pointer">
           <Plus class="w-3.5 h-3.5" />
@@ -184,6 +192,75 @@
         点击右上角“+ 新建词条”录入角色、势力、宝物或地理设定，写作时将自动作为参考。
       </p>
     </div>
+    <!-- 智能构思设定弹窗 -->
+    <div 
+      v-if="showAIGenerateModal" 
+      class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+      <div class="bg-atelier-900 border border-atelier-750 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl animate-fade-in">
+        <div class="flex items-center justify-between border-b border-atelier-750 pb-3">
+          <div class="flex items-center gap-2">
+            <Sparkles class="w-4 h-4 text-brand-amber" />
+            <h3 class="text-sm font-serif font-bold text-ink-50">智能构思设定</h3>
+          </div>
+          <button 
+            @click="showAIGenerateModal = false" 
+            class="text-ink-400 hover:text-ink-100 p-1 rounded transition cursor-pointer">
+            <X class="w-4 h-4" />
+          </button>
+        </div>
+
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="text-[11px] text-ink-400 block mb-1">设定分类：</label>
+            <div class="grid grid-cols-5 gap-1">
+              <button 
+                v-for="cat in generateCategories" 
+                :key="cat.key" 
+                type="button"
+                @click="aiGenForm.category = cat.key"
+                :class="aiGenForm.category === cat.key 
+                  ? 'bg-brand-amber/20 text-brand-amber border-brand-amber/40 font-bold' 
+                  : 'bg-atelier-850 text-ink-400 border-atelier-750'"
+                class="py-1 px-1.5 rounded border text-[11px] transition cursor-pointer text-center">
+                {{ cat.label }}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label class="text-[11px] text-ink-400 block mb-1">词条名称 (可选，留空由 AI 拟定)：</label>
+            <input 
+              v-model="aiGenForm.name" 
+              placeholder="例如：冷月寒冰诀 / 顾渊 / 揽月阁"
+              class="w-full bg-atelier-950 border border-atelier-750 rounded-lg px-2.5 py-1.5 text-xs text-ink-100 focus:outline-none focus:border-brand-amber/60 font-serif">
+          </div>
+
+          <div>
+            <label class="text-[11px] text-ink-400 block mb-1">构思灵感与核心特征：</label>
+            <textarea 
+              v-model="aiGenForm.concept" 
+              rows="3" 
+              placeholder="例如：表面是普通当铺，实则是天下第一杀手组织的联络暗桩，规矩是只换人命不当金银..."
+              class="w-full bg-atelier-950 border border-atelier-750 rounded-lg p-2.5 text-xs text-ink-100 font-serif focus:outline-none focus:border-brand-amber/60 resize-none leading-relaxed"></textarea>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-2 border-t border-atelier-750">
+          <button 
+            @click="showAIGenerateModal = false" 
+            class="px-3.5 py-1.5 bg-atelier-850 hover:bg-atelier-800 text-ink-300 text-xs rounded-lg transition cursor-pointer">
+            取消
+          </button>
+          <button 
+            @click="submitAIGenerateEntry" 
+            :disabled="isGenerating || !aiGenForm.concept.trim()"
+            class="px-4 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-lg shadow-amber-glow transition disabled:opacity-50 cursor-pointer flex items-center gap-1.5">
+            <Sparkles class="w-3.5 h-3.5" :class="{ 'animate-spin': isGenerating }" />
+            <span>{{ isGenerating ? '构思中...' : '开始构思' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -199,9 +276,10 @@ import {
   Compass, 
   Scroll, 
   Gem, 
-  Sparkles,
-  GitCommit,
-  Share2
+  Sparkles, 
+  GitCommit, 
+  Share2,
+  X 
 } from 'lucide-vue-next';
 
 const categories = [
@@ -212,19 +290,56 @@ const categories = [
   { key: 'ITEM', label: '道具灵宝', icon: Gem },
 ];
 
+const generateCategories = [
+  { key: 'CHARACTER', label: '角色' },
+  { key: 'FACTION', label: '势力' },
+  { key: 'ITEM', label: '灵宝' },
+  { key: 'LOCATION', label: '场景' },
+  { key: 'LORE', label: '公理' },
+];
+
 const showMentionScanner = ref(false);
 const mentionScanText = ref('');
 const isScanning = ref(false);
 const mentionScanResult = ref(null);
 
+// AI 生成模态状态
+const showAIGenerateModal = ref(false);
+const isGenerating = ref(false);
+const aiGenForm = ref({
+  category: 'CHARACTER',
+  name: '',
+  concept: '',
+});
+
 function formatCategoryName(cat) {
   const map = {
     CHARACTER: '角色',
+    FACTION: '势力',
     LOCATION: '场景',
     LORE: '公理',
     ITEM: '灵宝',
   };
   return map[cat] || cat;
+}
+
+async function submitAIGenerateEntry() {
+  if (!aiGenForm.value.concept.trim()) return;
+  isGenerating.value = true;
+  try {
+    const entry = await actions.generateCodexEntry({
+      category: aiGenForm.value.category,
+      name: aiGenForm.value.name.trim(),
+      concept: aiGenForm.value.concept.trim(),
+    });
+    if (entry) {
+      showAIGenerateModal.value = false;
+      aiGenForm.value.name = '';
+      aiGenForm.value.concept = '';
+    }
+  } finally {
+    isGenerating.value = false;
+  }
 }
 
 async function runMentionScan() {

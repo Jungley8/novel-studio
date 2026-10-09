@@ -72,12 +72,21 @@
                 <span class="text-xs font-serif font-semibold text-ink-100">{{ row.chapter.title }}</span>
                 <span class="text-[11px] text-ink-400 font-mono">({{ row.chapter.word_count }} 字)</span>
               </div>
-              <button 
-                @click="openCreateScene(row.chapter.id)" 
-                class="px-2.5 py-1 text-xs bg-brand-amber/10 hover:bg-brand-amber/20 text-brand-amber rounded border border-brand-amber/30 transition flex items-center gap-1 cursor-pointer">
-                <Plus class="w-3 h-3" />
-                <span>添加场次</span>
-              </button>
+              <div class="flex items-center gap-2">
+                <button 
+                  @click="openAISplitScenes(row.chapter)" 
+                  class="px-2.5 py-1 text-xs bg-brand-amber/15 hover:bg-brand-amber/25 text-brand-amber rounded border border-brand-amber/40 transition flex items-center gap-1 cursor-pointer shadow-amber-glow"
+                  title="AI 智能拆解本章戏剧场次与冲突">
+                  <Sparkles class="w-3 h-3" />
+                  <span>智能拆解</span>
+                </button>
+                <button 
+                  @click="openCreateScene(row.chapter.id)" 
+                  class="px-2.5 py-1 text-xs bg-brand-amber/10 hover:bg-brand-amber/20 text-brand-amber rounded border border-brand-amber/30 transition flex items-center gap-1 cursor-pointer">
+                  <Plus class="w-3 h-3" />
+                  <span>添加场次</span>
+                </button>
+              </div>
             </div>
 
             <!-- 场景卡片横向网格 -->
@@ -155,23 +164,96 @@
         请先在生产手稿中推演章节，或在创世总纲中规划分卷任务链。
       </p>
     </div>
+    <!-- 智能拆解场次弹窗 -->
+    <div 
+      v-if="showAISplitModal" 
+      class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+      <div class="bg-atelier-900 border border-atelier-750 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl animate-fade-in">
+        <div class="flex items-center justify-between border-b border-atelier-750 pb-3">
+          <div class="flex items-center gap-2">
+            <Sparkles class="w-4 h-4 text-brand-amber" />
+            <h3 class="text-sm font-serif font-bold text-ink-50">智能拆解场次</h3>
+          </div>
+          <button 
+            @click="showAISplitModal = false" 
+            class="text-ink-400 hover:text-ink-100 p-1 rounded transition cursor-pointer">
+            <X class="w-4 h-4" />
+          </button>
+        </div>
+
+        <div class="space-y-3 text-xs">
+          <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-800 space-y-1">
+            <div class="font-mono text-brand-amber font-bold">第 {{ targetChapter?.chapter_index }} 章：{{ targetChapter?.title }}</div>
+            <div class="text-ink-400 font-serif leading-relaxed line-clamp-2">{{ targetChapter?.core_conflict || '无核心冲突记录' }}</div>
+          </div>
+
+          <div>
+            <label class="text-[11px] text-ink-400 block mb-1">特定拆解目标或转折提示 (可选)：</label>
+            <textarea 
+              v-model="aiSplitGoalHint" 
+              rows="3" 
+              placeholder="例如：开头暗伏杀机，中段宴席言语交锋，结尾撕破脸爆发第一场打斗..."
+              class="w-full bg-atelier-950 border border-atelier-750 rounded-lg p-2.5 text-xs text-ink-100 font-serif focus:outline-none focus:border-brand-amber/60 resize-none leading-relaxed"></textarea>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-2 border-t border-atelier-750">
+          <button 
+            @click="showAISplitModal = false" 
+            class="px-3.5 py-1.5 bg-atelier-850 hover:bg-atelier-800 text-ink-300 text-xs rounded-lg transition cursor-pointer">
+            取消
+          </button>
+          <button 
+            @click="submitAISplitScenes" 
+            :disabled="isSplitting"
+            class="px-4 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-lg shadow-amber-glow transition disabled:opacity-50 cursor-pointer flex items-center gap-1.5">
+            <Sparkles class="w-3.5 h-3.5" :class="{ 'animate-spin': isSplitting }" />
+            <span>{{ isSplitting ? '拆解中...' : '开始拆解' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
+import { ref } from 'vue';
 import { state, actions } from '../stores/appState';
 import { 
   LayoutGrid, 
   RefreshCw, 
   Plus, 
   Bookmark, 
-  Sparkles 
+  Sparkles,
+  X 
 } from 'lucide-vue-next';
+
+const showAISplitModal = ref(false);
+const isSplitting = ref(false);
+const targetChapter = ref(null);
+const aiSplitGoalHint = ref('');
 
 function tensionColorClass(level) {
   if (level >= 8) return 'text-rose-400';
   if (level >= 5) return 'text-brand-amber';
   return 'text-emerald-400';
+}
+
+function openAISplitScenes(chapter) {
+  targetChapter.value = chapter;
+  aiSplitGoalHint.value = '';
+  showAISplitModal.value = true;
+}
+
+async function submitAISplitScenes() {
+  if (!targetChapter.value) return;
+  isSplitting.value = true;
+  try {
+    await actions.generateMatrixScenes(targetChapter.value.id, aiSplitGoalHint.value.trim());
+    showAISplitModal.value = false;
+  } finally {
+    isSplitting.value = false;
+  }
 }
 
 function openCreateScene(chapterId) {

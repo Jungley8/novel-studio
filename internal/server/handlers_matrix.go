@@ -134,7 +134,36 @@ func (s *Server) handleProjectCodex(w http.ResponseWriter, r *http.Request, proj
 
 	sub := subParts[0]
 
-	// 2. /api/projects/:id/codex/scan
+	// 2. /api/projects/:id/codex/ai-generate
+	if sub == "ai-generate" {
+		if r.Method != http.MethodPost {
+			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var req engine.CodexGenerateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			errorResponse(w, http.StatusBadRequest, "invalid json: "+err.Error())
+			return
+		}
+		proj, err := s.store.GetProject(ctx, projectID)
+		if err != nil {
+			errorResponse(w, http.StatusNotFound, "project not found")
+			return
+		}
+		entry, _, err := s.orch.GenerateCodexEntry(ctx, s.cfg.ReasoningModel, proj, req)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, "ai generate codex entry failed: "+err.Error())
+			return
+		}
+		if err := s.store.SaveCodexEntry(ctx, entry); err != nil {
+			errorResponse(w, http.StatusInternalServerError, "save generated codex entry failed: "+err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusCreated, entry)
+		return
+	}
+
+	// 3. /api/projects/:id/codex/scan
 	if sub == "scan" {
 		if r.Method != http.MethodPost {
 			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -167,9 +196,41 @@ func (s *Server) handleProjectCodex(w http.ResponseWriter, r *http.Request, proj
 		return
 	}
 
-	// 3. /api/projects/:id/codex/relations (GET or POST) & /api/projects/:id/codex/relations/:relId (DELETE)
+	// 4. /api/projects/:id/codex/relations (GET or POST) & /api/projects/:id/codex/relations/:relId (DELETE)
 	if sub == "relations" {
 		if len(subParts) > 1 {
+			if subParts[1] == "ai-extract" {
+				if r.Method != http.MethodPost {
+					errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+					return
+				}
+				proj, err := s.store.GetProject(ctx, projectID)
+				if err != nil {
+					errorResponse(w, http.StatusNotFound, "project not found")
+					return
+				}
+				entries, err := s.store.ListCodexEntries(ctx, projectID, "")
+				if err != nil {
+					errorResponse(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				chapters, _ := s.store.ListChapters(ctx, projectID)
+				var chapterText strings.Builder
+				for _, ch := range chapters {
+					chapterText.WriteString(fmt.Sprintf("第%d章 %s: %s\n", ch.ChapterIndex, ch.Title, ch.CoreConflict))
+				}
+				rels, _, err := s.orch.ExtractCodexRelations(ctx, s.cfg.ReasoningModel, proj, entries, chapterText.String())
+				if err != nil {
+					errorResponse(w, http.StatusInternalServerError, "ai extract relations failed: "+err.Error())
+					return
+				}
+				for i := range rels {
+					_ = s.store.SaveCodexRelation(ctx, projectID, &rels[i])
+				}
+				jsonResponse(w, http.StatusOK, rels)
+				return
+			}
+
 			relID := subParts[1]
 			if r.Method == http.MethodDelete {
 				if err := s.store.DeleteCodexRelation(ctx, projectID, relID); err != nil {
@@ -286,12 +347,53 @@ func (s *Server) handleProjectCodex(w http.ResponseWriter, r *http.Request, proj
 	errorResponse(w, http.StatusNotFound, "route not found")
 }
 
-func (s *Server) handleProjectMatrix(w http.ResponseWriter, r *http.Request, projectID string) {
+func (s *Server) handleProjectMatrix(w http.ResponseWriter, r *http.Request, projectID string, subParts []string) {
+	ctx := r.Context()
+	if len(subParts) > 0 && subParts[0] == "ai-generate" {
+		if r.Method != http.MethodPost {
+			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var req engine.MatrixSceneGenerateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			errorResponse(w, http.StatusBadRequest, "invalid json: "+err.Error())
+			return
+		}
+		proj, err := s.store.GetProject(ctx, projectID)
+		if err != nil {
+			errorResponse(w, http.StatusNotFound, "project not found")
+			return
+		}
+		scenes, _, err := s.orch.GenerateMatrixScenes(ctx, s.cfg.ReasoningModel, proj, req)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, "generate matrix scenes failed: "+err.Error())
+			return
+		}
+		chapterID := ""
+		chapters, _ := s.store.ListChapters(ctx, projectID)
+		for _, ch := range chapters {
+			if ch.ChapterIndex == req.ChapterIndex {
+				chapterID = ch.ID
+				break
+			}
+		}
+		for i := range scenes {
+			if chapterID != "" {
+				scenes[i].ChapterID = chapterID
+			} else {
+				scenes[i].ChapterID = fmt.Sprintf("ch_%d", req.ChapterIndex)
+			}
+			_ = s.store.SaveScene(ctx, &scenes[i])
+		}
+		jsonResponse(w, http.StatusOK, scenes)
+		return
+	}
+
 	if r.Method != http.MethodGet {
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	overview, err := s.store.GetMatrixOverview(r.Context(), projectID)
+	overview, err := s.store.GetMatrixOverview(ctx, projectID)
 	if err != nil {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return

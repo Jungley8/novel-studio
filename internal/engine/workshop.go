@@ -251,38 +251,38 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		draftText = rendered
 		addUsage(usage)
 
-			// Optional: Apply Censor Harmonization & Adversarial Perturbation
-			if req.EnableHarmonize || req.PerturbIntensity > 0 {
-				intensity := req.PerturbIntensity
-				if intensity <= 0 {
-					intensity = 0.6
-				}
-				harmonized, hReport := w.harmonizer.FullProcess(draftText, intensity)
-				if len(hReport.HarmonizedItems) > 0 {
-					emit(WorkshopEvent{
-						Phase:   PhaseDrafted,
-						Message: fmt.Sprintf("已完成国内平台合规脱敏和谐 (%d 处高危敏感词平滑替换)", len(hReport.HarmonizedItems)),
-					})
-				}
-				draftText = harmonized
+		// Optional: Apply Censor Harmonization & Adversarial Perturbation
+		if req.EnableHarmonize || req.PerturbIntensity > 0 {
+			intensity := req.PerturbIntensity
+			if intensity <= 0 {
+				intensity = 0.6
 			}
+			harmonized, hReport := w.harmonizer.FullProcess(draftText, intensity)
+			if len(hReport.HarmonizedItems) > 0 {
+				emit(WorkshopEvent{
+					Phase:   PhaseDrafted,
+					Message: fmt.Sprintf("已完成国内平台合规脱敏和谐 (%d 处高危敏感词平滑替换)", len(hReport.HarmonizedItems)),
+				})
+			}
+			draftText = harmonized
+		}
 
-			// Save Checkpoint after initial rendering
-			_ = w.store.SaveCheckpoint(ctx, &domain.ChapterCheckpoint{
-				ProjectID:     req.ProjectID,
-				ChapterIndex:  req.ChapterIndex,
-				Phase:         domain.CheckpointPhaseDrafted,
-				CoreConflict:  req.CoreConflict,
-				Beats:         beatsOut.Beats,
-				StateMutation: beatsOut.StateMutation,
-				DraftText:     draftText,
-			})
-			emit(WorkshopEvent{
-				Phase:       PhaseDrafted,
-				Message:     fmt.Sprintf("正文初稿渲染完成 (共 %d 字)", len([]rune(draftText))),
-				DraftText:   draftText,
-				TotalTokens: totalUsage.TotalTokens,
-			})
+		// Save Checkpoint after initial rendering
+		_ = w.store.SaveCheckpoint(ctx, &domain.ChapterCheckpoint{
+			ProjectID:     req.ProjectID,
+			ChapterIndex:  req.ChapterIndex,
+			Phase:         domain.CheckpointPhaseDrafted,
+			CoreConflict:  req.CoreConflict,
+			Beats:         beatsOut.Beats,
+			StateMutation: beatsOut.StateMutation,
+			DraftText:     draftText,
+		})
+		emit(WorkshopEvent{
+			Phase:       PhaseDrafted,
+			Message:     fmt.Sprintf("正文初稿渲染完成 (共 %d 字)", len([]rune(draftText))),
+			DraftText:   draftText,
+			TotalTokens: totalUsage.TotalTokens,
+		})
 	}
 
 	// 4. Audit via Quality Gate (with plot hooks resolution awareness)
