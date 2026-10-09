@@ -78,10 +78,10 @@ func (l *Linter) Analyze(text string) domain.LinterResult {
 	if strings.TrimSpace(text) == "" {
 		return domain.LinterResult{
 			BurstinessScore:    0,
-			HitBannedWords:     nil,
+			HitBannedWords:     []string{},
 			DialogueRatio:      0,
 			ParagraphVariance:  0,
-			TopRepeatedNgrams:  nil,
+			TopRepeatedNgrams:  []string{},
 			ExclamationDensity: 0,
 			Passed:             false,
 			Message:            "文本为空",
@@ -89,7 +89,7 @@ func (l *Linter) Analyze(text string) domain.LinterResult {
 	}
 
 	// 1. Scan core banned words (any single hit = penalty)
-	var hits []string
+	hits := make([]string, 0)
 	for _, word := range l.coreBanned {
 		if strings.Contains(text, word) {
 			hits = append(hits, word)
@@ -118,6 +118,9 @@ func (l *Linter) Analyze(text string) domain.LinterResult {
 	dialogueRatio := calculateDialogueRatio(text)
 	paraVariance := calculateParagraphVariance(text)
 	topNgrams := calculateRepeatedNgrams(text)
+	if topNgrams == nil {
+		topNgrams = []string{}
+	}
 	exclDensity := calculateExclamationDensity(text)
 
 	runesLen := len([]rune(text))
