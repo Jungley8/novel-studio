@@ -8,8 +8,8 @@
             <BarChart3 class="w-4 h-4" />
           </div>
           <div>
-            <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">全书态势与张力分析 (Analytics)</h2>
-            <p class="text-xs text-ink-400 mt-0.5">实体角色时空出场热力图与全书戏剧张力心流曲线全景监控</p>
+            <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">全书体检</h2>
+            <p class="text-xs text-ink-400 mt-0.5">掌握人物登场频率与剧情起伏节奏。</p>
           </div>
         </div>
       </div>
@@ -23,7 +23,7 @@
               : 'text-ink-400 hover:text-ink-200'" 
             class="px-3 py-1.5 rounded-md transition cursor-pointer flex items-center gap-1.5">
             <Flame class="w-3.5 h-3.5" />
-            <span>出场热力图</span>
+            <span>人物登场</span>
           </button>
           <button 
             @click="subTab = 'tension'" 
@@ -32,7 +32,7 @@
               : 'text-ink-400 hover:text-ink-200'" 
             class="px-3 py-1.5 rounded-md transition cursor-pointer flex items-center gap-1.5">
             <Activity class="w-3.5 h-3.5" />
-            <span>张力心流曲线</span>
+            <span>情节起伏</span>
           </button>
         </div>
 
@@ -40,12 +40,12 @@
           @click="actions.loadAnalytics" 
           class="flex items-center gap-1.5 px-3 py-1.5 bg-atelier-850 hover:bg-atelier-800 text-ink-300 text-xs rounded-md border border-atelier-750 transition cursor-pointer">
           <RefreshCw class="w-3.5 h-3.5 text-ink-400" />
-          <span>刷新分析</span>
+          <span>刷新</span>
         </button>
       </div>
     </div>
 
-    <!-- 子视图 A: 实体出场热力图 -->
+    <!-- 子视图 A: 人物出场热力图 -->
     <div v-if="subTab === 'heatmap'" class="space-y-4">
       <div 
         v-if="state.analyticsHeatmap?.chapters?.length > 0 && state.analyticsHeatmap?.entities?.length > 0" 
@@ -54,7 +54,7 @@
         <table class="w-full text-left text-xs border-collapse">
           <thead>
             <tr class="border-b border-atelier-750/80 text-ink-400">
-              <th class="p-3 font-bold sticky left-0 bg-atelier-900 z-10 w-48 font-serif">实体 / 角色</th>
+              <th class="p-3 font-bold sticky left-0 bg-atelier-900 z-10 w-48 font-serif">人物 / 词条</th>
               <th class="p-3 font-bold text-center w-24 font-mono">总频次</th>
               <th 
                 v-for="ch in state.analyticsHeatmap.chapters" 

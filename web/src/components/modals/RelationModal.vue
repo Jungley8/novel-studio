@@ -8,7 +8,7 @@
         <div class="flex items-center gap-2">
           <Share2 class="w-4 h-4 text-brand-amber" />
           <h3 class="text-sm font-serif font-bold text-ink-50">
-            人际关系网络拓扑 - {{ state.activeCodexForSub?.name }}
+            人物关系 - {{ state.activeCodexForSub?.name }}
           </h3>
         </div>
         <button 
@@ -43,7 +43,7 @@
         <div 
           v-if="!state.activeCodexForSub?.relations || state.activeCodexForSub.relations.length === 0" 
           class="text-center py-6 text-ink-500 text-xs">
-          暂无人际与因果关系绑定
+          暂无人物关系记录
         </div>
       </div>
 
@@ -53,7 +53,7 @@
           <select 
             v-model="form.target_entry_id" 
             class="bg-atelier-850 border border-atelier-750 rounded-lg px-2.5 py-1.5 text-xs text-ink-100 focus:outline-none focus:border-brand-amber/60 cursor-pointer">
-            <option value="">-- 选择目标实体 --</option>
+            <option value="">-- 选择关联条目 --</option>
             <option 
               v-for="c in candidateEntries" 
               :key="c.id" 
@@ -63,21 +63,21 @@
           </select>
           <input 
             v-model="form.relation_type" 
-            class="bg-atelier-850 border border-atelier-750 rounded-lg px-2.5 py-1.5 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60" 
-            placeholder="关系类型 (如 NEMESIS/ALLY/MENTOR)">
+            class="bg-atelier-850 border border-atelier-750 rounded-lg px-2.5 py-1.5 text-xs text-ink-100 font-sans focus:outline-none focus:border-brand-amber/60" 
+            placeholder="关系标签 (如 宿敌 / 盟友 / 师徒)">
         </div>
 
         <input 
           v-model="form.description" 
           class="w-full bg-atelier-850 border border-atelier-750 rounded-lg px-2.5 py-1.5 text-xs text-ink-100 focus:outline-none focus:border-brand-amber/60 font-serif" 
-          placeholder="具体因果关系说明 (如: 灭族死仇，曾有救命之恩，暗中利益同盟)">
+          placeholder="关系说明 (如: 曾有救命之恩、暗中同盟)">
 
         <div class="flex justify-end">
           <button 
             @click="addRelation" 
             :disabled="!form.target_entry_id || !form.description.trim()"
             class="px-3.5 py-1 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-md shadow-amber-glow transition disabled:opacity-50 cursor-pointer">
-            绑定关系
+            添加关联
           </button>
         </div>
       </div>

@@ -197,48 +197,48 @@ export const computedState = {
       tasks.push({
         id: 'render',
         type: 'render',
-        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章正文文学渲染`,
-        desc: `目标约 ${state.wordsTarget || 2000} 字 · 口吻风格: ${state.narrativeStyle}`,
+        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章正文起草`,
+        desc: `目标约 ${state.wordsTarget || 2000} 字 · ${state.narrativeStyle}`,
       });
     }
     if (state.isGeneratingBeats) {
       tasks.push({
         id: 'beats',
         type: 'beats',
-        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章因果节拍推演`,
-        desc: '正在解析前序正史与冲突目标...',
+        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章分段构思`,
+        desc: '正在梳理情节与冲突安排...',
       });
     }
     if (state.isReviewing) {
       tasks.push({
         id: 'review',
         type: 'review',
-        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章主编终审质检`,
-        desc: '正在多维度审校与打分...',
+        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章文风体检`,
+        desc: '正在检查文风与文字质量...',
       });
     }
     if (state.isRewriting) {
       tasks.push({
         id: 'rewrite',
         type: 'rewrite',
-        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章定向返工精修`,
-        desc: `第 ${state.rewriteLoopCount} 轮局部差分微创返工...`,
+        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章逐条精修`,
+        desc: `第 ${state.rewriteLoopCount} 轮精修润色...`,
       });
     }
     if (state.isCommitting) {
       tasks.push({
         id: 'commit',
         type: 'commit',
-        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章正史原子封存`,
-        desc: '正在持久化写入 SQLite 数据库...',
+        title: `第 ${state.editingChapterIndex || (state.chapters.length + 1)} 章保存入库`,
+        desc: '正在保存本章手稿与状态...',
       });
     }
     if (state.isSanitizing) {
       tasks.push({
         id: 'sanitize',
         type: 'sanitize',
-        title: '确定性语法净洗',
-        desc: '正在剥离冒号与从句壳子...',
+        title: '去除机械壳',
+        desc: '正在去除机械套话与多余冒号...',
       });
     }
     return tasks;
@@ -248,16 +248,16 @@ export const computedState = {
 // Request Native Desktop / Web Notification Permission
 export async function requestNotificationPermission() {
   if (typeof window === 'undefined' || !('Notification' in window)) {
-    notify('当前环境不支持桌面通知', '浏览器或系统未开放 Web Notification 接口', 'warning');
+    notify('当前环境不支持桌面通知', '系统未开放通知接口', 'warning');
     return 'unsupported';
   }
   try {
     const perm = await Notification.requestPermission();
     state.systemNotificationPermission = perm;
     if (perm === 'granted') {
-      notify('桌面系统通知已授权', '后续章节渲染与推演完成时将弹出系统通知提醒', 'success');
+      notify('系统通知已开启', '章节生成完成时将弹出通知提醒', 'success');
     } else {
-      notify('桌面系统通知未授权', '你可以在系统偏好设置或浏览器权限中开启通知', 'info');
+      notify('系统通知未开启', '可随时在系统设置中开启通知', 'info');
     }
     return perm;
   } catch (e) {

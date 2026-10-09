@@ -15,14 +15,14 @@
           </div>
           <div>
             <div class="flex items-center gap-2">
-              <h3 class="text-sm font-bold font-serif text-ink-100">消息与任务中心</h3>
+              <h3 class="text-sm font-bold font-serif text-ink-100">消息中心</h3>
               <span 
                 v-if="computedState.unreadMessageCount.value > 0"
                 class="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-brand-rose text-white">
                 {{ computedState.unreadMessageCount.value }} 未读
               </span>
             </div>
-            <p class="text-[10px] text-ink-400">实时追踪后台推演进度、质检结果与系统通知</p>
+            <p class="text-[10px] text-ink-400">查看任务进度与通知记录。</p>
           </div>
         </div>
 
@@ -34,11 +34,11 @@
             :class="isNotificationGranted 
               ? (state.enableSystemNotifications ? 'bg-brand-emerald/15 text-brand-emerald border-brand-emerald/40' : 'bg-atelier-850 text-ink-400 border-atelier-700') 
               : 'bg-brand-amber/15 text-brand-amber border-brand-amber/40 hover:bg-brand-amber/25'"
-            :title="isNotificationGranted ? '点击切换桌面弹窗通知' : '点击授权浏览器/操作系统桌面原生弹窗通知'">
+            :title="isNotificationGranted ? '切换桌面系统通知' : '开启桌面系统通知'">
             <BellRing v-if="isNotificationGranted && state.enableSystemNotifications" class="w-3 h-3 text-brand-emerald" />
             <BellOff v-else-if="isNotificationGranted" class="w-3 h-3 text-ink-400" />
             <Sparkles v-else class="w-3 h-3 text-brand-amber" />
-            <span>{{ isNotificationGranted ? (state.enableSystemNotifications ? '桌面通知: 开' : '桌面通知: 关') : '开启桌面通知' }}</span>
+            <span>{{ isNotificationGranted ? (state.enableSystemNotifications ? '系统通知: 开' : '系统通知: 关') : '系统通知' }}</span>
           </button>
 
           <!-- 一键已读 -->
@@ -203,7 +203,7 @@
           <div class="space-y-1">
             <p class="text-xs font-medium text-ink-300">暂无该分类通知记录</p>
             <p class="text-[11px] text-ink-500 max-w-xs">
-              系统将自动记录所有正文渲染、因果推演、反AI味质检与自动闭环任务。
+              系统将自动记录起草、构思、体检与一键成章等任务。
             </p>
           </div>
         </div>
@@ -263,9 +263,9 @@ const notificationStatusText = computed(() => {
 
 const filterTabs = computed(() => [
   { id: 'all', label: '全部', count: state.messages.length },
-  { id: 'tasks', label: '运行中', count: computedState.activeTasks.value.length },
+  { id: 'tasks', label: '进行中', count: computedState.activeTasks.value.length },
   { id: 'unread', label: '未读', count: computedState.unreadMessageCount.value },
-  { id: 'errors', label: '报错与告警', count: state.messages.filter(m => m.type === 'error' || m.type === 'warning').length },
+  { id: 'errors', label: '异常', count: state.messages.filter(m => m.type === 'error' || m.type === 'warning').length },
 ]);
 
 const filteredMessages = computed(() => {

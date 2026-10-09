@@ -39,18 +39,18 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
       state.activeTab = 'workbench';
       state.pipelineState.active = true;
       state.pipelineState.phase = 'INIT';
-      state.pipelineState.message = '正在启动自主闭环流水线...';
+      state.pipelineState.message = '正在一键成章，请稍候...';
       state.pipelineState.tokens = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
       state.pipelineState.lastFinished = false;
 
       const nextIndex = state.editingChapterIndex || (state.chapters.length + 1);
       let conflict = state.workbench.coreConflict?.trim();
       if (!conflict) {
-        conflict = `第 ${nextIndex} 章高潮突围与世界法则冲突，主角面临因果阻碍与强敌制衡。`;
+        conflict = `第 ${nextIndex} 章剧情冲突与关键转折。`;
         state.workbench.coreConflict = conflict;
       }
 
-      // 立即将用户在工坊修改的最新手稿与节拍持久化到当前断点，避免仅在前端内存导致不同步
+      // 立即将用户修改的最新手稿与分段保存至草稿，避免刷新后不同步
       if (state.workbench.content?.trim() || state.workbench.coreConflict?.trim()) {
         await this.saveCheckpoint({}, true);
       }
@@ -154,7 +154,7 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
                       state.pipelineState.tokens = data.total_usage;
                     }
                   } else if (currentEvent === 'error') {
-                    throw new Error(data.error || '自主推演遭遇未知异常');
+                    throw new Error(data.error || '生成章节遭遇异常');
                   }
                 } catch (parseErr) {
                   if (currentEvent === 'error') throw parseErr;
@@ -180,8 +180,8 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
         }
 
         if (completedResult && completedResult.committed) {
-          state.pipelineState.message = `第 ${completedResult.chapter_index} 章自主推演完毕并已封存入库！`;
-          notify(`第 ${completedResult.chapter_index} 章生产完成`, '手稿与因果状态已原子写入正史', 'success');
+          state.pipelineState.message = `第 ${completedResult.chapter_index} 章已完成并保存至章节目录！`;
+          notify(`第 ${completedResult.chapter_index} 章已完成`, '本章手稿已成功定稿存入目录', 'success');
 
           if (helpers && helpers.selectProject) {
             await helpers.selectProject(state.currentProject.id);
@@ -196,25 +196,25 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
           const audit = completedResult?.audit || state.reviewResult;
           const verdict = audit?.verdict || '待返工';
           const score = audit?.score ?? 0;
-          state.pipelineState.message = `第 ${nextIndex} 章推演质检评级为 ${verdict} (${score}分)，未达到自动封存入库标准，已保留在工作台中`;
+          state.pipelineState.message = `第 ${nextIndex} 章体检结果为 ${verdict} (${score}分)，已保留在工作台供修改`;
           notify(
-            '质检未达到自动归档标准',
-            `评级: ${verdict} (${score}分)，手稿未自动归档，已停留在返工工作台等待人工复核`,
+            '体检未达标',
+            `得分: ${score}分，手稿已保留在工作台，可直接精修`,
             'warning'
           );
 
           // 保持在当前章节工坊编辑状态，严禁清除 editingChapterIndex 或关闭工坊
           state.editingChapterIndex = nextIndex;
-          // 定位至步骤 5 (针对性返工 / 审校面板)，展示问题与修改建议
+          // 定位至步骤 5 (精修面板)，展示问题与修改建议
           state.activeStep = 5;
-          // 持久化当前草稿与终审结果至断点，刷新不丢失
+          // 保存当前草稿与体检建议，刷新不丢失
           await this.saveCheckpoint({}, true);
         }
         state.pipelineState.lastFinished = true;
       } catch (err) {
         console.error('runAutonomousPipeline error:', err);
-        notify('自主推演中断', err.message, 'error');
-        state.pipelineState.message = '自主推演失败: ' + err.message;
+        notify('生成中断', err.message, 'error');
+        state.pipelineState.message = '生成失败: ' + err.message;
         state.editingChapterIndex = nextIndex;
       } finally {
         state.pipelineState.active = false;
@@ -241,7 +241,7 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
         await api.saveCheckpoint(state.currentProject.id, payload);
         state.lastSavedAt = new Date();
         if (!silent) {
-          notify('草稿断点已保存', `第 ${idx} 章当前手稿与工步已持久化存盘`, 'success', 2000);
+          notify('草稿已保存', `第 ${idx} 章当前进度已保存`, 'success', 2000);
         }
       } catch (err) {
         console.error('save checkpoint failed:', err);
@@ -298,8 +298,8 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
             this.runLinter();
           }
           state.lastSavedAt = new Date();
-          const detail = cp.draft_text ? `共 ${cp.draft_text.length} 字手稿` : '包含已推演节拍';
-          notify('已自动恢复草稿断点', `已载入第 ${cp.chapter_index} 章断点（${detail}）`, 'info');
+          const detail = cp.draft_text ? `共 ${cp.draft_text.length} 字` : '包含分段构思';
+          notify('已恢复草稿', `已载入第 ${cp.chapter_index} 章进度（${detail}）`, 'info');
         }
       } catch (err) {
         console.warn('restore checkpoint failed:', err);
@@ -311,10 +311,10 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
       const idx = targetIndex || state.editingChapterIndex || (state.chapters ? state.chapters.length + 1 : 1);
       if (dialogs) {
         const ok = await dialogs.confirm({
-          title: '放弃章节草稿',
-          message: `确定彻底废弃并清空第 ${idx} 章的在途草稿与节拍吗？未封存的改动将无法找回。`,
+          title: '放弃本章草稿',
+          message: `确定清空第 ${idx} 章的在途草稿与分段吗？未保存的内容将无法找回。`,
           type: 'danger',
-          confirmText: '确认废弃',
+          confirmText: '确认清空',
         });
         if (!ok) return;
       }
@@ -323,24 +323,24 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
         state.workbench.content = '';
         state.workbench.coreConflict = '';
         state.workbench.beats = [
-          { phase: '蓄力压迫', tension: 4, action: '', expectation_broken: '' },
-          { phase: '试探下套', tension: 6, action: '', expectation_broken: '' },
+          { phase: '开端压迫', tension: 4, action: '', expectation_broken: '' },
+          { phase: '冲突升级', tension: 6, action: '', expectation_broken: '' },
           { phase: '绝地反转', tension: 9, action: '', expectation_broken: '' },
-          { phase: '章末留钩', tension: 8, action: '', expectation_broken: '' },
+          { phase: '留存悬念', tension: 8, action: '', expectation_broken: '' },
         ];
         state.reviewResult = null;
         state.editingChapterIndex = null;
         state.activeStep = 1;
         state.lastSavedAt = null;
-        notify('草稿断点已废弃', `第 ${idx} 章在途草稿与节拍已全部清除`, 'info');
+        notify('草稿已清空', `第 ${idx} 章草稿与分段已清空`, 'info');
       } catch (err) {
-        notify('清除断点失败', err.message, 'error');
+        notify('清空草稿失败', err.message, 'error');
       }
     },
 
     async runDeterministicSanitize() {
       if (!state.currentProject || !state.workbench.content?.trim()) {
-        notify('手稿为空', '手稿区暂无正文可供净洗', 'warning');
+        notify('正文为空', '手稿区暂无正文可供去壳', 'warning');
         return;
       }
       state.isSanitizing = true;
@@ -354,19 +354,19 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
           await this.saveCheckpoint({}, true);
           if (res.items_count > 0) {
             notify(
-              '确定性语法净洗完成',
-              `已成功剥离 ${res.items_count} 处空转冒号、从句壳子与机械复述词`,
+              '去机械壳完成',
+              `已优化 ${res.items_count} 处机械套话与从句`,
               'success',
               3500,
               { taskType: 'sanitize', count: res.items_count }
             );
           } else {
-            notify('确定性语法净洗完成', '手稿行文未发现机械语法壳子', 'info', 3000, { taskType: 'sanitize' });
+            notify('去机械壳完成', '正文自然流畅，未发现机械腔调', 'info', 3000, { taskType: 'sanitize' });
           }
         }
       } catch (err) {
         console.error('sanitizeAI failed:', err);
-        notify('语法净洗失败', err.message, 'error', 4500, { taskType: 'sanitize' });
+        notify('去壳失败', err.message, 'error', 4500, { taskType: 'sanitize' });
       } finally {
         state.isSanitizing = false;
       }

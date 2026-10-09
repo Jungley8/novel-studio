@@ -6,7 +6,7 @@
     <div class="bg-atelier-900 border border-atelier-750 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl animate-fade-in">
       <div class="flex items-center justify-between border-b border-atelier-750 pb-3">
         <h3 class="text-sm font-serif font-bold text-ink-50">
-          {{ state.editingCodexEntry ? '编辑百科实体' : '新建百科实体' }}
+          {{ state.editingCodexEntry ? '编辑设定词条' : '新建设定词条' }}
         </h3>
         <button 
           @click="state.showCodexModal = false" 
@@ -18,7 +18,7 @@
       <div class="space-y-3 text-xs">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label class="text-ink-300 font-medium">实体名称：</label>
+            <label class="text-ink-300 font-medium">词条名称：</label>
             <input 
               v-model="form.name" 
               class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-lg p-2.5 text-xs text-ink-50 font-serif font-bold focus:outline-none focus:border-brand-amber/60" 
@@ -149,7 +149,7 @@
           @click="saveCodexEntry" 
           :disabled="!form.name.trim()"
           class="px-4 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-lg shadow-amber-glow transition cursor-pointer disabled:opacity-50">
-          保存百科实体
+          保存词条
         </button>
       </div>
     </div>
@@ -235,15 +235,15 @@ async function saveCodexEntry() {
   try {
     if (state.editingCodexEntry?.id) {
       await api.updateCodexEntry(state.currentProject.id, state.editingCodexEntry.id, payload);
-      notify('百科实体已更新', payload.name, 'success');
+      notify('词条已更新', payload.name, 'success');
     } else {
       await api.createCodexEntry(state.currentProject.id, payload);
-      notify('百科实体已创建', payload.name, 'success');
+      notify('词条已创建', payload.name, 'success');
     }
     await actions.loadCodexEntries();
     state.showCodexModal = false;
   } catch (e) {
-    notify('保存实体失败', e.message, 'error');
+    notify('保存词条失败', e.message, 'error');
   }
 }
 </script>

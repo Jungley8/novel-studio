@@ -11,8 +11,8 @@
             <HeartHandshake class="w-3.5 h-3.5" />
           </div>
           <div>
-            <h3 class="text-sm font-serif font-bold text-ink-50 tracking-wide">人机协同人味杂质注入 (Human-in-the-Loop)</h3>
-            <p class="text-[10px] text-ink-400">打破 AIGC 均匀概率分布，注入生理不适、世俗闲笔、市井口癖与断裂顿挫</p>
+            <h3 class="text-sm font-serif font-bold text-ink-50 tracking-wide">增添细节</h3>
+            <p class="text-[10px] text-ink-400">打破机械腔调，增添生理感官与生活细节</p>
           </div>
         </div>
 
@@ -22,7 +22,7 @@
             :disabled="isLoading || !state.workbench.content" 
             class="px-2.5 py-1 text-xs bg-atelier-850 hover:bg-atelier-800 text-brand-amber rounded border border-atelier-750 transition flex items-center gap-1 cursor-pointer disabled:opacity-40">
             <RotateCcw class="w-3 h-3" :class="{ 'animate-spin': isLoading }" />
-            <span>{{ isLoading ? '分析中...' : '重新提取建议' }}</span>
+            <span>{{ isLoading ? '分析中...' : '重新分析' }}</span>
           </button>
           <button 
             @click="state.showHumanTouchesModal = false" 
@@ -32,13 +32,13 @@
         </div>
       </div>
 
-      <!-- 科学原理提示横幅 -->
+      <!-- 写作建议提示横幅 -->
       <div class="p-3.5 bg-brand-amber/10 border-b border-brand-amber/20 text-xs text-brand-amber/90 flex items-start gap-2.5">
         <Sparkles class="w-4 h-4 shrink-0 mt-0.5 text-brand-amber" />
         <div class="space-y-0.5 text-[11px] leading-relaxed">
-          <p class="font-semibold text-brand-amber">为什么商业检测助手（如腾讯朱雀）会打出 100% 疑似 AI？</p>
+          <p class="font-semibold text-brand-amber">为什么 AI 生成的内容容易读出机械味？</p>
           <p class="text-ink-300">
-            因为大模型生成的文字呈现高度均匀的 Token 似然度、对称逗号节奏以及绝对干净的推进逻辑。人类写作天然带有<strong>身体生理的抵抗、世俗物质的琐碎摩擦、市井方言的粗粝口癖与残破的断句</strong>。在手稿关键节点采纳并插入以下细节，可直接击碎检测器的概率规律。
+            大模型行文往往过于工整平滑。真实写作充满身体感受、环境细节、口语习惯与断句顿挫。采纳并融入下方细节建议，能让正文更加鲜活生动。
           </p>
         </div>
       </div>
@@ -59,7 +59,7 @@
       <div class="flex-1 p-6 overflow-y-auto space-y-4">
         <div v-if="isLoading" class="p-16 text-center text-ink-400 text-xs flex flex-col items-center justify-center gap-2">
           <Loader2 class="w-5 h-5 text-brand-amber animate-spin" />
-          <span>正在对当前手稿全文进行因果熵与人味杂质扫描...</span>
+          <span>正在分析手稿细节与文字质感...</span>
         </div>
 
         <div v-else-if="filteredSuggestions.length === 0" class="p-12 text-center text-ink-400 text-xs flex flex-col items-center justify-center gap-2">

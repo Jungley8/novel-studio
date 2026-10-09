@@ -20,12 +20,13 @@
       <!-- 项目选择器 -->
       <div class="p-3 border-b border-atelier-750 bg-atelier-950/40">
         <div class="flex items-center justify-between mb-1.5">
-          <span class="text-[10px] font-mono uppercase tracking-wider text-ink-400">当前书卷 (Work)</span>
+          <span class="text-[10px] font-mono uppercase tracking-wider text-ink-400">当前作品</span>
           <button 
             @click="state.showNewProjectModal = true"
-            class="text-[11px] text-brand-amber hover:text-brand-amber-hover flex items-center gap-0.5 font-medium transition cursor-pointer">
+            class="text-[11px] text-brand-amber hover:text-brand-amber-hover flex items-center gap-0.5 font-medium transition cursor-pointer"
+            title="新建一部小说作品">
             <Plus class="w-3 h-3" />
-            <span>新建</span>
+            <span>新建作品</span>
           </button>
         </div>
         <div v-if="state.projects.length > 0" class="relative">
@@ -42,7 +43,7 @@
           @click="state.showNewProjectModal = true"
           class="w-full py-2 px-2.5 bg-brand-amber/10 hover:bg-brand-amber/20 border border-brand-amber/30 rounded-md text-xs text-brand-amber font-medium flex items-center justify-center gap-1.5 transition cursor-pointer">
           <Plus class="w-3.5 h-3.5" />
-          <span>点击创建第一部作品</span>
+          <span>新建第一部作品</span>
         </button>
       </div>
 
@@ -52,6 +53,7 @@
           v-for="item in navItems" 
           :key="item.id"
           @click="selectTab(item.id)"
+          :title="item.desc"
           :class="[
             'w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition group cursor-pointer text-left',
             state.activeTab === item.id 
@@ -83,20 +85,22 @@
         <a 
           :href="state.currentProject ? '/api/projects/' + state.currentProject.id + '/export/json' : '#'" 
           download 
-          class="flex items-center justify-center gap-1.5 py-1.5 px-2 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded border border-atelier-700/80 transition text-center cursor-pointer">
+          class="flex items-center justify-center gap-1.5 py-1.5 px-2 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded border border-atelier-700/80 transition text-center cursor-pointer"
+          title="导出 JSON 格式备份数据">
           <Download class="w-3 h-3 text-ink-400" />
-          <span>快照 JSON</span>
+          <span>导出备份</span>
         </a>
         <a 
           :href="state.currentProject ? '/api/projects/' + state.currentProject.id + '/export/markdown' : '#'" 
           download 
-          class="flex items-center justify-center gap-1.5 py-1.5 px-2 text-[11px] font-medium bg-brand-amber/10 hover:bg-brand-amber/20 text-brand-amber rounded border border-brand-amber/25 transition text-center cursor-pointer">
+          class="flex items-center justify-center gap-1.5 py-1.5 px-2 text-[11px] font-medium bg-brand-amber/10 hover:bg-brand-amber/20 text-brand-amber rounded border border-brand-amber/25 transition text-center cursor-pointer"
+          title="导出 Markdown 全本文件">
           <BookDown class="w-3 h-3 text-brand-amber" />
-          <span>全本 MD</span>
+          <span>导出全书</span>
         </a>
       </div>
       <div class="text-[10px] font-mono text-ink-400 text-center pt-1">
-        单二进制零 CGO · 工业级长篇防护
+        本地安全存储 · 随时离线写作
       </div>
     </div>
   </aside>
@@ -122,15 +126,15 @@ import {
 } from 'lucide-vue-next';
 
 const navItems = computed(() => [
-  { id: 'workbench', label: '生产手稿 (Workbench)', icon: PenTool, badge: state.chapters.length ? `第${state.chapters.length + 1}章` : '' },
-  { id: 'matrix', label: '矩阵大纲 (The Matrix)', icon: LayoutGrid, badge: state.matrixOverview?.total_scenes ? `${state.matrixOverview.total_scenes}场` : '' },
-  { id: 'codex', label: '全域百科 (The Codex)', icon: BookOpen, badge: state.codexEntries.length ? `${state.codexEntries.length}条` : '' },
-  { id: 'framework', label: '创世总纲 (Framework)', icon: Compass },
-  { id: 'statemachine', label: '实体状态机 (State Machine)', icon: Cpu },
-  { id: 'hooks', label: '伏笔因果 (Plot Ledger)', icon: Anchor, badge: state.hooks.filter(h => h.status !== 'RESOLVED').length ? `${state.hooks.filter(h => h.status !== 'RESOLVED').length}线` : '' },
-  { id: 'chapters', label: '全本正史 (History)', icon: Archive, badge: `${state.chapters.length}章` },
-  { id: 'analytics', label: '态势分析 (Analytics)', icon: BarChart3 },
-  { id: 'config', label: '系统与模型 (Engine)', icon: Settings },
+  { id: 'workbench', label: '写正文', desc: '构思、生成与打磨每章手稿', icon: PenTool, badge: state.chapters.length ? `第${state.chapters.length + 1}章` : '' },
+  { id: 'matrix', label: '全书大纲', desc: '全书章节结构与剧情路线', icon: LayoutGrid, badge: state.matrixOverview?.total_scenes ? `${state.matrixOverview.total_scenes}场` : '' },
+  { id: 'codex', label: '设定集', desc: '人物、势力与世界观档案', icon: BookOpen, badge: state.codexEntries.length ? `${state.codexEntries.length}条` : '' },
+  { id: 'framework', label: '作品设定', desc: '核心设定、主线与文风基调', icon: Compass },
+  { id: 'statemachine', label: '人物状态', desc: '主角境界、战力与物品变动', icon: Cpu },
+  { id: 'hooks', label: '伏笔簿', desc: '记录剧情伏笔与回收进度', icon: Anchor, badge: state.hooks.filter(h => h.status !== 'RESOLVED').length ? `${state.hooks.filter(h => h.status !== 'RESOLVED').length}线` : '' },
+  { id: 'chapters', label: '章节目录', desc: '已完稿章节的归档与浏览', icon: Archive, badge: `${state.chapters.length}章` },
+  { id: 'analytics', label: '全书体检', desc: '篇幅节奏、字数与剧情走势', icon: BarChart3 },
+  { id: 'config', label: 'AI 配置', desc: '接入的大模型与密钥管理', icon: Settings },
 ]);
 
 function selectTab(tabId) {

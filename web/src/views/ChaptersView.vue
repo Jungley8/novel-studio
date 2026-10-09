@@ -8,19 +8,19 @@
         </div>
         <div>
           <div class="flex items-center gap-2">
-            <h2 class="text-sm font-serif font-bold text-ink-50 tracking-wide">全本已归档正史 (Canon History)</h2>
+            <h2 class="text-sm font-serif font-bold text-ink-50 tracking-wide">章节目录</h2>
             <span class="text-[10px] font-mono text-ink-400 bg-atelier-850 px-2 py-0.5 rounded border border-atelier-750">
               {{ state.currentProject?.title || '未命名作品' }}
             </span>
           </div>
-          <p class="text-[11px] text-ink-400">历次因果原子封存章节、质检裁决报告与成书正文阅览室</p>
+          <p class="text-[11px] text-ink-400">浏览与阅读已定稿的章节正文。</p>
         </div>
       </div>
 
       <div class="flex items-center gap-3">
         <!-- 统计指标 -->
         <div class="hidden sm:flex items-center gap-2 text-xs font-mono bg-atelier-850 px-3 py-1.5 rounded-md border border-atelier-750">
-          <span class="text-ink-400">已归档</span>
+          <span class="text-ink-400">已定稿</span>
           <strong class="text-brand-amber">{{ state.chapters.length }}</strong>
           <span class="text-ink-400">章</span>
           <span class="text-atelier-700">|</span>
@@ -35,14 +35,14 @@
             class="px-2.5 py-1 text-xs rounded-md transition flex items-center gap-1.5 cursor-pointer"
             :class="viewMode === 'tree' ? 'bg-brand-amber text-atelier-950 font-bold shadow-atelier-sm' : 'text-ink-300 hover:text-ink-100'">
             <ListTree class="w-3.5 h-3.5" />
-            <span>树形目录</span>
+            <span>目录树</span>
           </button>
           <button 
             @click="viewMode = 'cards'" 
             class="px-2.5 py-1 text-xs rounded-md transition flex items-center gap-1.5 cursor-pointer"
             :class="viewMode === 'cards' ? 'bg-brand-amber text-atelier-950 font-bold shadow-atelier-sm' : 'text-ink-300 hover:text-ink-100'">
             <LayoutGrid class="w-3.5 h-3.5" />
-            <span>瀑布卡片</span>
+            <span>卡片</span>
           </button>
         </div>
 
@@ -50,7 +50,7 @@
           v-if="viewMode === 'cards'"
           @click="toggleExpandAll" 
           class="px-3 py-1.5 bg-atelier-850 hover:bg-atelier-800 text-ink-300 text-xs rounded-md border border-atelier-750 transition cursor-pointer">
-          {{ isAllExpanded ? '收起全部正文' : '展开全部正文' }}
+          {{ isAllExpanded ? '收起全文' : '展开全文' }}
         </button>
       </div>
     </div>
@@ -62,15 +62,15 @@
       <div class="w-14 h-14 rounded-2xl bg-atelier-900 border border-atelier-750 flex items-center justify-center text-ink-400 mb-4 shadow-inner">
         <Archive class="w-7 h-7 text-ink-500" />
       </div>
-      <h3 class="text-sm font-semibold font-serif text-ink-200">暂无已封存归档章节</h3>
+      <h3 class="text-sm font-semibold font-serif text-ink-200">暂无已定稿章节</h3>
       <p class="text-xs text-ink-400 max-w-md mx-auto mt-1 leading-relaxed">
-        在“故事工坊”中完成节拍推演、正文渲染与反 AI 质检后，点击“因果封存归档”即可将章节正式收录入全本正史。
+        在“写正文”中完成起草与定稿后，章节将收录至目录。
       </p>
       <button 
         @click="state.activeTab = 'workbench'"
         class="mt-4 px-4 py-2 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 text-xs font-bold rounded-lg transition shadow-atelier-sm flex items-center gap-1.5 cursor-pointer">
         <PenTool class="w-3.5 h-3.5" />
-        <span>前往故事工坊创作第一章</span>
+        <span>前往写第一章</span>
       </button>
     </div>
 
@@ -145,7 +145,7 @@
                   </div>
                 </div>
 
-                <!-- 章节子节点：4段因果节拍事实 (Beats Leaf Nodes) -->
+                <!-- 章节子节点：4段分段情节 (Beats Leaf Nodes) -->
                 <div 
                   v-show="chapterBeatsExpandedMap[c.id]" 
                   class="pl-6 pr-1 py-1 space-y-1 text-[11px] bg-atelier-950/60 rounded-md border border-atelier-850/60 my-0.5">
@@ -154,10 +154,10 @@
                     :key="bIdx"
                     class="flex items-start gap-1.5 text-ink-400 leading-snug">
                     <span class="text-[9px] font-mono font-bold text-brand-amber/80 bg-brand-amber/10 px-1 rounded shrink-0">
-                      拍{{ bIdx + 1 }}
+                      段{{ bIdx + 1 }}
                     </span>
                     <span class="text-ink-300 truncate" :title="b.action || b.expectation_broken">
-                      {{ b.phase }} · {{ b.action || b.expectation_broken || '因果推进' }}
+                      {{ b.phase }} · {{ b.action || b.expectation_broken || '情节推进' }}
                     </span>
                   </div>
                 </div>
@@ -210,18 +210,18 @@
             <button 
               @click="handleLoadToWorkbench(currentSelectedChapter)"
               class="px-2.5 py-1 text-xs bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-750 rounded-md transition flex items-center gap-1 cursor-pointer"
-              title="载入故事工坊画布进行精修">
+              title="载入写正文工作台进行修改">
               <FileEdit class="w-3.5 h-3.5 text-brand-amber" />
-              <span>载入工坊</span>
+              <span>载入修改</span>
             </button>
 
             <!-- 撤回归档为草稿 -->
             <button 
               @click="handleRevertToDraft(currentSelectedChapter.chapter_index)"
               class="px-2.5 py-1 text-xs bg-brand-rose/10 hover:bg-brand-rose/20 text-brand-rose border border-brand-rose/30 rounded-md transition flex items-center gap-1 cursor-pointer"
-              title="将本章从正史移出，回滚主角账本，恢复为在途草稿">
+              title="撤回本章至草稿，恢复人物上一状态">
               <RotateCcw class="w-3.5 h-3.5" />
-              <span>撤回归档为草稿</span>
+              <span>撤回草稿</span>
             </button>
 
             <!-- 字体大小缩放 -->
@@ -248,28 +248,28 @@
           </div>
         </div>
 
-        <!-- 标签页切换：沉浸正文 / 节拍事实 / 质检报告 -->
+        <!-- 标签页切换：正文 / 分段 / 体检报告 -->
         <div class="px-6 border-b border-atelier-750 bg-atelier-900/10 flex items-center gap-4 text-xs select-none">
           <button 
             @click="activeReaderTab = 'content'"
             class="py-2.5 border-b-2 font-medium transition cursor-pointer flex items-center gap-1.5"
             :class="activeReaderTab === 'content' ? 'border-brand-amber text-brand-amber font-bold' : 'border-transparent text-ink-400 hover:text-ink-200'">
             <FileText class="w-3.5 h-3.5" />
-            <span>沉浸正文成稿</span>
+            <span>正文阅读</span>
           </button>
           <button 
             @click="activeReaderTab = 'beats'"
             class="py-2.5 border-b-2 font-medium transition cursor-pointer flex items-center gap-1.5"
             :class="activeReaderTab === 'beats' ? 'border-brand-amber text-brand-amber font-bold' : 'border-transparent text-ink-400 hover:text-ink-200'">
             <Layers class="w-3.5 h-3.5" />
-            <span>4段因果节拍与状态变迁</span>
+            <span>本章分段</span>
           </button>
           <button 
             @click="activeReaderTab = 'review'"
             class="py-2.5 border-b-2 font-medium transition cursor-pointer flex items-center gap-1.5"
             :class="activeReaderTab === 'review' ? 'border-brand-amber text-brand-amber font-bold' : 'border-transparent text-ink-400 hover:text-ink-200'">
             <ShieldCheck class="w-3.5 h-3.5" />
-            <span>总编审质检报告</span>
+            <span>体检报告</span>
           </button>
         </div>
 
@@ -297,17 +297,17 @@
 
               <!-- 章节收尾信息 -->
               <div class="pt-8 border-t border-atelier-800/80 flex items-center justify-between text-xs text-ink-500 font-mono">
-                <span>封存时间: {{ formatDate(currentSelectedChapter.created_at) }}</span>
-                <span>突发度得分: {{ currentSelectedChapter.burstiness_score || 50 }} 分</span>
+                <span>定稿时间: {{ formatDate(currentSelectedChapter.created_at) }}</span>
+                <span>节奏得分: {{ currentSelectedChapter.burstiness_score || 50 }} 分</span>
               </div>
             </div>
 
-            <!-- TAB 2: 因果节拍事实 -->
+            <!-- TAB 2: 分段情节与状态 -->
             <div v-else-if="activeReaderTab === 'beats'" class="space-y-4">
               <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                 <div 
                   v-for="(b, idx) in currentSelectedChapter.beats" 
-                  :key="idx"
+                  :key="idx" 
                   class="p-4 bg-atelier-900/80 border border-atelier-750 rounded-xl space-y-2">
                   <div class="flex items-center justify-between text-xs">
                     <span class="font-bold text-brand-amber flex items-center gap-1.5">
@@ -331,11 +331,11 @@
                 </div>
               </div>
 
-              <!-- 状态变迁账本 -->
+              <!-- 状态变化 -->
               <div v-if="currentSelectedChapter.state_mutation" class="p-4 bg-atelier-900/80 border border-atelier-750 rounded-xl space-y-2 text-xs">
                 <h4 class="font-bold text-brand-emerald flex items-center gap-1.5">
                   <Sparkles class="w-3.5 h-3.5" />
-                  <span>主角状态机变迁 (State Mutation)</span>
+                  <span>主角状态变化</span>
                 </h4>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-ink-300">
                   <div>战力增减：<span class="text-ink-100">{{ currentSelectedChapter.state_mutation.power_delta || '无' }}</span></div>
@@ -440,21 +440,21 @@
             <button 
               @click="handleLoadToWorkbench(c)" 
               class="text-ink-300 hover:text-brand-amber flex items-center gap-1 font-medium transition cursor-pointer"
-              title="载入故事工坊画布进行精修">
+              title="载入写正文工作台进行修改">
               <FileEdit class="w-3.5 h-3.5 text-brand-amber" />
-              <span>载入工坊</span>
+              <span>载入修改</span>
             </button>
             <button 
               @click="handleRevertToDraft(c.chapter_index)" 
               class="text-ink-400 hover:text-brand-rose flex items-center gap-1 font-medium transition cursor-pointer"
-              title="将本章从正史移出，回滚主角账本，恢复为在途草稿">
+              title="撤回本章至草稿，恢复人物上一状态">
               <RotateCcw class="w-3.5 h-3.5" />
-              <span>撤回为草稿</span>
+              <span>撤回草稿</span>
             </button>
             <button 
               @click="toggleExpand(c.id)" 
               class="text-brand-amber hover:text-brand-amber-hover flex items-center gap-1 font-medium transition cursor-pointer">
-              <span>{{ expandedMap[c.id] ? '收起正文' : '展开阅读完整章节' }}</span>
+              <span>{{ expandedMap[c.id] ? '收起正文' : '展开阅读' }}</span>
               <ChevronDown class="w-3.5 h-3.5 transition-transform" :class="expandedMap[c.id] ? 'rotate-180' : ''" />
             </button>
           </div>
@@ -558,7 +558,7 @@ const volumeGroups = computed(() => {
     groups.push({
       id: `vol_auto_${v}`,
       title: `第 ${v} 卷`,
-      theme: '因果演进与主线推进',
+      theme: '主线剧情推进',
       rangeText: `第 ${startCh} - ${endCh} 章`,
       chapters: chsInVol,
     });

@@ -43,9 +43,9 @@ export function createProjectActions(state, notify, helpers, dialogs) {
       if (!state.currentProject) return;
       try {
         await api.updateProject(state.currentProject);
-        notify('项目设定已保存', '实体物理状态与规则已持久化', 'success');
+        notify('作品设定已保存', '基础信息与规则已保存', 'success');
       } catch (e) {
-        notify('保存项目失败', e.message, 'error');
+        notify('保存作品失败', e.message, 'error');
       }
     },
 
@@ -85,7 +85,7 @@ export function createProjectActions(state, notify, helpers, dialogs) {
         };
         await api.createHook(state.currentProject.id, newHook);
         state.hooks = await api.listHooks(state.currentProject.id);
-        notify('伏笔已记录', '因果账本已更新', 'success');
+        notify('伏笔已记录', '已添加到伏笔簿', 'success');
       } catch (e) {
         notify('新建伏笔失败', e.message, 'error');
       }
@@ -95,7 +95,7 @@ export function createProjectActions(state, notify, helpers, dialogs) {
       if (!state.currentProject) return;
       try {
         await api.updateHook(state.currentProject.id, hook);
-        notify('伏笔状态已更新', '', 'success', 2000);
+        notify('伏笔已更新', '', 'success', 2000);
       } catch (e) {
         notify('更新伏笔失败', e.message, 'error');
       }
@@ -104,8 +104,8 @@ export function createProjectActions(state, notify, helpers, dialogs) {
     async deletePlotHook(id) {
       if (dialogs) {
         const ok = await dialogs.confirm({
-          title: '删除伏笔记录',
-          message: '确定删除该伏笔记录吗？删除后已绑定的章节因果引用将被清除。',
+          title: '删除伏笔',
+          message: '确定删除该伏笔吗？删除后相关关联将被清除。',
           type: 'danger',
           confirmText: '确认删除',
         });
@@ -125,7 +125,7 @@ export function createProjectActions(state, notify, helpers, dialogs) {
       if (dialogs) {
         const ok = await dialogs.confirm({
           title: `撤回第 ${chapterIndex} 章为草稿`,
-          message: `确定将第 ${chapterIndex} 章撤回为草稿吗？\n\n该操作将：\n1. 从全本已归档正史中移出该章\n2. 回滚本章对主角战力与背包物品的变迁账本\n3. 将本章成稿与因果节拍恢复为工坊草稿\n4. 还原在途质检报告供重新返工打磨`,
+          message: `确定将第 ${chapterIndex} 章撤回为草稿吗？\n\n该操作将：\n1. 从已定稿章节中移出本章\n2. 恢复本章之前的人物状态\n3. 将本章正文与分段放回工作台\n4. 保留体检建议供重新打磨`,
           type: 'warning',
           confirmText: '确认撤回',
         });
@@ -155,7 +155,7 @@ export function createProjectActions(state, notify, helpers, dialogs) {
         state.editingChapterIndex = chapterIndex;
         state.activeTab = 'workbench';
         state.activeStep = state.reviewResult ? 5 : 3;
-        notify('已撤回为草稿', `第 ${chapterIndex} 章已移出正史并恢复为工作台草稿`, 'success');
+        notify('已撤回为草稿', `第 ${chapterIndex} 章已恢复为草稿，可重新修改`, 'success');
       } catch (e) {
         console.error('revert chapter to draft error:', e);
         notify('撤回归档失败', e.message, 'error');
@@ -174,7 +174,7 @@ export function createProjectActions(state, notify, helpers, dialogs) {
       state.editingChapterIndex = chapter.chapter_index;
       state.activeTab = 'workbench';
       state.activeStep = 3; // 定位至手稿编辑画布
-      notify('已载入工作台', `第 ${chapter.chapter_index} 章成稿已填入画布，可修改后执行精修或自主推演`, 'success');
+      notify('已载入工作台', `第 ${chapter.chapter_index} 章已载入，可直接修改润色`, 'success');
     },
   };
 }

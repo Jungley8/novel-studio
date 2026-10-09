@@ -8,8 +8,8 @@
             <Cpu class="w-4 h-4" />
           </div>
           <div>
-            <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">实体物理状态机 (Entity State Machine)</h2>
-            <p class="text-xs text-ink-400 mt-0.5">每次生成前强制注入模型上下文，严格守护因果不变量与主角状态守恒</p>
+            <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">人物状态</h2>
+            <p class="text-xs text-ink-400 mt-0.5">记录主角当前境界、战力与随身物品。</p>
           </div>
         </div>
       </div>
@@ -18,17 +18,17 @@
         @click="actions.saveCurrentProject" 
         class="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-md shadow-amber-glow transition cursor-pointer">
         <Save class="w-3.5 h-3.5" />
-        <span>保存状态机设定</span>
+        <span>保存状态</span>
       </button>
     </div>
 
     <!-- 状态机两栏核心网格 -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6" v-if="state.currentProject.protagonist">
-      <!-- 左栏：主角当前物理状态 -->
+      <!-- 左栏：主角当前状态 -->
       <div class="p-5 bg-atelier-900 border border-atelier-750 rounded-xl space-y-4 shadow-atelier-sm">
         <div class="flex items-center gap-2 text-xs font-serif font-bold text-brand-amber border-b border-atelier-800 pb-2.5">
           <User class="w-4 h-4" />
-          <span>主角当前物理状态 (Protagonist State)</span>
+          <span>主角状态</span>
         </div>
 
         <div class="space-y-3 text-xs">
@@ -40,7 +40,7 @@
           </div>
 
           <div>
-            <label class="text-ink-400 font-medium">随身物品栏与消耗品账本 (Inventory)：</label>
+            <label class="text-ink-400 font-medium">随身物品与道具 (Inventory)：</label>
             <textarea 
               v-model="state.currentProject.protagonist.inventory" 
               rows="4" 
@@ -49,7 +49,7 @@
           </div>
 
           <div>
-            <label class="text-ink-400 font-medium">当前隐秘目标与不可触碰底线 (Core Goal)：</label>
+            <label class="text-ink-400 font-medium">当前目标与行事底线 (Core Goal)：</label>
             <input 
               v-model="state.currentProject.protagonist.core_goal" 
               class="w-full mt-1.5 bg-atelier-950 border border-atelier-750 rounded-md px-3 py-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60">

@@ -8,8 +8,8 @@
             <LayoutGrid class="w-4 h-4" />
           </div>
           <div>
-            <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">矩阵大纲 (The Matrix)</h2>
-            <p class="text-xs text-ink-400 mt-0.5">分卷 / 幕次 / 章节 / 场次 4 层戏剧张力透视与结构网格</p>
+            <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">全书大纲</h2>
+            <p class="text-xs text-ink-400 mt-0.5">规划全书分卷、章节情节与戏剧走向。</p>
           </div>
         </div>
       </div>
@@ -26,7 +26,7 @@
           @click="actions.loadMatrixOverview" 
           class="flex items-center gap-1.5 px-3 py-1.5 bg-atelier-850 hover:bg-atelier-800 text-ink-200 text-xs font-medium rounded-md border border-atelier-750 transition cursor-pointer">
           <RefreshCw class="w-3.5 h-3.5 text-ink-400" />
-          <span>刷新大纲</span>
+          <span>刷新</span>
         </button>
       </div>
     </div>

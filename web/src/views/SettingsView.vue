@@ -7,8 +7,8 @@
           <Settings class="w-4 h-4" />
         </div>
         <div>
-          <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">系统与模型路由 (Engine & LLM Router)</h2>
-          <p class="text-xs text-ink-400 mt-0.5">三权分立多通道路由、物理端点解耦与自审盲区防护配置</p>
+          <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">AI 配置</h2>
+          <p class="text-xs text-ink-400 mt-0.5">设置写作、构思与质检使用的大模型。</p>
         </div>
       </div>
 
@@ -19,14 +19,14 @@
           class="flex items-center gap-1.5 px-3 py-2 bg-atelier-800 hover:bg-atelier-700 text-ink-200 hover:text-white border border-atelier-700 font-medium text-xs rounded-md shadow transition cursor-pointer disabled:opacity-50">
           <Loader2 v-if="state.configTestStatus?.default?.loading" class="w-3.5 h-3.5 animate-spin text-brand-amber" />
           <Zap v-else class="w-3.5 h-3.5 text-brand-amber" />
-          <span>测试主接口连通性</span>
+          <span>测试连接</span>
         </button>
 
         <button 
           @click="actions.saveConfig" 
           class="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-md shadow transition cursor-pointer">
           <Save class="w-3.5 h-3.5" />
-          <span>保存系统配置</span>
+          <span>保存配置</span>
         </button>
       </div>
     </div>
@@ -69,21 +69,21 @@
       <!-- 三大角色分工模型绑定 -->
       <div class="pt-4 border-t border-atelier-800">
         <div class="flex items-center justify-between mb-3">
-          <span class="text-xs font-serif font-bold text-brand-amber block">三大核心岗位角色模型绑定 (Role Model Binding)</span>
-          <span class="text-[11px] text-ink-400">点击按钮可单独诊断各角色模型的可用性与推理延迟</span>
+          <span class="text-xs font-serif font-bold text-brand-amber block">模型分工设置</span>
+          <span class="text-[11px] text-ink-400">为构思、写作与体检分配对应的大模型</span>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <!-- 推演师 -->
+          <!-- 构思 -->
           <div class="p-3.5 bg-atelier-950/70 border border-atelier-800 rounded-lg space-y-2">
             <div class="flex items-center justify-between">
-              <label class="block text-[11px] font-semibold text-ink-300">因果推演师 (Reasoning)：</label>
+              <label class="block text-[11px] font-semibold text-ink-300">剧情构思模型 (Reasoning)：</label>
               <button 
                 @click="actions.testConfigConnection('reasoner')"
                 :disabled="state.configTestStatus?.reasoner?.loading"
                 class="px-2 py-0.5 text-[10px] bg-atelier-850 hover:bg-brand-amber/20 hover:text-brand-amber text-ink-300 border border-atelier-750 rounded transition cursor-pointer disabled:opacity-50">
                 <span v-if="state.configTestStatus?.reasoner?.loading">测试中...</span>
-                <span v-else>测连通性</span>
+                <span v-else>测试</span>
               </button>
             </div>
             <input 
@@ -100,16 +100,16 @@
             </div>
           </div>
 
-          <!-- 渲染师 -->
+          <!-- 写作 -->
           <div class="p-3.5 bg-atelier-950/70 border border-atelier-800 rounded-lg space-y-2">
             <div class="flex items-center justify-between">
-              <label class="block text-[11px] font-semibold text-ink-300">文学渲染师 (Writer)：</label>
+              <label class="block text-[11px] font-semibold text-ink-300">正文写作模型 (Writer)：</label>
               <button 
                 @click="actions.testConfigConnection('writer')"
                 :disabled="state.configTestStatus?.writer?.loading"
                 class="px-2 py-0.5 text-[10px] bg-atelier-850 hover:bg-brand-amber/20 hover:text-brand-amber text-ink-300 border border-atelier-750 rounded transition cursor-pointer disabled:opacity-50">
                 <span v-if="state.configTestStatus?.writer?.loading">测试中...</span>
-                <span v-else>测连通性</span>
+                <span v-else>测试</span>
               </button>
             </div>
             <input 
@@ -126,16 +126,16 @@
             </div>
           </div>
 
-          <!-- 主审质检 -->
+          <!-- 体检 -->
           <div class="p-3.5 bg-atelier-950/70 border border-atelier-800 rounded-lg space-y-2">
             <div class="flex items-center justify-between">
-              <label class="block text-[11px] font-semibold text-ink-300">主审质检总监 (Reviewer)：</label>
+              <label class="block text-[11px] font-semibold text-ink-300">文风体检模型 (Reviewer)：</label>
               <button 
                 @click="actions.testConfigConnection('reviewer')"
                 :disabled="state.configTestStatus?.reviewer?.loading"
                 class="px-2 py-0.5 text-[10px] bg-atelier-850 hover:bg-brand-amber/20 hover:text-brand-amber text-ink-300 border border-atelier-750 rounded transition cursor-pointer disabled:opacity-50">
                 <span v-if="state.configTestStatus?.reviewer?.loading">测试中...</span>
-                <span v-else>测连通性</span>
+                <span v-else>测试</span>
               </button>
             </div>
             <input 

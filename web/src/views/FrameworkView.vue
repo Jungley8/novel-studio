@@ -8,8 +8,8 @@
             <Compass class="w-4 h-4" />
           </div>
           <div>
-            <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">宏观创世总纲 (Genesis Framework Bible)</h2>
-            <p class="text-xs text-ink-400 mt-0.5">万字长篇宏观骨架：天道法则、严谨战力阶梯、分卷任务链与暗线势力谱系</p>
+            <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">作品设定</h2>
+            <p class="text-xs text-ink-400 mt-0.5">核心设定、世界规则与主线走向。</p>
           </div>
         </div>
       </div>
@@ -20,13 +20,13 @@
           :disabled="state.isLoading" 
           class="flex items-center gap-1.5 px-3 py-1.5 bg-atelier-850 hover:bg-atelier-800 text-brand-amber text-xs font-semibold rounded-md border border-atelier-750 transition cursor-pointer disabled:opacity-50">
           <Sparkles class="w-3.5 h-3.5 text-brand-amber" />
-          <span>{{ state.isLoading ? 'AI 宏观推演中...' : '重新 AI 创世推演' }}</span>
+          <span>{{ state.isLoading ? '正在生成...' : 'AI 生成' }}</span>
         </button>
         <button 
           @click="actions.saveFramework" 
           class="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-md shadow-amber-glow transition cursor-pointer">
           <Save class="w-3.5 h-3.5" />
-          <span>保存总纲修改</span>
+          <span>保存设定</span>
         </button>
       </div>
     </div>

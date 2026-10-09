@@ -8,8 +8,8 @@
             <Anchor class="w-4 h-4" />
           </div>
           <div>
-            <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">伏笔因果账本 (Plot Ledger)</h2>
-            <p class="text-xs text-ink-400 mt-0.5">跨卷跨章悬念追踪与因果闭环，杜绝机械降神与悬念遗漏烂尾</p>
+            <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">伏笔簿</h2>
+            <p class="text-xs text-ink-400 mt-0.5">记录故事埋下的线索，跟进揭开时机。</p>
           </div>
         </div>
       </div>
@@ -27,7 +27,7 @@
           @click="actions.createPlotHook('新设伏笔', '', (state.chapters.length || 0) + 3)" 
           class="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-md shadow-amber-glow transition cursor-pointer">
           <Plus class="w-3.5 h-3.5" />
-          <span>新增伏笔记录</span>
+          <span>新增伏笔</span>
         </button>
       </div>
     </div>
@@ -50,12 +50,12 @@
           </div>
 
           <div class="md:col-span-2">
-            <label class="text-[10px] text-ink-400 block mb-1">因果事实描述：</label>
+            <label class="text-[10px] text-ink-400 block mb-1">伏笔线索描述：</label>
             <input 
               v-model="hook.details" 
               @change="actions.updatePlotHook(hook)" 
               class="w-full bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-ink-200 focus:outline-none focus:border-brand-amber/60" 
-              placeholder="因果事实描述...">
+              placeholder="描述伏笔的具体线索或事件...">
           </div>
 
           <div>

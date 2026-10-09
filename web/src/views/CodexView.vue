@@ -8,8 +8,8 @@
             <BookOpen class="w-4 h-4" />
           </div>
           <div>
-            <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">全域世界观百科 (The Codex)</h2>
-            <p class="text-xs text-ink-400 mt-0.5">实体分类库、别名网状索引、动态阶段演进与两两因果拓扑</p>
+            <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">设定集</h2>
+            <p class="text-xs text-ink-400 mt-0.5">管理人物、势力、地点与宝物档案。</p>
           </div>
         </div>
       </div>
@@ -18,21 +18,22 @@
         <button 
           @click="showMentionScanner = !showMentionScanner"
           :class="showMentionScanner ? 'bg-brand-amber/15 text-brand-amber border-brand-amber/30' : 'bg-atelier-850 hover:bg-atelier-800 text-ink-300 border-atelier-750'"
-          class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border transition cursor-pointer">
+          class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border transition cursor-pointer"
+          title="扫描正文中的人物引用">
           <ScanSearch class="w-3.5 h-3.5" />
-          <span>实体引用扫描试验台</span>
+          <span>引用检测</span>
         </button>
 
         <button 
           @click="openCreateCodexEntry"
           class="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 text-xs font-bold rounded-md shadow-amber-glow transition cursor-pointer">
           <Plus class="w-3.5 h-3.5" />
-          <span>新建百科实体</span>
+          <span>新建词条</span>
         </button>
       </div>
     </div>
 
-    <!-- 实体分类过滤标签 -->
+    <!-- 词条分类过滤标签 -->
     <div class="flex items-center justify-between gap-4">
       <div class="flex gap-1 bg-atelier-900 p-1 rounded-lg border border-atelier-750 text-xs">
         <button 
@@ -49,7 +50,7 @@
       </div>
 
       <div class="text-xs font-mono text-ink-400">
-        共 <strong class="text-brand-amber">{{ computedState.filteredCodexEntries.value.length }}</strong> 实体条目
+        共 <strong class="text-brand-amber">{{ computedState.filteredCodexEntries.value.length }}</strong> 条设定
       </div>
     </div>
 
@@ -60,7 +61,7 @@
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
           <ScanSearch class="w-4 h-4 text-brand-amber" />
-          <span class="text-xs font-semibold text-brand-amber">文本实体扫描器 (测试别名网状命中与上下文注入)</span>
+          <span class="text-xs font-semibold text-brand-amber">词条检测 (测试正文中角色与设定的自动识别)</span>
         </div>
         <button 
           @click="runMentionScan" 
@@ -80,7 +81,7 @@
       <!-- 扫描结果展示 -->
       <div v-if="mentionScanResult" class="p-3 bg-atelier-950 rounded-lg border border-atelier-800 text-xs space-y-2">
         <div class="text-ink-400 flex items-center gap-2">
-          <span>匹配到 <strong class="text-emerald-400">{{ mentionScanResult.matched_entries?.length || 0 }}</strong> 个实体</span>
+          <span>匹配到 <strong class="text-emerald-400">{{ mentionScanResult.matched_entries?.length || 0 }}</strong> 个词条</span>
           <span>·</span>
           <span>命中别名引用 <strong class="text-brand-amber">{{ mentionScanResult.mentions?.length || 0 }}</strong> 次</span>
         </div>
@@ -97,7 +98,7 @@
       </div>
     </div>
 
-    <!-- 百科实体卡片网格 -->
+    <!-- 设定词条卡片网格 -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       <div 
         v-for="entry in computedState.filteredCodexEntries.value" 
@@ -178,9 +179,9 @@
       <div class="w-12 h-12 rounded-full bg-atelier-800 flex items-center justify-center mx-auto text-ink-400">
         <BookOpen class="w-6 h-6" />
       </div>
-      <h3 class="text-sm font-semibold text-ink-200">当前分类暂无百科条目</h3>
+      <h3 class="text-sm font-semibold text-ink-200">当前分类暂无词条</h3>
       <p class="text-xs text-ink-400 max-w-md mx-auto">
-        点击右上角“+ 新建百科实体”录入角色、宗门、灵宝或地理法则，模型将自动进行长篇动态注入。
+        点击右上角“+ 新建词条”录入角色、势力、宝物或地理设定，写作时将自动作为参考。
       </p>
     </div>
   </div>

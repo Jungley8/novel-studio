@@ -7,10 +7,10 @@
       </div>
       <div class="space-y-2">
         <h3 class="text-xl font-bold font-serif text-ink-50 tracking-wide">
-          故事工厂 · 创作起点
+          开始创作
         </h3>
         <p class="text-xs text-ink-300 leading-relaxed">
-          基于状态机约束、实体因果账本与三权分立审校机制，为工业级长篇连载保驾护航。
+          构思情节与起草正文，开启你的小说长篇连载。
         </p>
       </div>
       <div class="pt-2 flex flex-col gap-2.5">
@@ -18,20 +18,20 @@
           @click="state.showNewProjectModal = true"
           class="w-full py-2.5 px-4 bg-gradient-to-r from-brand-amber to-amber-600 hover:from-brand-amber-hover hover:to-amber-500 text-atelier-950 font-bold text-xs rounded-lg transition shadow-atelier-md flex items-center justify-center gap-2 cursor-pointer">
           <Plus class="w-4 h-4" />
-          <span>创建第一部小说作品</span>
+          <span>新建作品</span>
         </button>
         <button 
           @click="state.activeTab = 'config'"
           class="w-full py-2 px-4 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer">
           <Settings class="w-3.5 h-3.5 text-ink-400" />
-          <span>配置推理与写作模型 API</span>
+          <span>配置 AI</span>
         </button>
       </div>
     </div>
   </div>
 
   <!-- 主创作手稿工作台 (3 栏弹性自适应架构) -->
-  <div v-else class="flex-1 flex overflow-hidden relative">
+  <div v-else class="flex-1 flex min-h-0 overflow-hidden relative">
     <!-- 禅模式悬浮退出胶囊条 -->
     <div 
       v-if="state.isZenMode" 
@@ -41,21 +41,21 @@
         class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-atelier-900/80 hover:bg-atelier-800 text-ink-300 hover:text-ink-50 border border-atelier-700/80 backdrop-blur-md text-xs transition shadow-atelier-md cursor-pointer"
         title="退出专注模式 (快捷键 ESC)">
         <Minimize2 class="w-3.5 h-3.5 text-brand-amber" />
-        <span>退出专注 (ESC)</span>
+        <span>退出专注</span>
       </button>
     </div>
 
-    <!-- 左栏：六步工序决策与节拍推演 (宽 330px，支持一键折叠) -->
+    <!-- 左栏：六步工序 (宽 320px，支持折叠与无障碍滚动) -->
     <div 
       v-show="state.showWorkflowPanel && !state.isZenMode" 
-      class="w-80 border-r border-atelier-750 bg-atelier-900/40 flex flex-col shrink-0 overflow-hidden transition-all duration-200 select-none">
+      class="w-80 border-r border-atelier-750 bg-atelier-900/40 flex flex-col min-h-0 shrink-0 overflow-hidden transition-all duration-200 select-none">
       
       <!-- 工步导航指示条 -->
-      <div class="p-3 border-b border-atelier-750 bg-atelier-900/70">
+      <div class="p-3 border-b border-atelier-750 bg-atelier-900/70 shrink-0">
         <div class="flex items-center justify-between mb-2">
           <div class="flex items-center gap-1.5">
             <Sparkles class="w-3.5 h-3.5 text-brand-amber" />
-            <span class="text-xs font-bold text-ink-100 font-serif">生产流水线</span>
+            <span class="text-xs font-bold text-ink-100 font-serif">创作工序</span>
           </div>
           <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-atelier-800 text-brand-amber border border-atelier-700">
             第 {{ computedState.currentWorkingChapterIndex.value }} 章
@@ -69,6 +69,7 @@
             :key="step.id"
             @click="goToStep(step.id)"
             class="flex flex-col items-center py-1.5 rounded transition relative group cursor-pointer"
+            :title="step.desc"
             :class="state.activeStep === step.id 
               ? 'bg-atelier-800 text-brand-amber shadow-atelier-sm font-bold' 
               : 'text-ink-400 hover:text-ink-200 hover:bg-atelier-850/80'">
@@ -82,24 +83,24 @@
         </div>
       </div>
 
-      <!-- 工步面板内容区 (纵向滚动) -->
-      <div class="flex-1 p-3.5 overflow-y-auto space-y-4">
-        <!-- STEP 1: 核心冲突与动机 -->
+      <!-- 工步面板内容区 (添加 min-h-0 与平滑纵向滚动) -->
+      <div class="flex-1 min-h-0 p-3.5 overflow-y-auto space-y-4">
+        <!-- STEP 1: 构思 -->
         <div v-show="state.activeStep === 1" class="space-y-3.5">
           <div>
             <div class="flex items-center justify-between">
               <span class="text-xs font-bold text-brand-amber flex items-center gap-1.5">
                 <Target class="w-3.5 h-3.5" />
-                <span>Step 1: 核心冲突与动机</span>
+                <span>构思</span>
               </span>
               <span class="text-[10px] font-mono text-ink-400">第 {{ computedState.currentWorkingChapterIndex.value }} 章</span>
             </div>
-            <p class="text-[11px] text-ink-400 mt-1">确立本章的核心戏剧钩子、物理阻碍与高光反转目标。</p>
+            <p class="text-[11px] text-ink-400 mt-1">确定本章核心冲突与关键事件。</p>
           </div>
 
-          <!-- 灵感预设标签胶囊 -->
+          <!-- 灵感参考标签 -->
           <div>
-            <span class="text-[10px] uppercase font-mono tracking-wider text-ink-400 block mb-1.5">高能戏剧母题：</span>
+            <span class="text-[10px] uppercase font-mono tracking-wider text-ink-400 block mb-1.5">灵感参考：</span>
             <div class="grid grid-cols-2 gap-1.5">
               <button 
                 v-for="preset in inspirationPresets" 
@@ -112,9 +113,9 @@
             </div>
           </div>
 
-          <!-- 伏笔回收药丸 -->
+          <!-- 待收伏笔 -->
           <div v-if="(computedState.activeHooksList.value || []).length > 0">
-            <span class="text-[10px] uppercase font-mono tracking-wider text-ink-400 block mb-1.5">待回收因果伏笔：</span>
+            <span class="text-[10px] uppercase font-mono tracking-wider text-ink-400 block mb-1.5">待收伏笔：</span>
             <div class="flex flex-wrap gap-1">
               <button 
                 v-for="h in computedState.activeHooksList.value" 
@@ -129,12 +130,12 @@
           </div>
 
           <div>
-            <label class="block text-[11px] text-ink-300 mb-1 font-medium">核心剧情冲突描述：</label>
+            <label class="block text-[11px] text-ink-300 mb-1 font-medium">剧情走向：</label>
             <textarea 
               v-model="state.workbench.coreConflict"
-              rows="4" 
+              rows="3" 
               class="w-full bg-atelier-950 border border-atelier-750 rounded-lg p-2.5 text-xs text-ink-100 placeholder-ink-500 resize-none focus-ring font-sans leading-relaxed"
-              placeholder="例如：主角在拍卖会上洞悉残破丹炉藏有上古神念，引诱宿敌恶意抬价反遭反噬..."></textarea>
+              placeholder="例如：主角在拍卖会上洞悉残破丹炉藏有神念，引诱宿敌抬价反遭反噬..."></textarea>
           </div>
 
           <button 
@@ -143,26 +144,26 @@
             class="w-full py-2.5 bg-gradient-to-r from-brand-amber to-amber-600 hover:from-brand-amber-hover hover:to-amber-500 text-atelier-950 font-bold text-xs rounded-lg shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
             <Loader2 v-if="state.isGeneratingBeats" class="w-3.5 h-3.5 animate-spin" />
             <Sparkles v-else class="w-3.5 h-3.5" />
-            <span>{{ state.isGeneratingBeats ? '大模型正在推演节拍...' : '推演四段论节拍 (Derive Beats)' }}</span>
+            <span>{{ state.isGeneratingBeats ? '正在构思大纲...' : '生成大纲' }}</span>
           </button>
 
           <button 
             v-if="state.workbench.beats.some(b => b.action)"
             @click="goToStep(2)"
             class="w-full py-2 bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 text-xs rounded-lg border border-atelier-750 transition flex items-center justify-center gap-1 cursor-pointer">
-            <span>已有节拍矩阵，前往查看/编辑 ➔</span>
+            <span>已有分段大纲，前往查看 ➔</span>
           </button>
         </div>
 
-        <!-- STEP 2: 因果节拍矩阵 -->
+        <!-- STEP 2: 大纲 -->
         <div v-show="state.activeStep === 2" class="space-y-3.5">
           <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-brand-amber flex items-center gap-1.5">
               <GitCommit class="w-3.5 h-3.5" />
-              <span>Step 2: 因果节拍矩阵</span>
+              <span>本章分段</span>
             </span>
             <button @click="handleDeriveBeats" class="text-[11px] text-ink-400 hover:text-brand-amber transition cursor-pointer">
-              重新推演
+              重新生成
             </button>
           </div>
 
@@ -172,7 +173,7 @@
               :key="i"
               class="p-2.5 bg-atelier-950/80 border border-atelier-750 rounded-lg space-y-1.5">
               <div class="flex items-center justify-between">
-                <span class="text-[11px] font-bold text-ink-100">{{ b.phase || `节拍 ${i + 1}` }}</span>
+                <span class="text-[11px] font-bold text-ink-100">{{ b.phase || `阶段 ${i + 1}` }}</span>
                 <span class="text-[10px] font-mono px-1.5 py-0.5 rounded font-bold" :class="tensionBadgeClass(b.tension)">
                   张力 {{ b.tension }}/10
                 </span>
@@ -180,19 +181,19 @@
               <input 
                 v-model="b.action" 
                 class="w-full bg-atelier-850 border border-atelier-700 rounded px-2 py-1 text-xs text-ink-100 focus-ring" 
-                placeholder="客观物理动作与剧情事实...">
+                placeholder="剧情发生的事情...">
               <input 
                 v-model="b.expectation_broken" 
                 class="w-full bg-atelier-850 border border-atelier-700 rounded px-2 py-1 text-[11px] text-ink-300 focus-ring" 
-                placeholder="打破谁的预期 / 读者心流反应...">
+                placeholder="读者的心理预期与反转...">
             </div>
           </div>
 
-          <!-- 状态机变动预览 -->
+          <!-- 角色变化预览 -->
           <div class="p-2.5 bg-atelier-950 rounded-lg border border-atelier-750 text-[11px] space-y-1">
             <span class="font-bold text-brand-emerald flex items-center gap-1">
               <ShieldCheck class="w-3 h-3" />
-              <span>状态机预判结算：</span>
+              <span>主角本章变化：</span>
             </span>
             <div class="text-ink-300">战力：<span class="text-ink-100">{{ state.workbench?.stateMutation?.power_delta || '无' }}</span></div>
             <div class="text-ink-300">物品：<span class="text-ink-100">{{ state.workbench?.stateMutation?.inventory_delta || '无' }}</span></div>
@@ -204,30 +205,30 @@
             class="w-full py-2.5 bg-gradient-to-r from-brand-amber to-amber-600 hover:from-brand-amber-hover hover:to-amber-500 text-atelier-950 font-bold text-xs rounded-lg shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
             <Loader2 v-if="state.isRenderingScene" class="w-3.5 h-3.5 animate-spin" />
             <PenTool v-else class="w-3.5 h-3.5" />
-            <span>{{ state.isRenderingScene ? '作家模型文学渲染中...' : '渲染正文初稿 (Render Prose)' }}</span>
+            <span>{{ state.isRenderingScene ? '正在起草正文...' : '生成初稿' }}</span>
           </button>
 
           <button 
             v-if="state.workbench.content.trim()"
             @click="goToStep(3)"
             class="w-full py-2 bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 text-xs rounded-lg border border-atelier-750 transition flex items-center justify-center gap-1 cursor-pointer">
-            <span>正文初稿已生成，前往工序配置 ➔</span>
+            <span>正文初稿已就绪，调整文风 ➔</span>
           </button>
         </div>
 
-        <!-- STEP 3: 文学渲染与目标 -->
+        <!-- STEP 3: 起草 -->
         <div v-show="state.activeStep === 3" class="space-y-3.5">
           <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-brand-amber flex items-center gap-1.5">
               <PenTool class="w-3.5 h-3.5" />
-              <span>Step 3: 正文生成配置</span>
+              <span>写作设置</span>
             </span>
-            <span class="text-[10px] font-mono text-ink-400">{{ state.workbench.content.length }} 字已渲染</span>
+            <span class="text-[10px] font-mono text-ink-400">{{ state.workbench.content.length }} 字已写</span>
           </div>
 
           <!-- 目标字数设定 -->
           <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 space-y-2">
-            <label class="block text-[11px] text-ink-300 font-medium">目标章节字数期望：</label>
+            <label class="block text-[11px] text-ink-300 font-medium">目标字数：</label>
             <div class="grid grid-cols-4 gap-1.5">
               <button 
                 v-for="target in [1500, 2000, 2500, 3000]" 
@@ -240,17 +241,17 @@
             </div>
           </div>
 
-          <!-- 叙事口吻腔调设定 -->
+          <!-- 叙事风格设定 -->
           <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 space-y-2">
-            <label class="block text-[11px] text-ink-300 font-medium">叙事口吻与声口风格：</label>
+            <label class="block text-[11px] text-ink-300 font-medium">叙事风格：</label>
             <div class="space-y-1.5">
               <button 
                 v-for="tone in [
-                  { id: 'hardboiled', name: '冷峻白描', desc: '硬派克制 · 物理物态' },
-                  { id: 'high_tension', name: '热血张力', desc: '暴风骤雨 · 极强冲突' },
-                  { id: 'classical', name: '古典志怪', desc: '青灯夜话 · 诡谲苍凉' },
-                  { id: 'vernacular', name: '市井烟火', desc: '粗粝鲜活 · 地气充盈' },
-                  { id: 'cinematic', name: '电影全景', desc: '蒙太奇景深 · 恢弘画卷' }
+                  { id: 'hardboiled', name: '冷峻凝练', desc: '硬派简练，重动作与物态' },
+                  { id: 'high_tension', name: '热血张力', desc: '节奏明快，冲突对抗强烈' },
+                  { id: 'classical', name: '古典雅致', desc: '文笔沉郁，富有传统韵味' },
+                  { id: 'vernacular', name: '生动市井', desc: '烟火气足，语言接地气' },
+                  { id: 'cinematic', name: '全景镜头', desc: '画面感强，兼顾远景特写' }
                 ]"
                 :key="tone.id"
                 @click="state.narrativeStyle = tone.id"
@@ -268,34 +269,34 @@
             class="w-full py-2.5 bg-atelier-850 hover:bg-atelier-800 text-ink-100 font-medium text-xs rounded-lg border border-atelier-700 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
             <Loader2 v-if="state.isRenderingScene" class="w-3.5 h-3.5 text-brand-amber animate-spin" />
             <RotateCcw v-else class="w-3.5 h-3.5 text-brand-amber" />
-            <span>{{ state.isRenderingScene ? '正文初稿深度渲染中 (约需10~30秒)...' : '重新生成正文初稿' }}</span>
+            <span>{{ state.isRenderingScene ? '正文起草中 (约需10~30秒)...' : '重新起草' }}</span>
           </button>
 
           <button 
             @click="goToStep(4)"
             :disabled="!state.workbench.content.trim()"
             class="w-full py-2.5 bg-gradient-to-r from-brand-amber to-amber-600 hover:from-brand-amber-hover hover:to-amber-500 text-atelier-950 font-bold text-xs rounded-lg shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
-            <span>初稿就绪，前往质检门禁 ➔</span>
+            <span>检查文风 ➔</span>
           </button>
         </div>
 
-        <!-- STEP 4: 质检门禁与主编终审 -->
+        <!-- STEP 4: 体检 -->
         <div v-show="state.activeStep === 4" class="space-y-3.5">
           <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-brand-amber flex items-center gap-1.5">
               <ShieldAlert class="w-3.5 h-3.5" />
-              <span>Step 4: 质检门禁终审</span>
+              <span>文风体检</span>
             </span>
-            <button @click="handleReviewDraft" :disabled="state.isReviewing" class="text-[11px] text-brand-amber hover:underline cursor-pointer flex items-center gap-1 disabled:opacity-50">
+            <button @click="handleReviewDraft" :disabled="state.isReviewing" class="text-[11px] text-brand-amber hover:underline cursor-pointer flex items-center gap-1 disabled:opacity-50 font-medium">
               <Loader2 v-if="state.isReviewing" class="w-3 h-3 animate-spin" />
-              <span>{{ state.isReviewing ? '终审质检中...' : '发起终审' }}</span>
+              <span>{{ state.isReviewing ? '正在体检...' : '开始体检' }}</span>
             </button>
           </div>
 
-          <!-- 突发度指标卡 -->
+          <!-- 句式节奏指标卡 -->
           <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 space-y-1.5">
             <div class="flex justify-between items-center text-xs">
-              <span class="text-ink-300">句长突发度 (Burstiness)</span>
+              <span class="text-ink-300">句式节奏</span>
               <span class="font-mono font-bold" :class="(state.linterReport?.burstiness_score || 0) >= 45 ? 'text-brand-emerald' : 'text-brand-rose'">
                 {{ state.linterReport?.burstiness_score ?? 0 }} 分
               </span>
@@ -306,15 +307,15 @@
                 :class="(state.linterReport?.burstiness_score || 0) >= 45 ? 'bg-brand-emerald' : 'bg-brand-rose'" 
                 class="h-full transition-all"></div>
             </div>
-            <p class="text-[10px] text-ink-400">长短句剧烈交替可瓦解 AI 机械感 (≥ 45 达标)。</p>
+            <p class="text-[10px] text-ink-400">长短句交替，读来自然生动 (≥ 45 达标)。</p>
           </div>
 
-          <!-- 模式化套词命中小结 -->
+          <!-- 套路用词 -->
           <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 space-y-1">
             <div class="flex justify-between items-center text-xs">
-              <span class="text-ink-300">模式化套词：</span>
+              <span class="text-ink-300">套路用词：</span>
               <span class="font-mono text-xs font-bold" :class="(state.linterReport?.hit_banned_words || []).length === 0 ? 'text-brand-emerald' : 'text-brand-rose'">
-                {{ (state.linterReport?.hit_banned_words || []).length }} 处命中
+                {{ (state.linterReport?.hit_banned_words || []).length }} 处发现
               </span>
             </div>
             <div v-if="(state.linterReport?.hit_banned_words || []).length > 0" class="flex flex-wrap gap-1 mt-1">
@@ -322,15 +323,15 @@
                 {{ w }}
               </span>
             </div>
-            <div v-else class="text-[10px] text-brand-emerald">未检出高频模式化废词。</div>
+            <div v-else class="text-[10px] text-brand-emerald">未发现常见套路废词。</div>
           </div>
 
-          <!-- AI经验套路与语法壳子 (翻案腔/空转冒号/从句壳/复述句) -->
+          <!-- 机械腔调 -->
           <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 space-y-1">
             <div class="flex justify-between items-center text-xs">
-              <span class="text-ink-300">AI腔调特征 (翻案腔/空转冒号/从句壳)：</span>
+              <span class="text-ink-300">机械腔调：</span>
               <span class="font-mono text-xs font-bold" :class="(state.linterReport?.empirical_tells || []).length === 0 ? 'text-brand-emerald' : 'text-brand-amber'">
-                {{ (state.linterReport?.empirical_tells || []).length }} 处检出
+                {{ (state.linterReport?.empirical_tells || []).length }} 处发现
               </span>
             </div>
             <div v-if="(state.linterReport?.empirical_tells || []).length > 0" class="flex flex-wrap gap-1 mt-1">
@@ -338,18 +339,18 @@
                 {{ tell }}
               </span>
             </div>
-            <div v-else class="text-[10px] text-brand-emerald">行文质感纯净，未检出机械翻案腔与从句壳子。</div>
+            <div v-else class="text-[10px] text-brand-emerald">文风自然，未发现刻意说教与机械连词。</div>
           </div>
 
-          <!-- 文本净洗与去AI扰动 -->
+          <!-- 快速润色工具 -->
           <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 space-y-2">
             <div class="flex justify-between items-center text-xs">
               <span class="text-ink-200 font-bold flex items-center gap-1.5">
                 <ShieldCheck class="w-3.5 h-3.5 text-brand-emerald" />
-                <span>文本净洗与去AI扰动</span>
+                <span>快速润色</span>
               </span>
               <button @click="openHarmonizeModal" class="text-[10px] text-brand-amber hover:underline cursor-pointer">
-                参数设置
+                设置
               </button>
             </div>
             <div class="grid grid-cols-3 gap-1.5">
@@ -357,79 +358,81 @@
                 @click="actions.runDeterministicSanitize" 
                 :disabled="state.isSanitizing"
                 class="py-1.5 px-1 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded text-[11px] transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                title="零Token确定性清洗：剥离提示语冒号、当...时从句壳、解构这意味着复述、平滑破折号">
+                title="去掉冒号与冗余连词">
                 <Loader2 v-if="state.isSanitizing" class="w-3 h-3 text-brand-amber animate-spin" />
                 <Sparkles v-else class="w-3 h-3 text-brand-amber" />
-                <span>{{ state.isSanitizing ? '净洗中...' : '语法净洗' }}</span>
+                <span>{{ state.isSanitizing ? '去壳中...' : '去除壳子' }}</span>
               </button>
               <button 
                 @click="openHarmonizeModal" 
-                class="py-1.5 px-1 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded text-[11px] transition flex items-center justify-center gap-1 cursor-pointer">
+                class="py-1.5 px-1 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded text-[11px] transition flex items-center justify-center gap-1 cursor-pointer"
+                title="安全规避敏感词汇">
                 <ShieldCheck class="w-3 h-3 text-brand-emerald" />
-                <span>合规扰动</span>
+                <span>改敏感词</span>
               </button>
               <button 
                 @click="openHumanTouchesModal" 
-                class="py-1.5 px-1 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded text-[11px] transition flex items-center justify-center gap-1 cursor-pointer">
+                class="py-1.5 px-1 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded text-[11px] transition flex items-center justify-center gap-1 cursor-pointer"
+                title="增添生活气息与细节描摹">
                 <HeartHandshake class="w-3 h-3 text-brand-amber" />
-                <span>人味注入</span>
+                <span>增加细节</span>
               </button>
             </div>
           </div>
 
-          <!-- 主编终审报告 -->
+          <!-- 体检报告 -->
           <div v-if="state.reviewResult" class="p-3 bg-atelier-950 rounded-lg border space-y-2" :class="state.reviewResult.verdict === 'ACCEPTED' ? 'border-brand-emerald/40' : 'border-brand-rose/40'">
             <div class="flex justify-between items-center text-xs">
               <span class="font-bold flex items-center gap-1" :class="state.reviewResult.verdict === 'ACCEPTED' ? 'text-brand-emerald' : 'text-brand-rose'">
-                <span v-if="state.reviewResult.verdict === 'ACCEPTED'">✓ 终审裁决: 验收通过</span>
-                <span v-else>⚠️ 终审裁决: 驳回返工</span>
+                <span v-if="state.reviewResult.verdict === 'ACCEPTED'">✓ 体检合格</span>
+                <span v-else>⚠️ 建议精修</span>
               </span>
               <span class="px-2 py-0.5 rounded text-xs font-mono font-bold" :class="state.reviewResult.score >= 80 ? 'bg-brand-emerald/15 text-brand-emerald border border-brand-emerald/30' : 'bg-brand-rose/15 text-brand-rose border border-brand-rose/30'">
                 {{ state.reviewResult.score }} 分
               </span>
             </div>
             <div v-if="state.reviewResult.issues?.length" class="space-y-1">
-              <div class="text-[10px] text-ink-400 font-semibold">检出问题点 ({{ state.reviewResult.issues.length }})：</div>
+              <div class="text-[10px] text-ink-400 font-semibold">修改建议 ({{ state.reviewResult.issues.length }}条)：</div>
               <ul class="text-[11px] text-brand-rose/90 space-y-0.5 list-disc list-inside bg-atelier-900 p-2 rounded">
                 <li v-for="(iss, i) in state.reviewResult.issues" :key="i">{{ iss }}</li>
               </ul>
             </div>
             <div v-if="state.reviewResult.suggestions" class="text-[11px] text-ink-300 leading-relaxed bg-atelier-900 p-2 rounded">
-              <strong class="text-ink-100">主编建议：</strong>{{ state.reviewResult.suggestions }}
+              <strong class="text-ink-100">主审点评：</strong>{{ state.reviewResult.suggestions }}
             </div>
 
-            <!-- 终审后流转按钮 -->
+            <!-- 阶段流转按钮 -->
             <div class="pt-2 space-y-2">
               <button 
                 v-if="state.reviewResult.verdict === 'ACCEPTED'"
                 @click="goToStep(6)"
                 class="w-full py-2.5 bg-brand-emerald hover:bg-emerald-500 text-atelier-950 font-bold text-xs rounded-lg shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer">
                 <CheckCircle2 class="w-3.5 h-3.5" />
-                <span>质检合格，前往封存归档 (Step 6) ➔</span>
+                <span>前往定稿 ➔</span>
               </button>
               <div v-else class="space-y-1.5">
                 <button 
                   @click="goToStep(5)"
                   class="w-full py-2.5 bg-gradient-to-r from-brand-amber to-amber-600 hover:from-brand-amber-hover hover:to-amber-500 text-atelier-950 font-bold text-xs rounded-lg shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer">
                   <RefreshCw class="w-3.5 h-3.5" />
-                  <span>存在瑕疵，前往定向返工 (Step 5) ➔</span>
+                  <span>前往精修 ➔</span>
                 </button>
                 <button 
                   @click="goToStep(6)"
                   class="w-full py-1.5 bg-atelier-850 hover:bg-atelier-800 text-ink-400 hover:text-ink-200 text-[11px] rounded border border-atelier-750 transition flex items-center justify-center cursor-pointer">
-                  <span>忽略警告，强制前往归档 ➔</span>
+                  <span>直接定稿 ➔</span>
                 </button>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- STEP 5: 定向返工修缮 -->
+        <!-- STEP 5: 精修 -->
         <div v-show="state.activeStep === 5" class="space-y-3.5">
           <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-brand-amber flex items-center gap-1.5">
               <RefreshCw class="w-3.5 h-3.5" />
-              <span>Step 5: 缺陷定向返工</span>
+              <span>逐条精修</span>
             </span>
             <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-atelier-800 text-brand-amber">
               第 {{ state.rewriteLoopCount }} / 3 轮
@@ -437,7 +440,7 @@
           </div>
 
           <div v-if="state.reviewResult?.suggestions" class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 text-xs space-y-1.5">
-            <span class="font-bold text-ink-200">主编修改建议：</span>
+            <span class="font-bold text-ink-200">修改建议：</span>
             <p class="text-[11px] text-ink-300 leading-relaxed whitespace-pre-wrap">{{ state.reviewResult.suggestions }}</p>
           </div>
 
@@ -447,35 +450,35 @@
             class="w-full py-2.5 bg-gradient-to-r from-brand-amber to-amber-600 hover:from-brand-amber-hover hover:to-amber-500 text-atelier-950 font-bold text-xs rounded-lg shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
             <Loader2 v-if="state.isRewriting" class="w-3.5 h-3.5 animate-spin" />
             <RotateCcw v-else class="w-3.5 h-3.5" />
-            <span>{{ state.isRewriting ? '执行局部差分返工中...' : '执行针对性精修返工' }}</span>
+            <span>{{ state.isRewriting ? '正在精修正文...' : '自动精修' }}</span>
           </button>
 
           <div class="grid grid-cols-2 gap-2 pt-1">
             <button 
               @click="goToStep(4)"
               class="py-2 bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 text-xs rounded-lg border border-atelier-750 transition flex items-center justify-center gap-1 cursor-pointer">
-              <span>← 返回重新终审</span>
+              <span>← 重新体检</span>
             </button>
             <button 
               @click="goToStep(6)"
               class="py-2 bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 text-xs rounded-lg border border-atelier-750 transition flex items-center justify-center gap-1 cursor-pointer">
-              <span>前往封存归档 →</span>
+              <span>前往定稿 ➔</span>
             </button>
           </div>
         </div>
 
-        <!-- STEP 6: 结算归档 -->
+        <!-- STEP 6: 定稿 -->
         <div v-show="state.activeStep === 6" class="space-y-3.5">
           <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-brand-amber flex items-center gap-1.5">
               <CheckCircle2 class="w-3.5 h-3.5" />
-              <span>Step 6: 原子归档结算</span>
+              <span>完成定稿</span>
             </span>
             <span class="text-[10px] font-mono text-ink-300">{{ state.workbench.content.length }} 字</span>
           </div>
 
           <p class="text-[11px] text-ink-400 leading-relaxed">
-            将本章正文、状态机转移与伏笔回收一次性原子提交至 SQLite 数据库，成为封存正史。
+            保存至章节目录，记录剧情变化，开启下一章。
           </p>
 
           <button 
@@ -484,14 +487,14 @@
             class="w-full py-2.5 bg-brand-emerald hover:bg-emerald-500 text-atelier-950 font-bold text-xs rounded-lg shadow-atelier-sm transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
             <Loader2 v-if="state.isCommitting" class="w-4 h-4 animate-spin" />
             <Check v-else class="w-4 h-4" />
-            <span>{{ state.isCommitting ? '正在原子写入正史数据库...' : ('提交并原子封存第 ' + computedState.currentWorkingChapterIndex.value + ' 章') }}</span>
+            <span>{{ state.isCommitting ? '正在保存...' : ('保存第 ' + computedState.currentWorkingChapterIndex.value + ' 章') }}</span>
           </button>
         </div>
       </div>
     </div>
 
     <!-- 中栏：文学手稿画布 (弹性自适应排版空间) -->
-    <div class="flex-1 flex flex-col min-w-0 overflow-hidden bg-atelier-950">
+    <div class="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden bg-atelier-950">
       
       <!-- 撤回草稿 / 历史章节精修提示条 -->
       <div 
@@ -499,69 +502,65 @@
         class="px-5 py-2 bg-brand-amber/10 border-b border-brand-amber/25 flex items-center justify-between text-xs text-brand-amber select-none shrink-0">
         <div class="flex items-center gap-2">
           <RotateCcw class="w-3.5 h-3.5 shrink-0" />
-          <span>正在精修 <strong>第 {{ state.editingChapterIndex }} 章</strong> 草稿（提交封存将覆盖该章节）</span>
+          <span>正在精修 <strong>第 {{ state.editingChapterIndex }} 章</strong> 草稿（保存将覆盖该章节）</span>
         </div>
         <button 
           @click="resetToNewChapter" 
           class="px-2 py-0.5 rounded bg-brand-amber/20 hover:bg-brand-amber/30 text-[11px] font-medium transition cursor-pointer">
-          放弃精修，创作新章节
+          放弃精修
         </button>
       </div>
 
-      <!-- 手稿顶栏状态与字数计量 -->
-      <div class="h-11 px-5 border-b border-atelier-750 flex items-center justify-between bg-atelier-900/30 shrink-0 select-none">
-        <div class="flex items-center gap-3 min-w-0">
-          <!-- 重新展开工序面板快捷按钮 (当左侧折叠时呈现) -->
+      <!-- 手稿顶栏状态与字数计量 (去除按钮堆叠，主次分明) -->
+      <div class="h-11 px-4 border-b border-atelier-750 flex items-center justify-between bg-atelier-900/30 shrink-0 select-none gap-2">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <!-- 重新展开工步快捷按钮 (当左侧折叠时呈现) -->
           <button 
             v-if="!state.showWorkflowPanel && !state.isZenMode"
             @click="state.showWorkflowPanel = true"
             class="px-2 py-1 rounded bg-atelier-850 hover:bg-atelier-800 border border-atelier-750 text-xs text-brand-amber flex items-center gap-1 transition cursor-pointer"
-            title="展开左侧工序流水线">
+            title="展开左侧工序">
             <PanelLeft class="w-3.5 h-3.5" />
-            <span class="text-[11px] font-medium">展开工步</span>
+            <span class="text-[11px] font-medium hidden sm:inline">工序</span>
           </button>
 
           <span class="text-xs font-bold font-serif text-ink-100 truncate">
-            第 {{ computedState.currentWorkingChapterIndex.value }} 章手稿
+            第 {{ computedState.currentWorkingChapterIndex.value }} 章
           </span>
           <span class="text-[11px] font-mono text-ink-400 shrink-0">
-            <strong class="text-brand-amber font-semibold">{{ state.workbench.content.length }}</strong> 字 · 约 {{ Math.max(1, Math.ceil(state.workbench.content.length / 400)) }} 分钟读完
+            <strong class="text-brand-amber font-semibold">{{ state.workbench.content.length }}</strong> 字
           </span>
         </div>
 
-        <!-- 口吻与字数预算快捷切换器 -->
-        <div class="hidden lg:flex items-center gap-2 bg-atelier-850 px-2.5 py-1 rounded-md border border-atelier-750 text-xs">
-          <span class="text-[10px] font-mono text-ink-400">口吻:</span>
+        <!-- 风格与字数预算快速选择 -->
+        <div class="hidden xl:flex items-center gap-2 bg-atelier-850 px-2.5 py-1 rounded-md border border-atelier-750 text-xs">
+          <span class="text-[10px] text-ink-400">风格:</span>
           <select 
             v-model="state.narrativeStyle" 
             class="bg-transparent text-[11px] text-brand-amber font-medium focus:outline-none cursor-pointer">
-            <option value="hardboiled" class="bg-atelier-900 text-ink-100">冷峻白描 (硬派克制)</option>
-            <option value="high_tension" class="bg-atelier-900 text-ink-100">热血张力 (高压对抗)</option>
-            <option value="classical" class="bg-atelier-900 text-ink-100">古典志怪 (诡谲苍凉)</option>
-            <option value="vernacular" class="bg-atelier-900 text-ink-100">市井烟火 (粗粝鲜活)</option>
-            <option value="cinematic" class="bg-atelier-900 text-ink-100">电影全景 (景深画卷)</option>
+            <option value="hardboiled" class="bg-atelier-900 text-ink-100">冷峻凝练</option>
+            <option value="high_tension" class="bg-atelier-900 text-ink-100">热血张力</option>
+            <option value="classical" class="bg-atelier-900 text-ink-100">古典雅致</option>
+            <option value="vernacular" class="bg-atelier-900 text-ink-100">生动市井</option>
+            <option value="cinematic" class="bg-atelier-900 text-ink-100">全景镜头</option>
           </select>
 
           <span class="text-atelier-700">|</span>
 
-          <span class="text-[10px] font-mono text-ink-400">预算:</span>
+          <span class="text-[10px] text-ink-400">字数:</span>
           <select 
             v-model="state.wordsTarget" 
             class="bg-transparent text-[11px] text-brand-amber font-medium focus:outline-none cursor-pointer">
             <option :value="1500" class="bg-atelier-900 text-ink-100">1500 字</option>
-            <option :value="2000" class="bg-atelier-900 text-ink-100">2000 字 (标准)</option>
-            <option :value="2500" class="bg-atelier-900 text-ink-100">2500 字 (丰满)</option>
-            <option :value="3000" class="bg-atelier-900 text-ink-100">3000 字 (大章)</option>
+            <option :value="2000" class="bg-atelier-900 text-ink-100">2000 字</option>
+            <option :value="2500" class="bg-atelier-900 text-ink-100">2500 字</option>
+            <option :value="3000" class="bg-atelier-900 text-ink-100">3000 字</option>
           </select>
         </div>
 
+        <!-- 右侧核心功能组 (亲密性整合，清晰克制) -->
         <div class="flex items-center gap-1.5 shrink-0">
-          <!-- 暂存状态提示 -->
-          <div v-if="state.isSavingDraft" class="hidden sm:flex items-center gap-1 text-[11px] text-brand-amber">
-            <Loader2 class="w-3 h-3 animate-spin" />
-            <span>存档中...</span>
-          </div>
-          <span v-else-if="state.lastSavedAt" class="hidden sm:inline text-[10px] text-ink-400 font-mono" :title="`上次存档: ${formatSaveTime(state.lastSavedAt)}`">
+          <span v-if="state.lastSavedAt" class="hidden 2xl:inline text-[10px] text-ink-400 font-mono">
             已存 {{ formatSaveTime(state.lastSavedAt) }}
           </span>
 
@@ -569,85 +568,78 @@
             @click="handleManualSaveDraft" 
             :disabled="state.isSavingDraft"
             class="px-2.5 py-1 text-[11px] font-medium bg-brand-amber/15 hover:bg-brand-amber/25 text-brand-amber rounded-md border border-brand-amber/30 transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
-            title="手动将当前草稿及工步进度保存至本地数据库">
+            title="手动保存草稿">
             <Loader2 v-if="state.isSavingDraft" class="w-3 h-3 animate-spin text-brand-amber" />
             <Save v-else class="w-3 h-3" />
-            <span class="hidden sm:inline">{{ state.isSavingDraft ? '存盘中...' : '保存草稿' }}</span>
+            <span class="hidden sm:inline">{{ state.isSavingDraft ? '存盘中...' : '保存' }}</span>
           </button>
 
           <button 
             v-if="state.workbench?.content || (state.workbench?.beats || []).some(b => b.action) || state.workbench?.coreConflict"
             @click="handleDiscardDraft" 
             class="px-2 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-brand-rose/20 text-ink-400 hover:text-brand-rose rounded-md border border-atelier-750 hover:border-brand-rose/30 transition flex items-center gap-1 cursor-pointer"
-            title="清除当前草稿并重置当前章节工作区">
+            title="清空当前草稿">
             <Trash2 class="w-3 h-3" />
-            <span class="hidden md:inline">放弃草稿</span>
+            <span class="hidden md:inline">重置</span>
           </button>
 
           <button 
             @click="actions.runLinter" 
             :disabled="state.isLinting"
             class="px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded-md border border-atelier-750 transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
-            title="执行反AI味句长方差与套词质检">
+            title="检查 AI 腔调与文字质量">
             <Loader2 v-if="state.isLinting" class="w-3 h-3 animate-spin text-brand-amber" />
             <Sparkles v-else class="w-3 h-3 text-brand-amber" />
-            <span class="hidden sm:inline">{{ state.isLinting ? '质检中...' : '反AI味质检' }}</span>
+            <span class="hidden sm:inline">{{ state.isLinting ? '体检中...' : '体检' }}</span>
           </button>
 
           <button 
             @click="actions.runDeterministicSanitize" 
             :disabled="state.isSanitizing"
-            class="hidden sm:flex px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded-md border border-atelier-750 transition items-center gap-1 cursor-pointer disabled:opacity-50"
-            title="一键清洗空转冒号、当...时壳子与机械复述词">
+            class="hidden lg:flex px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded-md border border-atelier-750 transition items-center gap-1 cursor-pointer disabled:opacity-50"
+            title="去掉冒号与冗余连词">
             <Loader2 v-if="state.isSanitizing" class="w-3 h-3 animate-spin text-brand-cyan" />
             <Sparkles v-else class="w-3 h-3 text-brand-cyan" />
-            <span>{{ state.isSanitizing ? '净洗中...' : '语法净洗' }}</span>
-          </button>
-
-          <button 
-            @click="openHarmonizeModal" 
-            class="hidden md:flex px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded-md border border-atelier-750 transition items-center gap-1 cursor-pointer"
-            title="平滑替换敏感词与对抗扰动">
-            <ShieldCheck class="w-3 h-3 text-brand-emerald" />
-            <span>合规扰动</span>
+            <span>{{ state.isSanitizing ? '去壳中...' : '去壳' }}</span>
           </button>
 
           <button 
             @click="openHumanTouchesModal" 
-            class="hidden md:flex px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded-md border border-atelier-750 transition items-center gap-1 cursor-pointer"
-            title="生成生理不适、世俗闲笔等真实人味">
+            class="hidden lg:flex px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded-md border border-atelier-750 transition items-center gap-1 cursor-pointer"
+            title="增添生活气息与细节描摹">
             <HeartHandshake class="w-3 h-3 text-brand-amber" />
-            <span>人味注入</span>
+            <span>润色</span>
           </button>
 
           <span 
             v-if="state.reviewResult"
             class="text-[10px] font-mono font-bold px-2 py-0.5 rounded border"
             :class="state.reviewResult.score >= 80 ? 'bg-brand-emerald/15 text-brand-emerald border-brand-emerald/30' : 'bg-brand-rose/15 text-brand-rose border-brand-rose/30'">
-            终审: {{ state.reviewResult.score }}分
+            {{ state.reviewResult.score }}分
           </span>
 
-          <!-- 重新展开视界面板快捷按钮 (当右侧折叠时呈现) -->
+          <!-- 重新展开参考快捷按钮 (当右侧折叠时呈现) -->
           <button 
             v-if="!state.showHorizonPanel && !state.isZenMode"
             @click="state.showHorizonPanel = true"
             class="px-2 py-1 rounded bg-atelier-850 hover:bg-atelier-800 border border-atelier-750 text-xs text-brand-cyan flex items-center gap-1 transition cursor-pointer"
-            title="展开右侧因果视界">
+            title="展开右侧参考">
             <PanelRight class="w-3.5 h-3.5" />
-            <span class="text-[11px] font-medium">展开视界</span>
+            <span class="text-[11px] font-medium hidden sm:inline">参考</span>
           </button>
         </div>
       </div>
 
-      <!-- 划词 / 段落 Inline AI 快速伴写浮动条 -->
-      <div class="px-5 py-2 bg-atelier-900/60 border-b border-atelier-750 flex items-center justify-between text-xs shrink-0 select-none overflow-x-auto">
-        <div class="flex items-center gap-1.5 flex-nowrap shrink-0">
-          <span class="text-ink-400 text-[10px] font-mono uppercase tracking-wider mr-1 shrink-0">划词伴写:</span>
+      <!-- 划词改写浮动条 -->
+      <div class="px-4 py-1.5 bg-atelier-900/60 border-b border-atelier-750 flex items-center justify-between text-xs shrink-0 select-none overflow-x-auto">
+        <div class="flex items-center gap-1 flex-nowrap shrink-0">
+          <span class="text-ink-400 text-[10px] font-mono uppercase tracking-wider mr-1 shrink-0">划词改写:</span>
           <button 
             v-for="act in inlineActionButtons" 
             :key="act.action"
             @click="runInlineAction(act.action)"
             :disabled="inlineActionLoading || !state.workbench.content"
+            :title="act.desc"
             class="px-2.5 py-1 rounded-md bg-atelier-850 hover:bg-atelier-800 text-ink-200 hover:text-ink-50 border border-atelier-700 text-[11px] transition flex items-center gap-1 cursor-pointer disabled:opacity-40 shrink-0">
             <component :is="act.icon" class="w-3 h-3 text-brand-amber" />
             <span>{{ act.label }}</span>
@@ -655,15 +647,16 @@
           <button 
             @click="openCustomInlinePrompt"
             :disabled="inlineActionLoading || !state.workbench.content"
+            title="按自己的要求让 AI 改写"
             class="px-2.5 py-1 rounded-md bg-atelier-850 hover:bg-atelier-800 text-brand-amber border border-atelier-700 text-[11px] transition flex items-center gap-1 cursor-pointer disabled:opacity-40 shrink-0">
             <Wand2 class="w-3 h-3 text-brand-amber" />
-            <span>自定义指令</span>
+            <span>自定义</span>
           </button>
         </div>
 
         <div v-if="inlineActionLoading" class="flex items-center gap-1 text-[11px] text-brand-amber shrink-0 ml-3">
           <Loader2 class="w-3 h-3 animate-spin" />
-          <span>AI 运算中...</span>
+          <span>正在改写...</span>
         </div>
       </div>
 
@@ -672,11 +665,11 @@
         <div class="flex items-center justify-between text-xs">
           <span class="font-bold text-brand-amber flex items-center gap-1.5">
             <Sparkles class="w-3.5 h-3.5" />
-            <span>AI 改写结果 ({{ inlineActionResult.action }})</span>
+            <span>改写结果 ({{ inlineActionResult.action }})</span>
           </span>
           <div class="flex gap-2">
             <button @click="applyInlineResult" class="px-2.5 py-1 bg-brand-emerald hover:bg-emerald-500 text-atelier-950 font-bold rounded text-xs transition cursor-pointer">
-              ✓ 采纳替换
+              ✓ 采用
             </button>
             <button @click="discardInlineResult" class="px-2.5 py-1 bg-atelier-800 hover:bg-atelier-750 text-ink-300 rounded text-xs transition cursor-pointer">
               ✕ 放弃
@@ -689,7 +682,7 @@
       </div>
 
       <!-- 纯净排版正文文本框 (呼吸感居中稿纸) -->
-      <div class="flex-1 flex overflow-y-auto p-4 md:p-8 justify-center">
+      <div class="flex-1 min-h-0 flex overflow-y-auto p-4 md:p-8 justify-center">
         <div class="w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl flex flex-col h-full bg-atelier-900/20 rounded-xl p-4 md:p-8 border border-atelier-800/40 shadow-inner transition-all relative">
           
           <!-- 异常报错通知横幅 -->
@@ -699,7 +692,7 @@
             <div class="space-y-1">
               <div class="font-bold text-brand-rose flex items-center gap-1.5">
                 <AlertCircle class="w-4 h-4" />
-                <span>正文生成或处理异常</span>
+                <span>起草异常</span>
               </div>
               <p class="text-[11px] text-ink-200 leading-relaxed font-sans select-text">{{ renderError }}</p>
             </div>
@@ -707,7 +700,7 @@
               <button 
                 @click="handleRenderScene" 
                 class="px-2.5 py-1 bg-brand-rose/20 hover:bg-brand-rose/30 text-brand-rose border border-brand-rose/40 rounded text-xs transition cursor-pointer font-bold">
-                重试渲染
+                重试
               </button>
               <button 
                 @click="renderError = null" 
@@ -725,7 +718,7 @@
               <div class="flex items-center gap-2">
                 <Loader2 class="w-4 h-4 text-brand-amber animate-spin" />
                 <span class="text-xs font-bold text-brand-amber tracking-wide">
-                  作家大模型正在全力渲染第 {{ computedState.currentWorkingChapterIndex.value }} 章正文初稿...
+                  大模型正在起草第 {{ computedState.currentWorkingChapterIndex.value }} 章正文初稿...
                 </span>
               </div>
               <span class="text-xs font-mono font-bold px-2 py-0.5 rounded bg-brand-amber/15 text-brand-amber border border-brand-amber/30">
@@ -737,7 +730,7 @@
             </div>
             <div class="flex items-center justify-between text-[11px] text-ink-300">
               <span>目标字数: <strong class="text-ink-100">{{ state.wordsTarget || 2000 }}</strong> 字 · 叙事风格: <strong class="text-ink-100">{{ currentToneName }}</strong></span>
-              <span class="text-ink-400">大模型文学生成通常耗时 10 ~ 30 秒，请稍候</span>
+              <span class="text-ink-400">大模型生成约需 10 ~ 30 秒，请稍候</span>
             </div>
           </div>
 
@@ -749,7 +742,7 @@
               <div class="flex items-center gap-2">
                 <Loader2 class="w-4 h-4 text-brand-amber animate-spin" />
                 <span class="text-xs font-bold text-brand-amber tracking-wide">
-                  正在针对主审意见执行第 {{ state.rewriteLoopCount }} 轮局部微创精修返工...
+                  正在依照修改建议执行第 {{ state.rewriteLoopCount }} 轮精修...
                 </span>
               </div>
               <span class="text-xs font-mono font-bold px-2 py-0.5 rounded bg-brand-amber/15 text-brand-amber border border-brand-amber/30">
@@ -759,7 +752,7 @@
             <div class="w-full bg-atelier-800 h-1.5 rounded-full overflow-hidden relative">
               <div class="h-full bg-gradient-to-r from-brand-amber to-amber-400 animate-pulse rounded-full w-full"></div>
             </div>
-            <p class="text-[11px] text-ink-300">微创外科手术重构中，直接修复主审问题点与翻案腔病灶...</p>
+            <p class="text-[11px] text-ink-300">正在逐句修缮，去除机械套路与生硬腔调...</p>
           </div>
 
           <textarea 
@@ -769,56 +762,56 @@
             :disabled="state.isRenderingScene || state.isRewriting"
             class="flex-1 w-full bg-transparent text-ink-100 text-base md:text-[17px] leading-[2.1] font-serif resize-none focus:outline-none placeholder-ink-500 selection:bg-brand-amber/30 selection:text-ink-50 tracking-wide prose-canvas"
             :class="{ 'opacity-60 cursor-wait': state.isRenderingScene || state.isRewriting }"
-            :placeholder="state.isRenderingScene ? '正文渲染生成中，预计需要 10 ~ 30 秒，请稍候……' : '正文手稿由此展开……支持手动写作或依据左侧流水线进行文学渲染。'"></textarea>
+            :placeholder="state.isRenderingScene ? '正文起草中，预计需要 10 ~ 30 秒，请稍候……' : '在此起草正文，可直接写作或由 AI 起草。'"></textarea>
         </div>
       </div>
     </div>
 
-    <!-- 右栏：因果锁链视界 (宽 280px，支持一键折叠) -->
+    <!-- 右栏：创作参考 (宽 280px，支持一键折叠) -->
     <div 
       v-show="state.showHorizonPanel && !state.isZenMode" 
-      class="w-72 border-l border-atelier-750 bg-atelier-900/30 flex flex-col shrink-0 overflow-y-auto p-3.5 space-y-3.5 transition-all duration-200 select-none">
+      class="w-72 border-l border-atelier-750 bg-atelier-900/30 flex flex-col min-h-0 shrink-0 overflow-y-auto p-3.5 space-y-3.5 transition-all duration-200 select-none">
       
       <div>
         <span class="text-[10px] font-mono uppercase tracking-wider text-ink-400 block mb-0.5">
-          因果锁链视界 (Horizon)
+          创作参考
         </span>
-        <h4 class="text-xs font-bold text-ink-200 font-serif">全域时空与物理状态</h4>
+        <h4 class="text-xs font-bold text-ink-200 font-serif">主角状态与上章文风</h4>
       </div>
 
-      <!-- 主角状态机快照 -->
+      <!-- 主角状态 -->
       <div class="p-3 bg-atelier-950/70 border border-atelier-750 rounded-lg space-y-1.5 text-xs">
         <span class="font-bold text-brand-emerald flex items-center gap-1.5">
           <Cpu class="w-3.5 h-3.5" />
-          <span>主角因果账本</span>
+          <span>主角现状</span>
         </span>
         <div class="text-[11px] text-ink-300">
           境界：<strong class="text-ink-100 font-semibold">{{ state.currentProject?.protagonist?.name_and_level || '凡人' }}</strong>
         </div>
         <div class="text-[11px] text-ink-300">
-          行囊道具：<strong class="text-ink-100">{{ state.currentProject?.protagonist?.inventory || '无' }}</strong>
+          随身物品：<strong class="text-ink-100">{{ state.currentProject?.protagonist?.inventory || '无' }}</strong>
         </div>
       </div>
 
-      <!-- 上章收尾文风锚点 (Tail Anchor) -->
+      <!-- 上章结尾 -->
       <div v-if="state.chapters.length > 0" class="p-3 bg-atelier-950/70 border border-atelier-750 rounded-lg space-y-1.5 text-xs">
         <span class="font-bold text-brand-amber flex items-center gap-1.5">
           <Anchor class="w-3.5 h-3.5" />
-          <span>上章尾部腔调锚点</span>
+          <span>上章结尾</span>
         </span>
         <p class="text-[11px] text-ink-300 font-serif leading-relaxed italic line-clamp-4">
           “{{ lastChapterTail }}”
         </p>
       </div>
 
-      <!-- 本场共现百科实体 -->
+      <!-- 涉及人物 -->
       <div class="p-3 bg-atelier-950/70 border border-atelier-750 rounded-lg space-y-2 text-xs">
         <div class="flex items-center justify-between">
           <span class="font-bold text-brand-cyan flex items-center gap-1.5">
             <BookOpen class="w-3.5 h-3.5" />
-            <span>全域百科活跃度</span>
+            <span>涉及人物</span>
           </span>
-          <span class="text-[10px] font-mono text-ink-400">{{ state.codexEntries.length }} 实体</span>
+          <span class="text-[10px] font-mono text-ink-400">{{ state.codexEntries.length }} 词条</span>
         </div>
         <div v-if="state.codexEntries.length > 0" class="flex flex-wrap gap-1">
           <span 
@@ -829,7 +822,7 @@
           </span>
         </div>
         <div v-else class="text-[11px] text-ink-500 italic">
-          暂无百科实体，可在 The Codex 建立世界观。
+          暂无人物，可在设定集中添加。
         </div>
       </div>
     </div>
@@ -874,12 +867,12 @@ import {
 } from 'lucide-vue-next';
 
 const workflowSteps = [
-  { id: 1, shortLabel: '冲突' },
-  { id: 2, shortLabel: '节拍' },
-  { id: 3, shortLabel: '渲染' },
-  { id: 4, shortLabel: '质检' },
-  { id: 5, shortLabel: '返工' },
-  { id: 6, shortLabel: '归档' },
+  { id: 1, shortLabel: '构思', desc: '确定核心冲突与关键事件' },
+  { id: 2, shortLabel: '大纲', desc: '规划四个阶段的剧情安排' },
+  { id: 3, shortLabel: '起草', desc: '设定字数风格并起草正文' },
+  { id: 4, shortLabel: '体检', desc: '检查 AI 腔调与文字质量' },
+  { id: 5, shortLabel: '精修', desc: '依照修改建议精准修缮' },
+  { id: 6, shortLabel: '定稿', desc: '保存至目录并开启新章' },
 ];
 
 const renderElapsedSec = ref(0);
@@ -889,14 +882,14 @@ let renderTimer = null;
 let rewriteTimer = null;
 
 const toneMap = {
-  hardboiled: '冷峻白描 (硬派克制 · 物理物态)',
-  high_tension: '热血张力 (暴风骤雨 · 极强冲突)',
-  classical: '古典志怪 (青灯夜话 · 诡谲苍凉)',
-  vernacular: '市井烟火 (粗粝鲜活 · 地气充盈)',
-  cinematic: '电影全景 (蒙太奇景深 · 恢弘画卷)'
+  hardboiled: '冷峻凝练',
+  high_tension: '热血张力',
+  classical: '古典雅致',
+  vernacular: '生动市井',
+  cinematic: '全景镜头'
 };
 const currentToneName = computed(() => {
-  return toneMap[state.narrativeStyle] || '冷峻白描';
+  return toneMap[state.narrativeStyle] || '冷峻凝练';
 });
 
 const inspirationPresets = [
@@ -907,11 +900,11 @@ const inspirationPresets = [
 ];
 
 const inlineActionButtons = [
-  { action: 'rewrite', label: '重写润色', icon: Scissors },
-  { action: 'expand', label: '细节扩写', icon: Maximize2 },
-  { action: 'shorten', label: '精简提炼', icon: Minimize2 },
-  { action: 'sensory', label: '五感具象', icon: Eye },
-  { action: 'dialogue', label: '打磨台词', icon: MessageSquare },
+  { action: 'rewrite', label: '润色', desc: '重新打磨语句，提升文采', icon: Scissors },
+  { action: 'expand', label: '扩写', desc: '丰富细节，补充场面描写', icon: Maximize2 },
+  { action: 'shorten', label: '精简', desc: '删减赘字，使节奏更明快', icon: Minimize2 },
+  { action: 'sensory', label: '生动', desc: '强化五感，增强现场画面感', icon: Eye },
+  { action: 'dialogue', label: '改对话', desc: '使人物台词更符合性格', icon: MessageSquare },
 ];
 
 const lastChapterTail = computed(() => {
@@ -958,14 +951,14 @@ function appendHookToConflict(h) {
   }
 }
 
-// 节拍推演
+// 分段构思
 async function handleDeriveBeats() {
   if (!state.currentProject || !state.workbench.coreConflict.trim()) return;
   state.isGeneratingBeats = true;
   const targetIndex = computedState.currentWorkingChapterIndex.value;
   notify(
-    '因果节拍推演启动',
-    `正在依据前序正史为第 ${targetIndex} 章推演四段论节拍...`,
+    '开始构思分段',
+    `正在梳理第 ${targetIndex} 章剧情与情节分段...`,
     'info',
     3000,
     { taskType: 'beats', chapterIndex: targetIndex, status: 'started' }
@@ -984,21 +977,21 @@ async function handleDeriveBeats() {
     state.activeStep = 2;
     await actions.saveCheckpoint();
     notify(
-      '节拍推演完成',
-      `第 ${targetIndex} 章已生成因果四段论节拍及状态转移预判`,
+      '大纲已生成',
+      `第 ${targetIndex} 章已完成情节分段`,
       'success',
       3500,
       { taskType: 'beats', chapterIndex: targetIndex, status: 'completed' }
     );
   } catch (e) {
     console.error('handleDeriveBeats error:', e);
-    notify('推演节拍失败', e.message || '模型响应超时', 'error', 5000, { taskType: 'beats', chapterIndex: targetIndex, status: 'failed' });
+    notify('大纲生成失败', e.message || '请检查网络或配置', 'error', 5000, { taskType: 'beats', chapterIndex: targetIndex, status: 'failed' });
   } finally {
     state.isGeneratingBeats = false;
   }
 }
 
-// 文学渲染
+// 文学起草
 async function handleRenderScene() {
   if (!state.currentProject) return;
   state.isRenderingScene = true;
@@ -1011,8 +1004,8 @@ async function handleRenderScene() {
 
   const targetIndex = computedState.currentWorkingChapterIndex.value;
   notify(
-    '正文初稿渲染已启动',
-    `第 ${targetIndex} 章文学渲染中 (目标 ${state.wordsTarget || 2000} 字 · 口吻: ${currentToneName.value})，大模型生成预计耗时 10 ~ 30 秒...`,
+    '正文起草已启动',
+    `第 ${targetIndex} 章起草中，预计需要 10~30 秒`,
     'info',
     3500,
     { taskType: 'render', chapterIndex: targetIndex, status: 'started' }
@@ -1030,18 +1023,18 @@ async function handleRenderScene() {
     await actions.runLinter();
     await actions.saveCheckpoint();
     notify(
-      '正文初稿渲染完成',
-      `第 ${targetIndex} 章完成约 ${state.workbench.content.length} 字正文渲染 (耗时 ${renderElapsedSec.value}s)`,
+      '正文起草完成',
+      `第 ${targetIndex} 章已完成约 ${state.workbench.content.length} 字 (耗时 ${renderElapsedSec.value}s)`,
       'success',
       4500,
       { taskType: 'render', chapterIndex: targetIndex, status: 'completed' }
     );
   } catch (e) {
     console.error('handleRenderScene error:', e);
-    renderError.value = e.message || '正文初稿渲染接口异常';
+    renderError.value = e.message || '正文初稿起草异常';
     notify(
-      '渲染正文失败',
-      e.message || '模型响应超时或网络异常',
+      '正文起草失败',
+      e.message || '请检查网络或配置',
       'error',
       6000,
       { taskType: 'render', chapterIndex: targetIndex, status: 'failed' }
@@ -1058,24 +1051,24 @@ async function handleRenderScene() {
 async function confirmAndRenderScene() {
   if (state.workbench.content.trim()) {
     const ok = await dialogs.confirm({
-      title: '重新渲染正文',
-      message: '重新生成将基于当前设定的因果节拍覆盖现有正文手稿，是否确认重新渲染？',
+      title: '重新起草正文',
+      message: '重新生成将覆盖现有手稿，是否确认？',
       type: 'warning',
-      confirmText: '确认重新生成',
+      confirmText: '确认重写',
     });
     if (!ok) return;
   }
   await handleRenderScene();
 }
 
-// 终审质检
+// 文风体检
 async function handleReviewDraft() {
   if (!state.currentProject || !state.workbench.content.trim()) return;
   state.isReviewing = true;
   const targetIndex = computedState.currentWorkingChapterIndex.value;
   notify(
-    '主编终审启动',
-    `正在对第 ${targetIndex} 章手稿进行反AI味与行文质感终审...`,
+    '文风体检已启动',
+    `正在检查第 ${targetIndex} 章手稿文字质量`,
     'info',
     3000,
     { taskType: 'review', chapterIndex: targetIndex, status: 'started' }
@@ -1092,16 +1085,16 @@ async function handleReviewDraft() {
     await actions.saveCheckpoint();
     if (res.verdict === 'ACCEPTED') {
       notify(
-        '主编终审通过',
-        `第 ${targetIndex} 章质检评定为合格 (${res.score}分)，可前往封存正史`,
+        '文风体检合格',
+        `第 ${targetIndex} 章评定合格 (${res.score}分)，可直接定稿`,
         'success',
         4000,
         { taskType: 'review', chapterIndex: targetIndex, status: 'accepted' }
       );
     } else {
       notify(
-        '终审未达标，需定向返工',
-        `第 ${targetIndex} 章得分 ${res.score}分，存在 ${res.issues?.length || 0} 处问题建议修缮`,
+        '建议继续精修',
+        `第 ${targetIndex} 章得分 ${res.score}分，建议进行针对性修改`,
         'warning',
         4500,
         { taskType: 'review', chapterIndex: targetIndex, status: 'rejected' }
@@ -1109,13 +1102,13 @@ async function handleReviewDraft() {
     }
   } catch (e) {
     console.error('handleReviewDraft error:', e);
-    notify('审查失败', e.message || '终审接口异常', 'error', 5000, { taskType: 'review', chapterIndex: targetIndex, status: 'failed' });
+    notify('体检失败', e.message || '请检查网络或配置', 'error', 5000, { taskType: 'review', chapterIndex: targetIndex, status: 'failed' });
   } finally {
     state.isReviewing = false;
   }
 }
 
-// 定向返工
+// 自动精修
 async function handleRewriteDraft() {
   if (!state.currentProject || !state.workbench.content.trim()) return;
   state.isRewriting = true;
@@ -1128,8 +1121,8 @@ async function handleRewriteDraft() {
 
   const targetIndex = computedState.currentWorkingChapterIndex.value;
   notify(
-    '定向返工精修启动',
-    `正在根据主审意见执行第 ${state.rewriteLoopCount + 1} 轮局部差分微创精修...`,
+    '精修已启动',
+    `正在依照修改意见优化第 ${targetIndex} 章手稿`,
     'info',
     3500,
     { taskType: 'rewrite', chapterIndex: targetIndex, status: 'started' }
@@ -1163,16 +1156,16 @@ async function handleRewriteDraft() {
     state.activeStep = 4;
     await actions.saveCheckpoint();
     notify(
-      '针对性返工完成',
-      `已采纳主审修改意见，正文已替换更新 (耗时 ${rewriteElapsedSec.value}s)`,
+      '精修完成',
+      `已依照意见优化正文 (耗时 ${rewriteElapsedSec.value}s)`,
       'success',
       4500,
       { taskType: 'rewrite', chapterIndex: targetIndex, status: 'completed' }
     );
   } catch (e) {
     console.error('handleRewriteDraft error:', e);
-    renderError.value = e.message || '针对性精修接口异常';
-    notify('返工失败', e.message || '模型响应超时', 'error', 6000, { taskType: 'rewrite', chapterIndex: targetIndex, status: 'failed' });
+    renderError.value = e.message || '正文精修接口异常';
+    notify('精修失败', e.message || '请检查网络或配置', 'error', 6000, { taskType: 'rewrite', chapterIndex: targetIndex, status: 'failed' });
   } finally {
     state.isRewriting = false;
     if (rewriteTimer) {
@@ -1182,7 +1175,7 @@ async function handleRewriteDraft() {
   }
 }
 
-// 提交归档
+// 保存定稿
 async function handleCommitChapter() {
   if (!state.currentProject || !state.workbench.content.trim()) return;
   state.isCommitting = true;
@@ -1203,8 +1196,8 @@ async function handleCommitChapter() {
       await api.clearCheckpoint(state.currentProject.id, targetIndex);
     } catch (_) {}
     notify(
-      '章节已成功封存归档',
-      `第 ${targetIndex} 章已原子写入正史与状态账本 (${state.workbench.content.length} 字)`,
+      '本章已定稿保存',
+      `第 ${targetIndex} 章已保存至章节目录 (${state.workbench.content.length}字)`,
       'success',
       4500,
       { taskType: 'commit', chapterIndex: targetIndex, status: 'completed' }
@@ -1217,7 +1210,7 @@ async function handleCommitChapter() {
     state.activeStep = 1;
   } catch (e) {
     console.error('handleCommitChapter error:', e);
-    notify('归档失败', e.message || '原子写入正史失败', 'error', 5000, { taskType: 'commit', chapterIndex: targetIndex, status: 'failed' });
+    notify('保存失败', e.message || '保存章节发生异常', 'error', 5000, { taskType: 'commit', chapterIndex: targetIndex, status: 'failed' });
   } finally {
     state.isCommitting = false;
   }
@@ -1226,8 +1219,8 @@ async function handleCommitChapter() {
 async function resetToNewChapter() {
   if (state.workbench.content.trim() || state.workbench.coreConflict.trim()) {
     const ok = await dialogs.confirm({
-      title: '切换创作新章节',
-      message: '当前手稿或冲突设定尚未归档，放弃精修并切换至新章节将重置工作台画布，是否继续？',
+      title: '放弃精修',
+      message: '未保存的修改将会丢失，是否切换至新章节？',
       type: 'warning',
       confirmText: '确认切换',
     });
@@ -1285,11 +1278,11 @@ async function runInlineAction(actionType, instruction = '') {
 
 async function openCustomInlinePrompt() {
   const instr = await dialogs.prompt({
-    title: '自定义 AI 伴写指令',
-    message: '请输入你对选中文本的具体打磨、扩写或风格润色要求：',
-    placeholder: '例如：增加周遭环境的阴冷与铁锈气味、用冷峻动作代替心理白描、强化暴风雨降临前的心理压迫...',
+    title: '自定义指令',
+    message: '输入你对选中文本的修改要求：',
+    placeholder: '例如：增加环境描写、用动作代替心理描写、强化对抗氛围...',
     multiline: true,
-    confirmText: '执行 AI 指令',
+    confirmText: '开始改写',
   });
   if (instr && instr.trim()) {
     runInlineAction('custom', instr.trim());
@@ -1307,13 +1300,13 @@ async function applyInlineResult() {
   inlineActionResult.value = null;
   actions.runLinter();
   await actions.saveCheckpoint();
-  notify('已采纳改写结果', '正文已更新', 'success');
+  notify('已采用改写', '正文已更新', 'success');
 }
 
 async function handleManualSaveDraft() {
   const ok = await actions.saveCheckpoint({}, false);
   if (ok) {
-    notify('草稿已保存', '当前章节全部工步与正文已同步存档至数据库', 'success');
+    notify('草稿已保存', '本章进度与正文已同步保存', 'success');
   }
 }
 
