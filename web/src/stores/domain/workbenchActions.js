@@ -27,6 +27,39 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
       }
     },
 
+    async suggestChapterConflict(targetIndex) {
+      if (!state.currentProject) {
+        notify('未选择作品', '请先在左侧选择或新建小说作品', 'warning');
+        return;
+      }
+      const idx = targetIndex || state.editingChapterIndex || (state.chapters?.length ? state.chapters.length + 1 : 1);
+      state.isSuggestingConflict = true;
+      try {
+        const res = await api.suggestConflict(state.currentProject.id, { chapter_index: idx });
+        if (res && res.core_conflict) {
+          state.workbench.coreConflict = res.core_conflict;
+          notify('构思就绪', `已为第 ${idx} 章推演核心冲突`, 'success');
+          await this.saveCheckpoint({ core_conflict: res.core_conflict }, true);
+        }
+      } catch (err) {
+        notify('构思失败', err.message || '推演冲突遇到问题，请重试', 'error');
+      } finally {
+        state.isSuggestingConflict = false;
+      }
+    },
+
+    async startNextChapter() {
+      if (!state.currentProject) return;
+      state.pipelineState.justCommitted = false;
+      state.editingChapterIndex = null;
+      state.workbench.content = '';
+      state.workbench.coreConflict = '';
+      state.reviewResult = null;
+      state.activeStep = 1;
+      const nextIdx = state.chapters.length + 1;
+      await this.suggestChapterConflict(nextIdx);
+    },
+
     async runAutonomousPipeline() {
       if (!state.currentProject) {
         notify('未选择作品', '请先在左侧选择或新建小说作品', 'warning');
@@ -42,12 +75,12 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
       state.pipelineState.message = '正在一键成章，请稍候...';
       state.pipelineState.tokens = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
       state.pipelineState.lastFinished = false;
+      state.pipelineState.justCommitted = false;
 
       const nextIndex = state.editingChapterIndex || (state.chapters.length + 1);
-      let conflict = state.workbench.coreConflict?.trim();
-      if (!conflict) {
-        conflict = `第 ${nextIndex} 章剧情冲突与关键转折。`;
-        state.workbench.coreConflict = conflict;
+      let conflict = state.workbench.coreConflict?.trim() || '';
+      if (conflict.startsWith(`第 ${nextIndex} 章`) && conflict.includes('剧情冲突与关键转折')) {
+        conflict = '';
       }
 
       // 立即将用户修改的最新手稿与分段保存至草稿，避免刷新后不同步
@@ -115,6 +148,9 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
                   if (currentEvent === 'progress') {
                     state.pipelineState.phase = data.phase || state.pipelineState.phase;
                     state.pipelineState.message = data.message || state.pipelineState.message;
+                    if (data.core_conflict) {
+                      state.workbench.coreConflict = data.core_conflict;
+                    }
                     if (data.total_tokens) {
                       state.pipelineState.tokens.total_tokens = data.total_tokens;
                     }
@@ -181,6 +217,8 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
 
         if (completedResult && completedResult.committed) {
           state.pipelineState.message = `第 ${completedResult.chapter_index} 章已完成并保存至章节目录！`;
+          state.pipelineState.justCommitted = true;
+          state.pipelineState.lastCommittedChapter = completedResult.chapter_index;
           notify(`第 ${completedResult.chapter_index} 章已完成`, '本章手稿已成功定稿存入目录', 'success');
 
           if (helpers && helpers.selectProject) {

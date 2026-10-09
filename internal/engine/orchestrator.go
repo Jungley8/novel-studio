@@ -55,6 +55,14 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 	horizon *CanonHorizon,
 	coreConflict string,
 ) (*DeriveBeatsOutput, error) {
+	if strings.TrimSpace(coreConflict) == "" && horizon != nil && horizon.Project != nil {
+		if suggested, _, err := o.SuggestChapterConflict(ctx, reasoningModel, horizon); err == nil && strings.TrimSpace(suggested) != "" {
+			coreConflict = strings.TrimSpace(suggested)
+		} else {
+			coreConflict = fmt.Sprintf("第 %d 章核心矛盾爆发与命运转折", horizon.TargetChapter)
+		}
+	}
+
 	systemPrompt := `你是一名网络小说架构与读者心理学总设计师。你严禁输出抒情散文。
 你的任务是根据给定的主角实体状态、世界公理与核心冲突，推演下一章严密的 4 个剧情节拍 (Beats)。
 必须以纯 JSON 格式返回，包含：
@@ -899,9 +907,30 @@ BELONGS_TO(宗门从属), POSSESSES(本命持有), LOCATED_IN(驻扎身处), OPP
 		projectID = project.ID
 	}
 
+	resolveID := func(name string) string {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return ""
+		}
+		if id, ok := nameToID[name]; ok {
+			return id
+		}
+		for _, e := range entries {
+			if strings.Contains(e.Name, name) || strings.Contains(name, e.Name) {
+				return e.ID
+			}
+			for _, a := range e.Aliases {
+				if strings.Contains(a, name) || strings.Contains(name, a) {
+					return e.ID
+				}
+			}
+		}
+		return ""
+	}
+
 	for i, r := range rawList {
-		srcID := nameToID[r.SourceName]
-		tgtID := nameToID[r.TargetName]
+		srcID := resolveID(r.SourceName)
+		tgtID := resolveID(r.TargetName)
 		if srcID == "" || tgtID == "" || srcID == tgtID {
 			continue
 		}
@@ -1238,4 +1267,120 @@ func (o *Orchestrator) ExtractPlotHooks(
 	}
 
 	return hooks, usage, nil
+}
+
+// SuggestChapterConflict prompts the reasoning model to invent an intense, dramatic core conflict
+// for the target chapter based on canon history, current volume arc, urgent hooks, and protagonist goals.
+func (o *Orchestrator) SuggestChapterConflict(
+	ctx context.Context,
+	reasoningModel string,
+	horizon *CanonHorizon,
+) (string, TokenUsage, error) {
+	if horizon == nil || horizon.Project == nil {
+		return "", TokenUsage{}, errors.New("horizon and project are required to suggest chapter conflict")
+	}
+
+	systemPrompt := fmt.Sprintf(`你是一名网络小说白金级剧情架构师与高潮推演专家。
+你的任务是根据当前作品设定、世界公理、当前卷主线目标、主角当前境遇与开放伏笔，为即将展开的第 %d 章推演一个张力饱满、打破预期的【核心剧情冲突与关键转折】。
+
+要求：
+1. 冲突必须紧扣当前卷主线，并强力推动主角核心目标；
+2. 包含明确的外部压迫力量、生死/利益对峙或意料之外的规则危机；
+3. 禁止空洞抽象的大道理或概念叙述，必须具备具体的具象动作与事件爆点（如：某势力登门索要信物、护道禁制突遭反噬、拍卖会上截胡宿敌、绝境中不得不以身试险等）；
+4. 语言紧凑有力，纯文本输出 50~150 字，严禁包含任何前缀（如“本章核心冲突：”、“冲突：”等）或引号，直接输出冲突陈述本身。`, horizon.TargetChapter)
+
+	hooksSummary := "无"
+	if len(horizon.AllActiveHooks) > 0 {
+		var hList []string
+		for _, h := range horizon.AllActiveHooks {
+			prefix := ""
+			if len(horizon.UrgentHooks) > 0 {
+				for _, uh := range horizon.UrgentHooks {
+					if uh.ID == h.ID {
+						prefix = "【🔥近期临期】"
+						break
+					}
+				}
+			}
+			hList = append(hList, fmt.Sprintf("- %s[%s] %s (目标回收: 第 %d 章)", prefix, h.Status, h.Title, h.TargetChapter))
+		}
+		hooksSummary = strings.Join(hList, "\n")
+	}
+
+	rollingCanon := "(开篇第一章，无前序历史)"
+	if strings.TrimSpace(horizon.RollingCanonText) != "" {
+		rollingCanon = horizon.RollingCanonText
+	}
+
+	callbacksText := ""
+	if strings.TrimSpace(horizon.HistoricalCallbacks) != "" {
+		callbacksText = "\n\n" + horizon.HistoricalCallbacks
+	}
+
+	var volumeContext string
+	if horizon.CurrentVolume != nil {
+		volumeContext = fmt.Sprintf("\n【当前分卷主线任务】\n第 %d 卷：《%s》\n- 卷核心主线目标：%s\n- 卷终极大高潮：%s\n本章必须严格服务于本卷主线因果推进。\n",
+			horizon.CurrentVolume.VolumeIndex, horizon.CurrentVolume.Title,
+			horizon.CurrentVolume.CoreGoal, horizon.CurrentVolume.Climax)
+	}
+
+	var powerContext string
+	if horizon.ActivePowerTier != nil {
+		powerContext = fmt.Sprintf("\n【当前战力境界法则】\n- 境界：%s (%s)\n- 升级瓶颈：%s\n- 天道代价：%s\n",
+			horizon.ActivePowerTier.Realm, horizon.ActivePowerTier.Description,
+			horizon.ActivePowerTier.Bottleneck, horizon.ActivePowerTier.Drawback)
+	}
+
+	codexContext := ""
+	if strings.TrimSpace(horizon.CodexContextText) != "" {
+		codexContext = "\n\n" + horizon.CodexContextText
+	}
+
+	project := horizon.Project
+	userPrompt := fmt.Sprintf(`【作品信息】
+书名：《%s》
+目标平台：%s
+当前章节序号：第 %d 章
+
+【世界公理与不可违背法则】
+%s%s%s
+
+【主角当前状态机】
+姓名与等级：%s
+随身物品栏：%s
+当前隐秘目标：%s%s
+
+【前序正史视界 (最近 3 章密封剧情)】
+%s%s
+
+【当前开放状态的伏笔】
+%s
+
+请推演第 %d 章的核心冲突与事件爆点（纯文本直接输出）：`,
+		project.Title, project.TargetPlatform, horizon.TargetChapter,
+		horizon.WorldRules, volumeContext, powerContext,
+		horizon.ProtagonistState.NameAndLevel, horizon.ProtagonistState.Inventory, horizon.ProtagonistState.CoreGoal, codexContext,
+		rollingCanon, callbacksText,
+		hooksSummary, horizon.TargetChapter,
+	)
+
+	ctxRole := ContextWithRole(ctx, RoleReasoner)
+	resp, usage, err := o.client.ChatCompletionWithUsage(ctxRole, reasoningModel, systemPrompt, userPrompt, 0.7)
+	if err != nil {
+		return "", usage, fmt.Errorf("suggest chapter conflict failed: %w", err)
+	}
+
+	// Clean any markdown formatting or prefix
+	cleaned := strings.TrimSpace(resp)
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSuffix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+	for _, prefix := range []string{"本章冲突：", "核心冲突：", "剧情冲突：", "冲突："} {
+		if strings.HasPrefix(cleaned, prefix) {
+			cleaned = strings.TrimSpace(strings.TrimPrefix(cleaned, prefix))
+		}
+	}
+	cleaned = strings.Trim(cleaned, `"'“”`)
+
+	return cleaned, usage, nil
 }

@@ -726,3 +726,82 @@ func TestServer_CheckpointPostAndPersistence(t *testing.T) {
 		t.Errorf("unexpected beats: %+v", fetchedCp.Beats)
 	}
 }
+
+func TestServer_SuggestConflict(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	cfgPath := filepath.Join(tmpDir, "cfg.json")
+	s, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]string{
+						"role":    "assistant",
+						"content": "核心冲突：青云宗执法堂突然深夜搜山，主角必须在身份暴露前将破损古镜送出禁地。",
+					},
+				},
+			},
+			"usage": map[string]int{
+				"prompt_tokens":     80,
+				"completion_tokens": 40,
+				"total_tokens":      120,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIBase = mockServer.URL
+	cfg.APIKey = "sk-test-key"
+	llmClient := engine.NewHTTPLLMClient(mockServer.URL, "sk-test-key")
+	orch := engine.NewOrchestrator(llmClient)
+	linter := engine.NewLinter(nil)
+
+	srv, err := server.New(cfg, cfgPath, s, llmClient, orch, linter)
+	if err != nil {
+		t.Fatalf("server.New failed: %v", err)
+	}
+
+	ctx := context.Background()
+	proj := &domain.Project{
+		ID:             "proj_conflict_test",
+		Title:          "逆天神尊",
+		TargetPlatform: "番茄脑洞",
+		WorldRules:     "天道无情，适者生存",
+	}
+	_ = s.SaveProject(ctx, proj)
+
+	// Call POST /api/projects/:id/suggest-conflict
+	reqBody := `{"chapter_index": 1}`
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+proj.ID+"/suggest-conflict", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var res map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("unmarshal suggest-conflict response failed: %v", err)
+	}
+
+	coreConflict, ok := res["core_conflict"].(string)
+	if !ok || coreConflict == "" {
+		t.Fatalf("expected non-empty core_conflict, got %+v", res)
+	}
+	if strings.Contains(coreConflict, "核心冲突：") {
+		t.Errorf("expected cleaned prefix, got %s", coreConflict)
+	}
+	expected := "青云宗执法堂突然深夜搜山，主角必须在身份暴露前将破损古镜送出禁地。"
+	if coreConflict != expected {
+		t.Errorf("expected %q, got %q", expected, coreConflict)
+	}
+}

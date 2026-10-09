@@ -95,6 +95,7 @@ export const api = {
   analyzeStateMachine: (projectId) => apiFetch(`/api/projects/${projectId}/statemachine/ai-analyze`, { method: 'POST' }),
 
   // Manuscript & Workshop Actions
+  suggestConflict: (projectId, data) => apiFetch(`/api/projects/${projectId}/suggest-conflict`, { method: 'POST', body: JSON.stringify(data) }),
   deriveBeats: (projectId, data) => apiFetch(`/api/projects/${projectId}/derive-beats`, { method: 'POST', body: JSON.stringify(data) }),
   renderScene: (projectId, data) => apiFetch(`/api/projects/${projectId}/render-scene`, { method: 'POST', body: JSON.stringify(data) }),
   reviewDraft: (projectId, data) => apiFetch(`/api/projects/${projectId}/review-draft`, { method: 'POST', body: JSON.stringify(data) }),

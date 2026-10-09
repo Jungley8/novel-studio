@@ -62,6 +62,37 @@
           </span>
         </div>
 
+        <!-- 小白首选：全自动一键成章主入口 -->
+        <div class="mb-2.5">
+          <button 
+            @click="actions.runAutonomousPipeline()"
+            :disabled="state.pipelineState.active"
+            class="w-full p-2.5 rounded-xl border transition flex flex-col gap-1 cursor-pointer disabled:cursor-not-allowed group text-left relative overflow-hidden"
+            :class="state.pipelineState.active 
+              ? 'bg-brand-amber/15 border-brand-amber/50 shadow-amber-glow animate-subtle-pulse' 
+              : 'bg-gradient-to-br from-atelier-800 via-atelier-850 to-atelier-800 hover:from-atelier-750 hover:to-atelier-800 border-brand-amber/35 hover:border-brand-amber shadow-atelier-sm'">
+            
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-1.5">
+                <span class="w-5 h-5 rounded-md bg-brand-amber text-atelier-950 flex items-center justify-center font-bold text-xs shadow-sm">
+                  ⚡
+                </span>
+                <span class="text-xs font-bold text-ink-50 font-serif tracking-wide group-hover:text-brand-amber transition-colors">
+                  {{ state.pipelineState.active ? (state.pipelineState.message || '全自动成章中...') : '全自动一键成章' }}
+                </span>
+              </div>
+              <span v-if="!state.pipelineState.active" class="text-[10px] px-1.5 py-0.5 rounded bg-brand-amber/15 text-brand-amber border border-brand-amber/30 font-medium">
+                小白推荐
+              </span>
+              <Loader2 v-else class="w-3.5 h-3.5 text-brand-amber animate-spin" />
+            </div>
+
+            <p class="text-[10px] text-ink-400 group-hover:text-ink-300 leading-tight">
+              {{ state.pipelineState.active ? '构思大纲 ➔ 正文起草 ➔ 质量体检 ➔ 自动精修 ➔ 入库' : '自动构思冲突、推演节拍、起草高能正文并自愈精修' }}
+            </p>
+          </button>
+        </div>
+
         <!-- 6 步流线型步进器 -->
         <div class="grid grid-cols-6 gap-1 bg-atelier-950/60 p-1 rounded-lg border border-atelier-800">
           <button 
@@ -130,7 +161,18 @@
           </div>
 
           <div>
-            <label class="block text-[11px] text-ink-300 mb-1 font-medium">剧情走向：</label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-[11px] text-ink-300 font-medium">剧情走向：</label>
+              <button 
+                type="button"
+                @click="actions.suggestChapterConflict()"
+                :disabled="state.isSuggestingConflict"
+                class="text-[10px] text-brand-amber hover:text-brand-amber-hover font-semibold flex items-center gap-1 transition cursor-pointer disabled:opacity-50">
+                <Loader2 v-if="state.isSuggestingConflict" class="w-3 h-3 animate-spin" />
+                <Sparkles v-else class="w-3 h-3" />
+                <span>{{ state.isSuggestingConflict ? '正在构思...' : '🎲 智能推演剧情' }}</span>
+              </button>
+            </div>
             <textarea 
               v-model="state.workbench.coreConflict"
               rows="3" 
@@ -496,6 +538,38 @@
     <!-- 中栏：文学手稿画布 (弹性自适应排版空间) -->
     <div class="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden bg-atelier-950">
       
+      <!-- 连载接龙卡片 (本章已成功归档，一键衔接下一章) -->
+      <div 
+        v-if="state.pipelineState.justCommitted" 
+        class="px-5 py-3 bg-gradient-to-r from-emerald-950/80 via-atelier-900/90 to-atelier-900 border-b border-brand-emerald/30 flex items-center justify-between text-xs select-none shrink-0 animate-fade-in">
+        <div class="flex items-center gap-2.5">
+          <div class="w-6 h-6 rounded-full bg-brand-emerald/20 text-brand-emerald flex items-center justify-center font-bold">
+            ✓
+          </div>
+          <div>
+            <div class="font-bold text-ink-50">
+              第 {{ state.pipelineState.lastCommittedChapter }} 章已成功定稿入库！
+            </div>
+            <div class="text-[11px] text-ink-300">
+              正史视界与状态机已结算，准备好开启下一章了吗？
+            </div>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button 
+            @click="state.pipelineState.justCommitted = false" 
+            class="px-2.5 py-1 rounded bg-atelier-800 hover:bg-atelier-750 text-[11px] text-ink-400 hover:text-ink-200 transition cursor-pointer">
+            稍后
+          </button>
+          <button 
+            @click="actions.startNextChapter()" 
+            class="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-brand-amber to-amber-600 hover:from-brand-amber-hover hover:to-amber-500 text-atelier-950 font-bold text-xs shadow-amber-glow transition flex items-center gap-1.5 cursor-pointer">
+            <Zap class="w-3.5 h-3.5 fill-current" />
+            <span>⚡ 一键生成第 {{ computedState.nextChapterIndex.value }} 章</span>
+          </button>
+        </div>
+      </div>
+
       <!-- 撤回草稿 / 历史章节精修提示条 -->
       <div 
         v-if="state.editingChapterIndex" 
@@ -530,6 +604,19 @@
           <span class="text-[11px] font-mono text-ink-400 shrink-0">
             <strong class="text-brand-amber font-semibold">{{ state.workbench.content.length }}</strong> 字
           </span>
+
+          <button 
+            @click="actions.runAutonomousPipeline()"
+            :disabled="state.pipelineState.active"
+            class="ml-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+            :class="state.pipelineState.active 
+              ? 'bg-amber-500/20 text-brand-amber border border-brand-amber/40 animate-subtle-pulse' 
+              : 'bg-gradient-to-r from-brand-amber to-amber-600 hover:from-brand-amber-hover hover:to-amber-500 text-atelier-950 shadow-atelier-sm'"
+            title="AI 全自动构思冲突、起草正文与精修归档">
+            <Loader2 v-if="state.pipelineState.active" class="w-3 h-3 animate-spin" />
+            <Zap v-else class="w-3 h-3 fill-current" />
+            <span>{{ state.pipelineState.active ? (state.pipelineState.message || '正在成章...') : '一键成章' }}</span>
+          </button>
         </div>
 
         <!-- 风格与字数预算快速选择 (单章微调，继承作品级设定) -->
@@ -894,6 +981,7 @@ import {
   Trash2,
   AlertCircle,
   AlertTriangle,
+  Zap,
   X
 } from 'lucide-vue-next';
 

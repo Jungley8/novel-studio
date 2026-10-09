@@ -82,6 +82,7 @@ export const state = reactive({
   wordsTarget: 2000,
   narrativeStyle: 'hardboiled',
   rewriteLoopCount: 0,
+  isSuggestingConflict: false,
   isGeneratingBeats: false,
   isRenderingScene: false,
   isReviewing: false,
@@ -118,6 +119,8 @@ export const state = reactive({
   pipelineState: {
     active: false,
     lastFinished: false,
+    justCommitted: false,
+    lastCommittedChapter: null,
     phase: '',
     message: '',
     resumed: false,

@@ -91,8 +91,14 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 
 	action := parts[1]
 	switch action {
+	case "suggest-conflict":
+		s.handleSuggestConflict(w, r, projectID)
 	case "chapters":
 		if len(parts) >= 3 {
+			if parts[2] == "suggest-conflict" {
+				s.handleSuggestConflict(w, r, projectID)
+				return
+			}
 			s.handleProjectChapterSub(w, r, projectID, parts[2:])
 			return
 		}
@@ -590,6 +596,40 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 			CreatedAt:      time.Now(),
 		}
 		_ = s.store.SavePlotHook(r.Context(), hook)
+	}
+
+	// 全自动级联关系图谱推演 (Extract Codex Relations Cascade)
+	codexEntries, _ := s.store.ListCodexEntries(r.Context(), projectID, "")
+	if len(codexEntries) >= 2 && s.orch != nil {
+		relations, _, relErr := s.orch.ExtractCodexRelations(
+			r.Context(),
+			s.cfg.ReasoningModel,
+			proj,
+			codexEntries,
+			proj.WorldRules+"\n\n全书核心立意："+fw.ThemePremise,
+		)
+		if relErr == nil && len(relations) > 0 {
+			for _, rel := range relations {
+				_ = s.store.SaveCodexRelation(r.Context(), projectID, &rel)
+			}
+		}
+	}
+
+	// 全自动推演第 1 卷第 1 章开局黄金冲突并初始化草稿检查点
+	if s.chronicle != nil && s.orch != nil {
+		horizon, hErr := s.chronicle.AssembleHorizon(r.Context(), projectID, 1)
+		if hErr == nil && horizon != nil {
+			conflict1, _, cErr := s.orch.SuggestChapterConflict(r.Context(), s.cfg.ReasoningModel, horizon)
+			if cErr == nil && strings.TrimSpace(conflict1) != "" {
+				_ = s.store.SaveCheckpoint(r.Context(), &domain.ChapterCheckpoint{
+					ProjectID:    projectID,
+					ChapterIndex: 1,
+					Phase:        domain.CheckpointPhaseInit,
+					CoreConflict: conflict1,
+					UpdatedAt:    time.Now(),
+				})
+			}
+		}
 	}
 
 	jsonResponse(w, http.StatusCreated, proj)

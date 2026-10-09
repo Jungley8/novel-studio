@@ -239,6 +239,7 @@ func (a *AuditReport) ToReviewResult() *ReviewResult {
 type CheckpointPhase string
 
 const (
+	CheckpointPhaseInit      CheckpointPhase = "INIT"
 	CheckpointPhaseBeats     CheckpointPhase = "BEATS_DERIVED"
 	CheckpointPhaseDrafted   CheckpointPhase = "DRAFTED"
 	CheckpointPhaseAudited   CheckpointPhase = "AUDITED"

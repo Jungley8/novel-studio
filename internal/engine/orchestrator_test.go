@@ -77,6 +77,38 @@ func TestOrchestrator_DeriveBeats(t *testing.T) {
 	}
 }
 
+func TestOrchestrator_SuggestChapterConflict(t *testing.T) {
+	mockResponse := "核心冲突：青云宗执法堂突然夜袭药园，欲以私藏妖丹之罪废黜主角修为，主角必须在三炷香内借助护山残阵逆向反杀。"
+	mock := &mockLLMClient{response: mockResponse}
+	orch := engine.NewOrchestrator(mock)
+
+	p := &domain.Project{
+		Title:          "万古剑尊",
+		TargetPlatform: "番茄脑洞",
+		WorldRules:     "天道有缺，弱肉强食",
+		Protagonist: domain.Protagonist{
+			NameAndLevel: "叶枫 (练气三层)",
+			CoreGoal:     "查明家族血洗真相",
+		},
+	}
+	horizon := &engine.CanonHorizon{
+		Project:       p,
+		TargetChapter: 1,
+	}
+
+	conflict, usage, err := orch.SuggestChapterConflict(context.Background(), "deepseek-reasoner", horizon)
+	if err != nil {
+		t.Fatalf("SuggestChapterConflict failed: %v", err)
+	}
+	expected := "青云宗执法堂突然夜袭药园，欲以私藏妖丹之罪废黜主角修为，主角必须在三炷香内借助护山残阵逆向反杀。"
+	if conflict != expected {
+		t.Errorf("expected cleaned conflict %q, got %q", expected, conflict)
+	}
+	if usage.TotalTokens != 300 {
+		t.Errorf("expected usage 300, got %d", usage.TotalTokens)
+	}
+}
+
 func TestOrchestrator_RenderScene(t *testing.T) {
 	mock := &mockLLMClient{response: "青云峰上，寒风如刀。陆青抬起眼皮，指尖微屈。"}
 	orch := engine.NewOrchestrator(mock)
