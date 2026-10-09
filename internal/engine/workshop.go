@@ -408,8 +408,20 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		result.HarmonizeReport = &rpt
 	}
 
-	// 6. Optional Atomic Commitment
-	if req.AutoCommit && auditReport.Verdict == domain.ReviewVerdictAccepted {
+	// 6. Optional Atomic Commitment with Self-Healing QualityGate Fallback
+	shouldCommit := false
+	if req.AutoCommit {
+		if auditReport.Verdict == domain.ReviewVerdictAccepted {
+			shouldCommit = true
+		} else if auditReport.Score >= 70 {
+			// 柔性接纳自愈兜底：已达到最大重写轮次且评分达到及格线 (>= 70分)，自动放行并转为 ACCEPTED 归档入库
+			auditReport.Verdict = domain.ReviewVerdictAccepted
+			auditReport.Issues = append(auditReport.Issues, "【全自动模式柔性接纳】已达最大重写轮次且评分达到及格容忍线(>=70分)，系统自动放行定稿入库")
+			shouldCommit = true
+		}
+	}
+
+	if shouldCommit {
 		chapter := &domain.Chapter{
 			ID:              fmt.Sprintf("ch_%s_%d", req.ProjectID, req.ChapterIndex),
 			ProjectID:       req.ProjectID,
@@ -421,7 +433,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			Content:         currentDraft,
 			WordCount:       len([]rune(currentDraft)),
 			BurstinessScore: auditReport.BurstinessScore,
-			LinterPassed:    auditReport.Verdict == domain.ReviewVerdictAccepted,
+			LinterPassed:    true,
 			Review:          auditReport.ToReviewResult(),
 			CreatedAt:       time.Now(),
 		}

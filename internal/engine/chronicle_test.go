@@ -28,6 +28,7 @@ func (m *mockChronicleStore) SaveProject(ctx context.Context, project *domain.Pr
 }
 func (m *mockChronicleStore) DeleteProject(ctx context.Context, id string) error { return nil }
 func (m *mockChronicleStore) CommitChapter(ctx context.Context, projectID string, chapter *domain.Chapter) (*domain.Project, error) {
+	m.chapters = append(m.chapters, chapter)
 	return m.project, nil
 }
 func (m *mockChronicleStore) UncommitChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, *domain.Project, error) {

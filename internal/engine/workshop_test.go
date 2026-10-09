@@ -230,3 +230,88 @@ func (m *mockCheckpointWorkshopStore) ClearCheckpoint(ctx context.Context, proje
 	m.cp = nil
 	return nil
 }
+
+func TestChapterWorkshop_AutoCommit_TolerantAdmitWhenMaxLoopsReached(t *testing.T) {
+	mockClient := &mockWorkshopLLMClient{
+		beatsJSON:   `{"beats": [{"phase": "破局", "action": "反杀"}], "state_mutation": {}}`,
+		renderDraft: "刀光一闪，敌人应声倒地。",
+		reviewJSON:  `{"verdict": "REVISION", "score": 75, "issues": ["字数略少"]}`,
+	}
+
+	orch := NewOrchestrator(mockClient)
+	qGate := NewQualityGate(mockClient, nil)
+
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:    "p-tolerant",
+			Title: "柔性自愈测试",
+		},
+		chapters: []*domain.Chapter{},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	// Scenario 1: Score 75 (>= 70) with AutoCommit=true should be auto-admitted after MaxRewriteLoops
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-tolerant",
+		ChapterIndex:    1,
+		CoreConflict:    "初入险境",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if !res.Committed {
+		t.Errorf("expected chapter to be auto-committed via tolerant admission (score: 75), got committed: false")
+	}
+	if res.Audit.Verdict != domain.ReviewVerdictAccepted {
+		t.Errorf("expected verdict to be ACCEPTED after tolerant admission, got %s", res.Audit.Verdict)
+	}
+	if len(mockStore.chapters) != 1 {
+		t.Errorf("expected 1 chapter committed into store, got %d", len(mockStore.chapters))
+	}
+
+	// Scenario 2: Score 50 (< 70) should NOT be auto-admitted
+	mockClientFail := &mockWorkshopLLMClient{
+		beatsJSON:   `{"beats": [{"phase": "破局", "action": "反杀"}], "state_mutation": {}}`,
+		renderDraft: "刀光一闪，敌人应声倒地。",
+		reviewJSON:  `{"verdict": "REVISION", "score": 50, "issues": ["情节断裂严重"]}`,
+	}
+	orchFail := NewOrchestrator(mockClientFail)
+	qGateFail := NewQualityGate(mockClientFail, nil)
+	mockStoreFail := &mockChronicleStore{
+		project: &domain.Project{
+			ID:    "p-fail",
+			Title: "不及格测试",
+		},
+		chapters: []*domain.Chapter{},
+	}
+	chronicleFail := NewCanonChronicle(mockStoreFail)
+	workshopFail := NewChapterWorkshop(orchFail, chronicleFail, qGateFail, mockStoreFail)
+
+	reqFail := WorkshopProduceRequest{
+		ProjectID:       "p-fail",
+		ChapterIndex:    1,
+		CoreConflict:    "初入险境",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	resFail, err := workshopFail.ProduceChapter(context.Background(), reqFail)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if resFail.Committed {
+		t.Errorf("expected chapter NOT to be auto-committed when score is 50 (<70)")
+	}
+	if resFail.Audit.Verdict == domain.ReviewVerdictAccepted {
+		t.Errorf("expected verdict NOT to be ACCEPTED when score is 50")
+	}
+}
+
