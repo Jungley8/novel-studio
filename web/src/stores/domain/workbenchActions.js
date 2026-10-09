@@ -11,6 +11,7 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
             burstiness_score: rep.burstiness_score || 0,
             hit_banned_words: Array.isArray(rep.hit_banned_words) ? rep.hit_banned_words : [],
             top_repeated_ngrams: Array.isArray(rep.top_repeated_ngrams) ? rep.top_repeated_ngrams : [],
+            empirical_tells: Array.isArray(rep.empirical_tells) ? rep.empirical_tells : [],
             passed: Boolean(rep.passed),
             message: rep.message || '',
             dialogue_ratio: rep.dialogue_ratio || 0,
@@ -127,6 +128,7 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
                           ...data.audit_report.linter,
                           hit_banned_words: Array.isArray(data.audit_report.linter.hit_banned_words) ? data.audit_report.linter.hit_banned_words : [],
                           top_repeated_ngrams: Array.isArray(data.audit_report.linter.top_repeated_ngrams) ? data.audit_report.linter.top_repeated_ngrams : [],
+                          empirical_tells: Array.isArray(data.audit_report.linter.empirical_tells) ? data.audit_report.linter.empirical_tells : [],
                         };
                       }
                     }
@@ -141,6 +143,7 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
                           ...data.audit.linter,
                           hit_banned_words: Array.isArray(data.audit.linter.hit_banned_words) ? data.audit.linter.hit_banned_words : [],
                           top_repeated_ngrams: Array.isArray(data.audit.linter.top_repeated_ngrams) ? data.audit.linter.top_repeated_ngrams : [],
+                          empirical_tells: Array.isArray(data.audit.linter.empirical_tells) ? data.audit.linter.empirical_tells : [],
                         };
                       }
                     }
@@ -167,6 +170,7 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
                 ...completedResult.audit.linter,
                 hit_banned_words: Array.isArray(completedResult.audit.linter.hit_banned_words) ? completedResult.audit.linter.hit_banned_words : [],
                 top_repeated_ngrams: Array.isArray(completedResult.audit.linter.top_repeated_ngrams) ? completedResult.audit.linter.top_repeated_ngrams : [],
+                empirical_tells: Array.isArray(completedResult.audit.linter.empirical_tells) ? completedResult.audit.linter.empirical_tells : [],
               };
             }
           }
@@ -273,6 +277,7 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
                 ...cp.audit_report.linter,
                 hit_banned_words: Array.isArray(cp.audit_report.linter.hit_banned_words) ? cp.audit_report.linter.hit_banned_words : [],
                 top_repeated_ngrams: Array.isArray(cp.audit_report.linter.top_repeated_ngrams) ? cp.audit_report.linter.top_repeated_ngrams : [],
+                empirical_tells: Array.isArray(cp.audit_report.linter.empirical_tells) ? cp.audit_report.linter.empirical_tells : [],
               };
             }
           }
@@ -327,6 +332,35 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
         notify('草稿断点已废弃', `第 ${idx} 章在途草稿与节拍已全部清除`, 'info');
       } catch (err) {
         notify('清除断点失败', err.message, 'error');
+      }
+    },
+
+    async runDeterministicSanitize() {
+      if (!state.currentProject || !state.workbench.content?.trim()) {
+        notify('手稿为空', '手稿区暂无正文可供净洗', 'warning');
+        return;
+      }
+      try {
+        const res = await api.sanitizeAI(state.currentProject.id, {
+          content: state.workbench.content,
+        });
+        if (res && res.sanitized_content) {
+          state.workbench.content = res.sanitized_content;
+          await this.runLinter();
+          await this.saveCheckpoint({}, true);
+          if (res.items_count > 0) {
+            notify(
+              '确定性语法净洗完成',
+              `已成功剥离 ${res.items_count} 处空转冒号、从句壳子与机械复述词`,
+              'success'
+            );
+          } else {
+            notify('确定性语法净洗完成', '手稿行文未发现机械语法壳子', 'info');
+          }
+        }
+      } catch (err) {
+        console.error('sanitizeAI failed:', err);
+        notify('语法净洗失败', err.message, 'error');
       }
     },
   };

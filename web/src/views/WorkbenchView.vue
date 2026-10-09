@@ -323,27 +323,50 @@
             <div v-else class="text-[10px] text-brand-emerald">未检出高频模式化废词。</div>
           </div>
 
-          <!-- 国内合规与扰动 -->
+          <!-- AI经验套路与语法壳子 (翻案腔/空转冒号/从句壳/复述句) -->
+          <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 space-y-1">
+            <div class="flex justify-between items-center text-xs">
+              <span class="text-ink-300">AI腔调特征 (翻案腔/空转冒号/从句壳)：</span>
+              <span class="font-mono text-xs font-bold" :class="(state.linterReport?.empirical_tells || []).length === 0 ? 'text-brand-emerald' : 'text-brand-amber'">
+                {{ (state.linterReport?.empirical_tells || []).length }} 处检出
+              </span>
+            </div>
+            <div v-if="(state.linterReport?.empirical_tells || []).length > 0" class="flex flex-wrap gap-1 mt-1">
+              <span v-for="tell in (state.linterReport?.empirical_tells || [])" :key="tell" class="text-[10px] bg-brand-amber/10 text-brand-amber border border-brand-amber/30 px-1.5 py-0.5 rounded font-mono">
+                {{ tell }}
+              </span>
+            </div>
+            <div v-else class="text-[10px] text-brand-emerald">行文质感纯净，未检出机械翻案腔与从句壳子。</div>
+          </div>
+
+          <!-- 文本净洗与去AI扰动 -->
           <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 space-y-2">
             <div class="flex justify-between items-center text-xs">
               <span class="text-ink-200 font-bold flex items-center gap-1.5">
                 <ShieldCheck class="w-3.5 h-3.5 text-brand-emerald" />
-                <span>国内合规与对抗扰动</span>
+                <span>文本净洗与去AI扰动</span>
               </span>
               <button @click="openHarmonizeModal" class="text-[10px] text-brand-amber hover:underline cursor-pointer">
                 参数设置
               </button>
             </div>
-            <div class="flex gap-1.5">
+            <div class="grid grid-cols-3 gap-1.5">
+              <button 
+                @click="actions.runDeterministicSanitize" 
+                class="py-1.5 px-1 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded text-[11px] transition flex items-center justify-center gap-1 cursor-pointer"
+                title="零Token确定性清洗：剥离提示语冒号、当...时从句壳、解构这意味着复述、平滑破折号">
+                <Sparkles class="w-3 h-3 text-brand-amber" />
+                <span>语法净洗</span>
+              </button>
               <button 
                 @click="openHarmonizeModal" 
-                class="flex-1 py-1.5 px-2 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded text-[11px] transition flex items-center justify-center gap-1 cursor-pointer">
+                class="py-1.5 px-1 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded text-[11px] transition flex items-center justify-center gap-1 cursor-pointer">
                 <ShieldCheck class="w-3 h-3 text-brand-emerald" />
                 <span>合规扰动</span>
               </button>
               <button 
                 @click="openHumanTouchesModal" 
-                class="flex-1 py-1.5 px-2 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded text-[11px] transition flex items-center justify-center gap-1 cursor-pointer">
+                class="py-1.5 px-1 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded text-[11px] transition flex items-center justify-center gap-1 cursor-pointer">
                 <HeartHandshake class="w-3 h-3 text-brand-amber" />
                 <span>人味注入</span>
               </button>
@@ -560,6 +583,14 @@
             class="px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded-md border border-atelier-750 transition flex items-center gap-1 cursor-pointer">
             <Sparkles class="w-3 h-3 text-brand-amber" />
             <span class="hidden sm:inline">反AI味质检</span>
+          </button>
+
+          <button 
+            @click="actions.runDeterministicSanitize" 
+            class="hidden sm:flex px-2.5 py-1 text-[11px] font-medium bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 rounded-md border border-atelier-750 transition items-center gap-1 cursor-pointer"
+            title="一键清洗空转冒号、当...时壳子与机械复述词">
+            <Sparkles class="w-3 h-3 text-brand-cyan" />
+            <span>语法净洗</span>
           </button>
 
           <button 

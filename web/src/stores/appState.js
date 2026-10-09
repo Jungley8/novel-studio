@@ -80,6 +80,7 @@ export const state = reactive({
   linterReport: {
     burstiness_score: 50,
     hit_banned_words: [],
+    empirical_tells: [],
     passed: true,
     message: '就绪',
   },

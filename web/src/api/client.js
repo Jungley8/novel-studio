@@ -113,4 +113,5 @@ export const api = {
   lintAnalyze: (text) => apiFetch('/api/linter/analyze', { method: 'POST', body: JSON.stringify({ text }) }),
   harmonize: (projectId, data) => apiFetch(`/api/projects/${projectId}/harmonize`, { method: 'POST', body: JSON.stringify(data) }),
   suggestHumanTouches: (projectId, data) => apiFetch(`/api/projects/${projectId}/suggest-human-touches`, { method: 'POST', body: JSON.stringify(data) }),
+  sanitizeAI: (projectId, data) => apiFetch(`/api/projects/${projectId}/sanitize-ai`, { method: 'POST', body: JSON.stringify(data) }),
 };
