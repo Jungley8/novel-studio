@@ -678,3 +678,51 @@ func TestServer_ChapterUncommit(t *testing.T) {
 		t.Fatalf("expected 200 on get checkpoint, got %d", w.Code)
 	}
 }
+
+func TestServer_CheckpointPostAndPersistence(t *testing.T) {
+	srv, s, _ := setupTestServer(t)
+	ctx := context.Background()
+
+	p := &domain.Project{
+		ID:    "proj-cp-post",
+		Title: "草稿断点保存测试",
+	}
+	_ = s.SaveProject(ctx, p)
+
+	// 1. Test POST /api/projects/:id/checkpoint
+	cpPayload := map[string]any{
+		"chapter_index": 1,
+		"phase":         "DRAFTED",
+		"core_conflict": "雷雨夜密室寻宝",
+		"draft_text":    "一道惊雷撕裂苍穹，照亮了供桌上的斑驳古盒...",
+		"beats": []map[string]any{
+			{"phase": "蓄力压迫", "tension": 5, "action": "潜入密室"},
+		},
+	}
+	bodyBytes, _ := json.Marshal(cpPayload)
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+p.ID+"/checkpoint", bytes.NewReader(bodyBytes))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 on save checkpoint, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 2. Test GET /api/projects/:id/checkpoint returns what was saved
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+p.ID+"/checkpoint?chapter_index=1", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 on get checkpoint, got %d", w.Code)
+	}
+
+	var fetchedCp domain.ChapterCheckpoint
+	if err := json.Unmarshal(w.Body.Bytes(), &fetchedCp); err != nil {
+		t.Fatalf("unmarshal checkpoint failed: %v", err)
+	}
+	if fetchedCp.DraftText != "一道惊雷撕裂苍穹，照亮了供桌上的斑驳古盒..." {
+		t.Errorf("unexpected draft text: %s", fetchedCp.DraftText)
+	}
+	if len(fetchedCp.Beats) != 1 || fetchedCp.Beats[0].Action != "潜入密室" {
+		t.Errorf("unexpected beats: %+v", fetchedCp.Beats)
+	}
+}

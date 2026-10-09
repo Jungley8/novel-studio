@@ -43,6 +43,24 @@ func (s *Server) handleDeriveBeats(w http.ResponseWriter, r *http.Request, proje
 		return
 	}
 
+	// Auto-persist checkpoint on successful derive beats
+	existingCp, _ := s.store.GetCheckpoint(r.Context(), projectID, req.ChapterIndex)
+	cp := &domain.ChapterCheckpoint{
+		ProjectID:     projectID,
+		ChapterIndex:  req.ChapterIndex,
+		Phase:         domain.CheckpointPhaseBeats,
+		CoreConflict:  req.CoreConflict,
+		Beats:         out.Beats,
+		StateMutation: out.StateMutation,
+		UpdatedAt:     time.Now(),
+	}
+	if existingCp != nil {
+		cp.DraftText = existingCp.DraftText
+		cp.AuditReport = existingCp.AuditReport
+		cp.RewriteLoops = existingCp.RewriteLoops
+	}
+	_ = s.store.SaveCheckpoint(r.Context(), cp)
+
 	jsonResponse(w, http.StatusOK, out)
 }
 
@@ -98,7 +116,28 @@ func (s *Server) handleRenderScene(w http.ResponseWriter, r *http.Request, proje
 		return
 	}
 
-	jsonResponse(w, http.StatusOK, map[string]string{"content": content})
+	// Auto-persist checkpoint on successful render
+	existingRenderCp, _ := s.store.GetCheckpoint(r.Context(), projectID, req.ChapterIndex)
+	renderCp := &domain.ChapterCheckpoint{
+		ProjectID:    projectID,
+		ChapterIndex: req.ChapterIndex,
+		Phase:        domain.CheckpointPhaseDrafted,
+		Beats:        req.Beats,
+		DraftText:    content,
+		UpdatedAt:    time.Now(),
+	}
+	if existingRenderCp != nil {
+		renderCp.CoreConflict = existingRenderCp.CoreConflict
+		renderCp.StateMutation = existingRenderCp.StateMutation
+		renderCp.RewriteLoops = existingRenderCp.RewriteLoops
+		renderCp.AuditReport = existingRenderCp.AuditReport
+	}
+	_ = s.store.SaveCheckpoint(r.Context(), renderCp)
+
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"content":    content,
+		"checkpoint": renderCp,
+	})
 }
 
 func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request, projectID string) {
@@ -132,6 +171,24 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request, proje
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Auto-persist checkpoint on review
+	existingAuditCp, _ := s.store.GetCheckpoint(r.Context(), projectID, req.ChapterIndex)
+	auditCp := &domain.ChapterCheckpoint{
+		ProjectID:    projectID,
+		ChapterIndex: req.ChapterIndex,
+		Phase:        domain.CheckpointPhaseAudited,
+		Beats:        req.Beats,
+		DraftText:    req.DraftText,
+		AuditReport:  audit,
+		UpdatedAt:    time.Now(),
+	}
+	if existingAuditCp != nil {
+		auditCp.CoreConflict = existingAuditCp.CoreConflict
+		auditCp.StateMutation = existingAuditCp.StateMutation
+		auditCp.RewriteLoops = existingAuditCp.RewriteLoops
+	}
+	_ = s.store.SaveCheckpoint(r.Context(), auditCp)
 
 	jsonResponse(w, http.StatusOK, audit.ToReviewResult())
 }
@@ -304,7 +361,33 @@ func (s *Server) handleRewriteDraft(w http.ResponseWriter, r *http.Request, proj
 		return
 	}
 
-	jsonResponse(w, http.StatusOK, map[string]string{"content": rewritten})
+	// Auto-persist checkpoint on rewrite
+	existingRewriteCp, _ := s.store.GetCheckpoint(r.Context(), projectID, req.ChapterIndex)
+	loops := 1
+	if existingRewriteCp != nil {
+		loops = existingRewriteCp.RewriteLoops + 1
+	}
+	rewriteCp := &domain.ChapterCheckpoint{
+		ProjectID:    projectID,
+		ChapterIndex: req.ChapterIndex,
+		Phase:        domain.CheckpointPhaseRewriting,
+		DraftText:    rewritten,
+		RewriteLoops: loops,
+		UpdatedAt:    time.Now(),
+	}
+	if existingRewriteCp != nil {
+		rewriteCp.CoreConflict = existingRewriteCp.CoreConflict
+		rewriteCp.Beats = existingRewriteCp.Beats
+		rewriteCp.StateMutation = existingRewriteCp.StateMutation
+		rewriteCp.AuditReport = existingRewriteCp.AuditReport
+	}
+	_ = s.store.SaveCheckpoint(r.Context(), rewriteCp)
+
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"content":       rewritten,
+		"rewrite_loops": loops,
+		"checkpoint":    rewriteCp,
+	})
 }
 
 type InlineActionRequest struct {

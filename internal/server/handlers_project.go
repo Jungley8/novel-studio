@@ -283,6 +283,25 @@ func (s *Server) handleProjectCheckpoint(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		jsonResponse(w, http.StatusOK, cp)
+	case http.MethodPost:
+		var cp domain.ChapterCheckpoint
+		if err := json.NewDecoder(r.Body).Decode(&cp); err != nil {
+			errorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		cp.ProjectID = projectID
+		if cp.ChapterIndex <= 0 {
+			errorResponse(w, http.StatusBadRequest, "invalid chapter_index")
+			return
+		}
+		if cp.UpdatedAt.IsZero() {
+			cp.UpdatedAt = time.Now()
+		}
+		if err := s.store.SaveCheckpoint(ctx, &cp); err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, cp)
 	case http.MethodDelete:
 		idxStr := r.URL.Query().Get("chapter_index")
 		idx, _ := strconv.Atoi(idxStr)
