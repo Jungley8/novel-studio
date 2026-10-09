@@ -723,7 +723,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import { state, computedState, actions, notify } from '../stores/appState';
+import { state, computedState, actions, notify, dialogs } from '../stores/appState';
 import { api } from '../api/client';
 import {
   Target,
@@ -873,9 +873,13 @@ async function handleRenderScene() {
 
 async function confirmAndRenderScene() {
   if (state.workbench.content.trim()) {
-    if (!confirm('重新渲染将覆盖当前手稿内容，是否确认重新生成？')) {
-      return;
-    }
+    const ok = await dialogs.confirm({
+      title: '重新渲染正文',
+      message: '重新生成将基于当前设定的因果节拍覆盖现有正文手稿，是否确认重新渲染？',
+      type: 'warning',
+      confirmText: '确认重新生成',
+    });
+    if (!ok) return;
   }
   await handleRenderScene();
 }
@@ -971,7 +975,16 @@ async function handleCommitChapter() {
   }
 }
 
-function resetToNewChapter() {
+async function resetToNewChapter() {
+  if (state.workbench.content.trim() || state.workbench.coreConflict.trim()) {
+    const ok = await dialogs.confirm({
+      title: '切换创作新章节',
+      message: '当前手稿或冲突设定尚未归档，放弃精修并切换至新章节将重置工作台画布，是否继续？',
+      type: 'warning',
+      confirmText: '确认切换',
+    });
+    if (!ok) return;
+  }
   state.editingChapterIndex = null;
   state.workbench.content = '';
   state.workbench.coreConflict = '';
@@ -1022,9 +1035,17 @@ async function runInlineAction(actionType, instruction = '') {
   }
 }
 
-function openCustomInlinePrompt() {
-  const instr = prompt('请输入你的定向修改或润色指令：');
-  if (instr) runInlineAction('custom', instr);
+async function openCustomInlinePrompt() {
+  const instr = await dialogs.prompt({
+    title: '自定义 AI 伴写指令',
+    message: '请输入你对选中文本的具体打磨、扩写或风格润色要求：',
+    placeholder: '例如：增加周遭环境的阴冷与铁锈气味、用冷峻动作代替心理白描、强化暴风雨降临前的心理压迫...',
+    multiline: true,
+    confirmText: '执行 AI 指令',
+  });
+  if (instr && instr.trim()) {
+    runInlineAction('custom', instr.trim());
+  }
 }
 
 async function applyInlineResult() {

@@ -1,6 +1,6 @@
 import { api } from '../../api/client';
 
-export function createWorkbenchActions(state, notify, helpers) {
+export function createWorkbenchActions(state, notify, helpers, dialogs) {
   return {
     async runLinter() {
       if (!state.workbench.content) return;
@@ -230,7 +230,15 @@ export function createWorkbenchActions(state, notify, helpers) {
     async discardCheckpoint(targetIndex) {
       if (!state.currentProject) return;
       const idx = targetIndex || state.editingChapterIndex || (state.chapters ? state.chapters.length + 1 : 1);
-      if (!confirm(`确定彻底废弃并清空第 ${idx} 章的在途草稿与节拍吗？`)) return;
+      if (dialogs) {
+        const ok = await dialogs.confirm({
+          title: '放弃章节草稿',
+          message: `确定彻底废弃并清空第 ${idx} 章的在途草稿与节拍吗？未封存的改动将无法找回。`,
+          type: 'danger',
+          confirmText: '确认废弃',
+        });
+        if (!ok) return;
+      }
       try {
         await api.clearCheckpoint(state.currentProject.id, idx);
         state.workbench.content = '';

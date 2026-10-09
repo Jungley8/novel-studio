@@ -79,7 +79,7 @@
 
 <script setup>
 import { reactive } from 'vue';
-import { state, actions, notify } from '../../stores/appState';
+import { state, actions, notify, dialogs } from '../../stores/appState';
 import { api } from '../../api/client';
 import { Bookmark, X } from 'lucide-vue-next';
 
@@ -104,6 +104,13 @@ async function addMarker() {
 
 async function deleteMarker(markerId) {
   if (!state.activeSceneForMarkers) return;
+  const ok = await dialogs.confirm({
+    title: '删除场次批注',
+    message: '确定删除该场次标记批注吗？',
+    type: 'danger',
+    confirmText: '确认删除',
+  });
+  if (!ok) return;
   try {
     const scId = state.activeSceneForMarkers.id;
     await api.deleteSceneMarker(scId, markerId);

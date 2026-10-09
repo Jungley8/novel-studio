@@ -87,7 +87,7 @@
 
 <script setup>
 import { reactive, computed } from 'vue';
-import { state, actions, notify } from '../../stores/appState';
+import { state, actions, notify, dialogs } from '../../stores/appState';
 import { api } from '../../api/client';
 import { Share2, X } from 'lucide-vue-next';
 
@@ -124,6 +124,13 @@ async function addRelation() {
 
 async function deleteRelation(relationId) {
   if (!state.currentProject || !state.activeCodexForSub) return;
+  const ok = await dialogs.confirm({
+    title: '解除人物关系',
+    message: '确定解除该人物关联关系拓扑吗？',
+    type: 'danger',
+    confirmText: '确认解除',
+  });
+  if (!ok) return;
   try {
     const sourceId = state.activeCodexForSub.id;
     await api.deleteCodexRelation(state.currentProject.id, relationId);

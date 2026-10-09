@@ -112,6 +112,22 @@ export const state = reactive({
 
   // Toasts
   toasts: [],
+
+  // Global Dialog (Cross-Platform Confirm / Alert / Prompt)
+  dialog: {
+    isOpen: false,
+    mode: 'confirm', // 'confirm' | 'alert' | 'prompt'
+    title: '',
+    message: '',
+    details: '',
+    input: '',
+    placeholder: '',
+    multiline: false,
+    type: 'warning', // 'danger' | 'warning' | 'info' | 'success'
+    confirmText: '确认',
+    cancelText: '取消',
+    resolve: null,
+  },
 });
 
 export const computedState = {
@@ -153,14 +169,86 @@ export function notify(title, message = '', type = 'info', duration = 3500) {
   }, duration);
 }
 
+// Cross-Platform Global Dialogs Helper (Web & Desktop Native Window Compatible)
+export const dialogs = {
+  confirm(options) {
+    return new Promise((resolve) => {
+      const opts = typeof options === 'string' ? { message: options } : (options || {});
+      state.dialog = {
+        isOpen: true,
+        mode: 'confirm',
+        title: opts.title || '操作确认',
+        message: opts.message || '',
+        details: opts.details || '',
+        input: '',
+        placeholder: '',
+        multiline: false,
+        type: opts.type || 'warning',
+        confirmText: opts.confirmText || '确认',
+        cancelText: opts.cancelText || '取消',
+        resolve: (val) => {
+          state.dialog.isOpen = false;
+          resolve(Boolean(val));
+        },
+      };
+    });
+  },
+
+  alert(options) {
+    return new Promise((resolve) => {
+      const opts = typeof options === 'string' ? { message: options } : (options || {});
+      state.dialog = {
+        isOpen: true,
+        mode: 'alert',
+        title: opts.title || '系统提示',
+        message: opts.message || '',
+        details: opts.details || '',
+        input: '',
+        placeholder: '',
+        multiline: false,
+        type: opts.type || 'info',
+        confirmText: opts.confirmText || '我知道了',
+        cancelText: '',
+        resolve: () => {
+          state.dialog.isOpen = false;
+          resolve();
+        },
+      };
+    });
+  },
+
+  prompt(options) {
+    return new Promise((resolve) => {
+      const opts = typeof options === 'string' ? { message: options } : (options || {});
+      state.dialog = {
+        isOpen: true,
+        mode: 'prompt',
+        title: opts.title || '请输入指令',
+        message: opts.message || '',
+        details: opts.details || '',
+        input: opts.defaultValue || '',
+        placeholder: opts.placeholder || '请输入内容...',
+        multiline: Boolean(opts.multiline),
+        type: opts.type || 'info',
+        confirmText: opts.confirmText || '确定',
+        cancelText: opts.cancelText || '取消',
+        resolve: (val) => {
+          state.dialog.isOpen = false;
+          resolve(val);
+        },
+      };
+    });
+  },
+};
+
 // Assemble Domain Actions with Cross-Domain Coordination
 const actionHelpers = {};
 
 const configActs = createConfigActions(state, notify);
-const matrixActs = createMatrixActions(state, notify, actionHelpers);
-const codexActs = createCodexActions(state, notify);
-const projectActs = createProjectActions(state, notify, actionHelpers);
-const workbenchActs = createWorkbenchActions(state, notify, actionHelpers);
+const matrixActs = createMatrixActions(state, notify, actionHelpers, dialogs);
+const codexActs = createCodexActions(state, notify, dialogs);
+const projectActs = createProjectActions(state, notify, actionHelpers, dialogs);
+const workbenchActs = createWorkbenchActions(state, notify, actionHelpers, dialogs);
 
 // Register cross-domain helper functions for inter-module workflows
 actionHelpers.loadMatrixOverview = matrixActs.loadMatrixOverview;
@@ -175,4 +263,7 @@ export const actions = {
   ...workbenchActs,
   ...matrixActs,
   ...codexActs,
+  confirm: dialogs.confirm,
+  alert: dialogs.alert,
+  prompt: dialogs.prompt,
 };

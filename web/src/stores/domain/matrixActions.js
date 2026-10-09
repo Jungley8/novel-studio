@@ -1,6 +1,6 @@
 import { api } from '../../api/client';
 
-export function createMatrixActions(state, notify, helpers) {
+export function createMatrixActions(state, notify, helpers, dialogs) {
   return {
     async loadMatrixOverview() {
       if (!state.currentProject) return;
@@ -12,7 +12,15 @@ export function createMatrixActions(state, notify, helpers) {
     },
 
     async deleteScene(sceneId) {
-      if (!confirm('确定删除该场次吗？')) return;
+      if (dialogs) {
+        const ok = await dialogs.confirm({
+          title: '删除剧情场次',
+          message: '确定删除该场次吗？删除后此场次内的情节点与角色变迁记录将同步移除。',
+          type: 'danger',
+          confirmText: '确认删除',
+        });
+        if (!ok) return;
+      }
       try {
         await api.deleteScene(sceneId);
         if (helpers && helpers.loadMatrixOverview) {

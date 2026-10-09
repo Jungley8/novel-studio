@@ -1,6 +1,6 @@
 import { api } from '../../api/client';
 
-export function createProjectActions(state, notify, helpers) {
+export function createProjectActions(state, notify, helpers, dialogs) {
   return {
     async loadProjects() {
       try {
@@ -102,7 +102,15 @@ export function createProjectActions(state, notify, helpers) {
     },
 
     async deletePlotHook(id) {
-      if (!confirm('确定删除该伏笔记录吗？')) return;
+      if (dialogs) {
+        const ok = await dialogs.confirm({
+          title: '删除伏笔记录',
+          message: '确定删除该伏笔记录吗？删除后已绑定的章节因果引用将被清除。',
+          type: 'danger',
+          confirmText: '确认删除',
+        });
+        if (!ok) return;
+      }
       try {
         await api.deleteHook(id);
         state.hooks = state.hooks.filter(h => h.id !== id);
@@ -114,8 +122,14 @@ export function createProjectActions(state, notify, helpers) {
 
     async revertChapterToDraft(chapterIndex) {
       if (!state.currentProject) return;
-      if (!confirm(`确定将第 ${chapterIndex} 章撤回为草稿吗？\n\n该操作将：\n1. 从全本已归档正史中移出该章\n2. 回滚本章对主角战力与背包物品的变迁账本\n3. 将本章成稿与因果节拍恢复为工坊草稿\n4. 还原在途质检报告供重新返工打磨`)) {
-        return;
+      if (dialogs) {
+        const ok = await dialogs.confirm({
+          title: `撤回第 ${chapterIndex} 章为草稿`,
+          message: `确定将第 ${chapterIndex} 章撤回为草稿吗？\n\n该操作将：\n1. 从全本已归档正史中移出该章\n2. 回滚本章对主角战力与背包物品的变迁账本\n3. 将本章成稿与因果节拍恢复为工坊草稿\n4. 还原在途质检报告供重新返工打磨`,
+          type: 'warning',
+          confirmText: '确认撤回',
+        });
+        if (!ok) return;
       }
       state.isLoading = true;
       try {

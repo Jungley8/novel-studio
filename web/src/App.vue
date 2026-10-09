@@ -36,6 +36,9 @@
 
     <!-- 全局轻量浮层通知 (Toast) -->
     <ToastContainer />
+
+    <!-- 全局跨平台交互模态对话框 (Confirm / Prompt / Alert) -->
+    <GlobalDialogModal />
   </div>
 </template>
 
@@ -47,6 +50,7 @@ import { state, actions } from './stores/appState';
 import AppSidebar from './components/layout/AppSidebar.vue';
 import AppHeader from './components/layout/AppHeader.vue';
 import ToastContainer from './components/common/ToastContainer.vue';
+import GlobalDialogModal from './components/common/GlobalDialogModal.vue';
 
 // 9 大业务功能视图
 import WorkbenchView from './views/WorkbenchView.vue';
