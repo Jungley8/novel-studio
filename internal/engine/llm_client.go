@@ -592,36 +592,47 @@ func (r *LLMRouter) UpdateFromConfig(cfg *config.Config) {
 
 	r.defaultCl.UpdateCredentials(cfg.APIBase, cfg.APIKey)
 
-	// Reasoner
-	if cfg.ReasonerProvider != nil && cfg.ReasonerProvider.APIBase != "" {
-		r.clients[RoleReasoner] = NewHTTPLLMClient(cfg.ReasonerProvider.APIBase, cfg.ReasonerProvider.APIKey)
-		r.models[RoleReasoner] = cfg.ReasonerProvider.Model
-	} else {
-		r.clients[RoleReasoner] = r.defaultCl
-		r.models[RoleReasoner] = cfg.ReasoningModel
+	resolveProvider := func(p *config.ProviderConfig, defaultModel string) (*HTTPLLMClient, string) {
+		targetBase := strings.TrimSpace(cfg.APIBase)
+		targetKey := strings.TrimSpace(cfg.APIKey)
+		targetModel := strings.TrimSpace(defaultModel)
+
+		if p != nil {
+			if strings.TrimSpace(p.APIBase) != "" {
+				targetBase = strings.TrimSpace(p.APIBase)
+			}
+			if strings.TrimSpace(p.APIKey) != "" {
+				targetKey = strings.TrimSpace(p.APIKey)
+			}
+			if strings.TrimSpace(p.Model) != "" {
+				targetModel = strings.TrimSpace(p.Model)
+			}
+		}
+
+		if targetBase == strings.TrimSpace(cfg.APIBase) && targetKey == strings.TrimSpace(cfg.APIKey) {
+			return r.defaultCl, targetModel
+		}
+		return NewHTTPLLMClient(targetBase, targetKey), targetModel
 	}
+
+	// Reasoner
+	clReasoner, modelReasoner := resolveProvider(cfg.ReasonerProvider, cfg.ReasoningModel)
+	r.clients[RoleReasoner] = clReasoner
+	r.models[RoleReasoner] = modelReasoner
 
 	// Writer
-	if cfg.WriterProvider != nil && cfg.WriterProvider.APIBase != "" {
-		r.clients[RoleWriter] = NewHTTPLLMClient(cfg.WriterProvider.APIBase, cfg.WriterProvider.APIKey)
-		r.models[RoleWriter] = cfg.WriterProvider.Model
-	} else {
-		r.clients[RoleWriter] = r.defaultCl
-		r.models[RoleWriter] = cfg.WriterModel
-	}
+	clWriter, modelWriter := resolveProvider(cfg.WriterProvider, cfg.WriterModel)
+	r.clients[RoleWriter] = clWriter
+	r.models[RoleWriter] = modelWriter
 
-	// Reviewer (P0: Independent cross-provider Reviewer)
-	if cfg.ReviewerProvider != nil && cfg.ReviewerProvider.APIBase != "" {
-		r.clients[RoleReviewer] = NewHTTPLLMClient(cfg.ReviewerProvider.APIBase, cfg.ReviewerProvider.APIKey)
-		r.models[RoleReviewer] = cfg.ReviewerProvider.Model
-	} else {
-		r.clients[RoleReviewer] = r.defaultCl
-		model := cfg.ReviewerModel
-		if model == "" {
-			model = cfg.ReasoningModel
-		}
-		r.models[RoleReviewer] = model
+	// Reviewer
+	defaultRevModel := cfg.ReviewerModel
+	if defaultRevModel == "" {
+		defaultRevModel = cfg.ReasoningModel
 	}
+	clReviewer, modelReviewer := resolveProvider(cfg.ReviewerProvider, defaultRevModel)
+	r.clients[RoleReviewer] = clReviewer
+	r.models[RoleReviewer] = modelReviewer
 }
 
 func (r *LLMRouter) ClientForRole(role LLMRole) (LLMClient, string) {

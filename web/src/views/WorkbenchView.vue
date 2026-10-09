@@ -221,9 +221,9 @@
           <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-brand-amber flex items-center gap-1.5">
               <PenTool class="w-3.5 h-3.5" />
-              <span>写作设置</span>
+              <span>单章偏好</span>
             </span>
-            <span class="text-[10px] font-mono text-ink-400">{{ state.workbench.content.length }} 字已写</span>
+            <span class="text-[10px] font-mono text-ink-400">单章微调 · 继承全书</span>
           </div>
 
           <!-- 目标字数设定 -->
@@ -532,9 +532,10 @@
           </span>
         </div>
 
-        <!-- 风格与字数预算快速选择 -->
-        <div class="hidden xl:flex items-center gap-2 bg-atelier-850 px-2.5 py-1 rounded-md border border-atelier-750 text-xs">
-          <span class="text-[10px] text-ink-400">风格:</span>
+        <!-- 风格与字数预算快速选择 (单章微调，继承作品级设定) -->
+        <div class="hidden xl:flex items-center gap-2 bg-atelier-850 px-2.5 py-1 rounded-md border border-atelier-750 text-xs" title="单章特调（未修改则继承全书设定）">
+          <span class="text-[10px] text-brand-amber font-mono font-medium">单章特调:</span>
+          <span class="text-[10px] text-ink-400">风格</span>
           <select 
             v-model="state.narrativeStyle" 
             class="bg-transparent text-[11px] text-brand-amber font-medium focus:outline-none cursor-pointer">
@@ -547,7 +548,7 @@
 
           <span class="text-atelier-700">|</span>
 
-          <span class="text-[10px] text-ink-400">字数:</span>
+          <span class="text-[10px] text-ink-400">字数</span>
           <select 
             v-model="state.wordsTarget" 
             class="bg-transparent text-[11px] text-brand-amber font-medium focus:outline-none cursor-pointer">
@@ -626,6 +627,36 @@
             title="展开右侧参考">
             <PanelRight class="w-3.5 h-3.5" />
             <span class="text-[11px] font-medium hidden sm:inline">参考</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 小白新手创作引导横幅 (无章节且设定不完善时温馨提示) -->
+      <div 
+        v-if="showBeginnerBanner" 
+        class="mx-4 my-2.5 p-2.5 bg-brand-amber/10 border border-brand-amber/25 rounded-lg flex items-center justify-between gap-3 text-xs shrink-0 select-none">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="text-sm">💡</span>
+          <p class="text-ink-200 text-[11px] truncate">
+            <strong class="text-brand-amber">新手建议：</strong> 先立规矩更顺手！建议先去【作品设定】推演规则或在【设定集】添加人物，再回来写正文更连贯。
+          </p>
+        </div>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <button 
+            @click="state.activeTab = 'framework'" 
+            class="px-2 py-0.5 bg-brand-amber/20 hover:bg-brand-amber/30 text-brand-amber rounded text-[11px] font-medium transition cursor-pointer">
+            去设定作品
+          </button>
+          <button 
+            @click="state.activeTab = 'codex'" 
+            class="px-2 py-0.5 bg-atelier-850 hover:bg-atelier-800 text-ink-300 rounded text-[11px] transition cursor-pointer">
+            去建人物
+          </button>
+          <button 
+            @click="dismissBeginnerBanner" 
+            class="px-1.5 py-0.5 text-ink-500 hover:text-ink-300 text-xs transition cursor-pointer" 
+            title="关闭提示">
+            ✕
           </button>
         </div>
       </div>
@@ -880,6 +911,22 @@ const rewriteElapsedSec = ref(0);
 const renderError = ref(null);
 let renderTimer = null;
 let rewriteTimer = null;
+
+const dismissedBannerProjectId = ref(null);
+const showBeginnerBanner = computed(() => {
+  if (!state.currentProject) return false;
+  if (dismissedBannerProjectId.value === state.currentProject.id) return false;
+  const hasChapters = (state.chapters || []).length > 0;
+  const hasFramework = Boolean(state.currentProject.framework?.core_concept);
+  const hasCodex = (state.codexEntries || []).length > 0;
+  return !hasChapters && (!hasFramework || !hasCodex);
+});
+
+function dismissBeginnerBanner() {
+  if (state.currentProject) {
+    dismissedBannerProjectId.value = state.currentProject.id;
+  }
+}
 
 const toneMap = {
   hardboiled: '冷峻凝练',

@@ -19,6 +19,14 @@ export function createProjectActions(state, notify, helpers, dialogs) {
       state.selectedProjectId = id;
       try {
         state.currentProject = await api.getProject(id);
+        if (state.currentProject) {
+          if (state.currentProject.default_words_target) {
+            state.wordsTarget = state.currentProject.default_words_target;
+          }
+          if (state.currentProject.default_narrative_style) {
+            state.narrativeStyle = state.currentProject.default_narrative_style;
+          }
+        }
         state.chapters = await api.listChapters(id);
         state.hooks = await api.listHooks(id);
         if (helpers && helpers.loadMatrixOverview) {
@@ -50,12 +58,15 @@ export function createProjectActions(state, notify, helpers, dialogs) {
     },
 
     async saveFramework() {
-      if (!state.currentProject?.framework) return;
+      if (!state.currentProject) return;
       try {
-        await api.updateFramework(state.currentProject.id, state.currentProject.framework);
-        notify('创世总纲已保存', '天道公理与战力阶梯已同步', 'success');
+        await api.updateProject(state.currentProject);
+        if (state.currentProject.framework) {
+          await api.updateFramework(state.currentProject.id, state.currentProject.framework);
+        }
+        notify('作品设定已保存', '篇幅风格与世界规则已同步', 'success');
       } catch (e) {
-        notify('保存创世总纲失败', e.message, 'error');
+        notify('保存作品设定失败', e.message, 'error');
       }
     },
 

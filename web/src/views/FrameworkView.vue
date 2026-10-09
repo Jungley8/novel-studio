@@ -1,16 +1,19 @@
 <template>
-  <div class="flex-1 p-6 overflow-y-auto space-y-6" v-if="state.currentProject">
+  <div class="flex-1 p-6 md:p-8 overflow-y-auto w-full max-w-6xl mx-auto space-y-6" v-if="state.currentProject">
     <!-- 头部工具栏 -->
-    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-atelier-750 pb-5">
-      <div>
-        <div class="flex items-center gap-2.5">
-          <div class="w-8 h-8 rounded-lg bg-brand-amber/10 border border-brand-amber/25 flex items-center justify-center text-brand-amber shadow-amber-glow">
-            <Compass class="w-4 h-4" />
-          </div>
-          <div>
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-atelier-750 pb-5">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-brand-amber/10 border border-brand-amber/25 flex items-center justify-center text-brand-amber shadow-amber-glow">
+          <Compass class="w-4 h-4" />
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
             <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">作品设定</h2>
-            <p class="text-xs text-ink-400 mt-0.5">核心设定、世界规则与主线走向。</p>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-brand-amber/15 text-brand-amber border border-brand-amber/30">
+              作品级 · 绑定当前作品
+            </span>
           </div>
+          <p class="text-xs text-ink-400 mt-0.5">全书核心规则、偏好基调与宏观走向。</p>
         </div>
       </div>
 
@@ -18,50 +21,108 @@
         <button 
           @click="actions.bootstrapCurrentFramework()" 
           :disabled="state.isLoading" 
-          class="flex items-center gap-1.5 px-3 py-1.5 bg-atelier-850 hover:bg-atelier-800 text-brand-amber text-xs font-semibold rounded-md border border-atelier-750 transition cursor-pointer disabled:opacity-50">
-          <Sparkles class="w-3.5 h-3.5 text-brand-amber" />
-          <span>{{ state.isLoading ? '正在生成...' : 'AI 生成' }}</span>
+          class="flex items-center gap-1.5 px-3 py-2 bg-atelier-800 hover:bg-atelier-700 text-brand-amber text-xs font-semibold rounded-md border border-atelier-700 transition cursor-pointer disabled:opacity-50">
+          <Loader2 v-if="state.isLoading" class="w-3.5 h-3.5 animate-spin" />
+          <Sparkles v-else class="w-3.5 h-3.5" />
+          <span>{{ state.isLoading ? '推演中...' : 'AI 推演' }}</span>
         </button>
         <button 
           @click="actions.saveFramework" 
-          class="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-md shadow-amber-glow transition cursor-pointer">
+          class="flex items-center gap-1.5 px-4 py-2 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-md shadow-amber-glow transition cursor-pointer">
           <Save class="w-3.5 h-3.5" />
           <span>保存设定</span>
         </button>
       </div>
     </div>
 
-    <!-- 空白状态 -->
+    <!-- 1. 作品篇幅与风格偏好 (作品级设置) -->
+    <div class="p-5 bg-atelier-900 border border-atelier-750 rounded-xl space-y-4 shadow-atelier-md">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-xs font-serif font-bold text-ink-100 flex items-center gap-2">
+            <Sliders class="w-3.5 h-3.5 text-brand-amber" />
+            <span>作品偏好</span>
+          </h3>
+          <p class="text-[11px] text-ink-400 mt-0.5">全书默认单章目标字数与基调风格，各章节默认继承。</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <!-- 默认单章字数 -->
+        <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-800 space-y-2">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-medium text-ink-300">单章字数：</label>
+            <span class="text-[11px] font-mono text-brand-amber font-bold">
+              {{ state.currentProject.default_words_target || 2000 }} 字
+            </span>
+          </div>
+          <div class="grid grid-cols-4 gap-1.5">
+            <button 
+              v-for="target in [1500, 2000, 2500, 3000]" 
+              :key="target"
+              @click="setProjectWordsTarget(target)"
+              class="py-1 text-xs font-mono rounded border transition cursor-pointer text-center"
+              :class="(state.currentProject.default_words_target || 2000) === target ? 'bg-brand-amber/15 text-brand-amber border-brand-amber/40 font-bold' : 'bg-atelier-900 text-ink-300 border-atelier-750 hover:bg-atelier-850'">
+              {{ target }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 默认叙事基调 -->
+        <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-800 space-y-2">
+          <label class="block text-xs font-medium text-ink-300">叙事风格：</label>
+          <div class="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+            <button 
+              v-for="tone in [
+                { id: 'hardboiled', name: '冷峻凝练' },
+                { id: 'high_tension', name: '热血张力' },
+                { id: 'classical', name: '古典雅致' },
+                { id: 'vernacular', name: '生动市井' },
+                { id: 'cinematic', name: '全景镜头' }
+              ]"
+              :key="tone.id"
+              @click="setProjectNarrativeStyle(tone.id)"
+              class="py-1 px-1.5 text-xs rounded border transition cursor-pointer text-center truncate"
+              :class="(state.currentProject.default_narrative_style || 'hardboiled') === tone.id ? 'bg-brand-amber/15 text-brand-amber border-brand-amber/40 font-bold' : 'bg-atelier-900 text-ink-300 border-atelier-750 hover:bg-atelier-850'">
+              {{ tone.name }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. 世界观空白状态 -->
     <div 
       v-if="!state.currentProject.framework" 
-      class="p-12 text-center bg-atelier-900 border border-dashed border-atelier-750 rounded-xl space-y-4 shadow-atelier-md">
-      <div class="w-14 h-14 rounded-full bg-brand-amber/10 border border-brand-amber/25 flex items-center justify-center mx-auto text-brand-amber">
-        <Compass class="w-7 h-7" />
+      class="p-10 text-center bg-atelier-900 border border-dashed border-atelier-750 rounded-xl space-y-4 shadow-atelier-md">
+      <div class="w-12 h-12 rounded-xl bg-brand-amber/10 border border-brand-amber/25 flex items-center justify-center mx-auto text-brand-amber">
+        <Compass class="w-6 h-6" />
       </div>
       <div class="space-y-1">
-        <h3 class="text-base font-serif font-bold text-ink-100">本作品尚未构建宏观创世总纲</h3>
+        <h3 class="text-sm font-serif font-bold text-ink-100">尚未生成宏观世界观</h3>
         <p class="text-xs text-ink-400 max-w-md mx-auto leading-relaxed">
-          缺乏宏观总纲的长篇极易中途战力崩坏、主线迷失。启动 AI 宏观推演，自动建构天道物理公理、10 级代价晋升天梯、分卷大纲与对抗势力。
+          先立规矩，小说才不容易卡文或战力崩溃。AI 将为你一键构建天道法则、战力阶梯、分卷规划与势力阵营。
         </p>
       </div>
       <button 
         @click="actions.bootstrapCurrentFramework()" 
-        class="px-5 py-2.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-lg shadow-amber-glow transition cursor-pointer inline-flex items-center gap-2">
-        <Sparkles class="w-4 h-4" />
-        <span>立即启动 AI 宏观创世推演</span>
+        class="px-4 py-2 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-lg shadow-amber-glow transition cursor-pointer inline-flex items-center gap-2">
+        <Sparkles class="w-3.5 h-3.5" />
+        <span>一键推演世界观</span>
       </button>
     </div>
 
-    <!-- 总纲表单区 -->
+    <!-- 3. 世界观设定总览表单区 -->
     <div v-else class="space-y-6">
-      <!-- 1. 核心高概念与主角创世档案 -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- 核心高概念 -->
+      <!-- 核心立意与主角档案 -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <!-- 核心立意 -->
         <div class="p-4 bg-atelier-900 border border-atelier-750 rounded-xl space-y-2 lg:col-span-1 shadow-atelier-sm">
           <div class="flex items-center gap-2 text-xs font-serif font-bold text-brand-amber">
             <Lightbulb class="w-3.5 h-3.5" />
-            <span>核心高概念 (Core Concept)</span>
+            <span>核心立意</span>
           </div>
+          <p class="text-[10px] text-ink-400">一句话概括全书主线与核心看点。</p>
           <textarea 
             v-model="state.currentProject.framework.core_concept" 
             rows="6" 
@@ -69,15 +130,17 @@
             placeholder="输入全书核心设定与立意..."></textarea>
         </div>
 
-        <!-- 主角创世建档 -->
+        <!-- 主角档案 -->
         <div 
           v-if="state.currentProject.framework.protagonist" 
-          class="p-4 bg-atelier-900 border border-atelier-750 rounded-xl space-y-3 lg:col-span-2 shadow-atelier-sm">
+          class="p-4 bg-atelier-900 border border-atelier-750 rounded-xl space-y-2.5 lg:col-span-2 shadow-atelier-sm">
           <div class="flex items-center gap-2 text-xs font-serif font-bold text-brand-amber">
             <User class="w-3.5 h-3.5" />
-            <span>主角创世档案 (Protagonist Genesis Profile)</span>
+            <span>主角档案</span>
           </div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <p class="text-[10px] text-ink-400">主角姓名、初始境界、内在动机与致命缺陷。</p>
+          
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
             <div>
               <label class="text-ink-400 text-[11px] font-medium">主角姓名：</label>
               <input 
@@ -85,25 +148,25 @@
                 class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-ink-50 font-bold focus:outline-none focus:border-brand-amber/60">
             </div>
             <div>
-              <label class="text-ink-400 text-[11px] font-medium">初始境界阶梯：</label>
+              <label class="text-ink-400 text-[11px] font-medium">初始境界：</label>
               <input 
                 v-model="state.currentProject.framework.protagonist.initial_realm" 
                 class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-brand-amber font-mono focus:outline-none focus:border-brand-amber/60">
             </div>
             <div>
-              <label class="text-ink-400 text-[11px] font-medium">核心内在驱动力 (Core Drive)：</label>
+              <label class="text-ink-400 text-[11px] font-medium">内在动机：</label>
               <input 
                 v-model="state.currentProject.framework.protagonist.core_drive" 
                 class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60">
             </div>
             <div>
-              <label class="text-ink-400 text-[11px] font-medium">致命缺陷 / 逆鳞 (Fatal Flaw)：</label>
+              <label class="text-ink-400 text-[11px] font-medium">致命缺陷：</label>
               <input 
                 v-model="state.currentProject.framework.protagonist.fatal_flaw" 
                 class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-rose-300 focus:outline-none focus:border-brand-amber/60">
             </div>
             <div class="sm:col-span-2">
-              <label class="text-ink-400 text-[11px] font-medium">金手指 / 弑神契机 (Special Trait / Hook)：</label>
+              <label class="text-ink-400 text-[11px] font-medium">核心金手指：</label>
               <input 
                 v-model="state.currentProject.framework.protagonist.special_trait" 
                 class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-brand-amber font-mono focus:outline-none focus:border-brand-amber/60">
@@ -112,21 +175,21 @@
         </div>
       </div>
 
-      <!-- 2. 天道法则与世界公理 (World Axioms) -->
+      <!-- 天道法则 -->
       <div class="p-4 bg-atelier-900 border border-atelier-750 rounded-xl space-y-3 shadow-atelier-sm">
         <div class="flex items-center justify-between">
           <div>
             <div class="flex items-center gap-2 text-xs font-serif font-bold text-brand-amber">
               <Scale class="w-3.5 h-3.5" />
-              <span>天道法则与世界公理 (World Axioms - 物理铁律，绝对不可违背)</span>
+              <span>天道法则</span>
             </div>
-            <p class="text-[11px] text-ink-400 mt-0.5">推演节拍和渲染章节时强制作为公理约束，杜绝战力崩塌与违背常识。</p>
+            <p class="text-[11px] text-ink-400 mt-0.5">世界不可违背的底层物理与因果铁律，杜绝逻辑崩塌。</p>
           </div>
           <button 
             @click="addFrameworkAxiom" 
             class="text-xs text-brand-amber hover:text-brand-amber-hover font-medium flex items-center gap-1 cursor-pointer">
             <Plus class="w-3 h-3" />
-            <span>添加天道公理</span>
+            <span>添加法则</span>
           </button>
         </div>
 
@@ -148,21 +211,21 @@
         </div>
       </div>
 
-      <!-- 3. 严谨战力阶梯与代价天平 (Power Ladder) -->
+      <!-- 战力阶梯 -->
       <div class="p-4 bg-atelier-900 border border-atelier-750 rounded-xl space-y-3 shadow-atelier-sm">
         <div class="flex items-center justify-between">
           <div>
             <div class="flex items-center gap-2 text-xs font-serif font-bold text-brand-amber">
               <Layers class="w-3.5 h-3.5" />
-              <span>战力晋升阶梯与代价天平 (Power Ladder - 杜绝战力膨胀与无脑越级)</span>
+              <span>战力阶梯</span>
             </div>
-            <p class="text-[11px] text-ink-400 mt-0.5">每阶具备破坏力表征、突破瓶颈与不可逆的代价反噬，形成严谨的力量闭环。</p>
+            <p class="text-[11px] text-ink-400 mt-0.5">每层境界的破坏力、突破瓶颈与反噬代价。</p>
           </div>
           <button 
             @click="addFrameworkTier" 
             class="text-xs text-brand-amber hover:text-brand-amber-hover font-medium flex items-center gap-1 cursor-pointer">
             <Plus class="w-3 h-3" />
-            <span>添加境界阶梯</span>
+            <span>添加阶梯</span>
           </button>
         </div>
 
@@ -172,9 +235,9 @@
               <tr class="border-b border-atelier-750 text-ink-400 text-[11px]">
                 <th class="py-2.5 px-2 w-12 font-mono text-center">阶</th>
                 <th class="py-2.5 px-3 w-36">境界名称</th>
-                <th class="py-2.5 px-3">破坏力与感知表征</th>
-                <th class="py-2.5 px-3">突破瓶颈 (机缘/顿悟)</th>
-                <th class="py-2.5 px-3">道途代价 / 命格反噬</th>
+                <th class="py-2.5 px-3">破坏力表征</th>
+                <th class="py-2.5 px-3">突破瓶颈</th>
+                <th class="py-2.5 px-3">反噬代价</th>
                 <th class="py-2.5 px-2 w-10 text-center">操作</th>
               </tr>
             </thead>
@@ -217,21 +280,21 @@
         </div>
       </div>
 
-      <!-- 4. 分卷大纲与主线任务链 (Volume Arcs) -->
+      <!-- 分卷规划 -->
       <div class="p-4 bg-atelier-900 border border-atelier-750 rounded-xl space-y-3 shadow-atelier-sm">
         <div class="flex items-center justify-between">
           <div>
             <div class="flex items-center gap-2 text-xs font-serif font-bold text-brand-amber">
               <ScrollText class="w-3.5 h-3.5" />
-              <span>分卷大纲与主线任务链 (Volume Arcs - 长篇宏观节奏控制器)</span>
+              <span>分卷规划</span>
             </div>
-            <p class="text-[11px] text-ink-400 mt-0.5">每卷设定明确章节跨度、阶段使命与终局高潮，生成章节时自动映射本卷终局目标。</p>
+            <p class="text-[11px] text-ink-400 mt-0.5">每卷章节跨度、阶段目标与终局高潮爆发点。</p>
           </div>
           <button 
             @click="addFrameworkVolume" 
             class="text-xs text-brand-amber hover:text-brand-amber-hover font-medium flex items-center gap-1 cursor-pointer">
             <Plus class="w-3 h-3" />
-            <span>添加分卷规划</span>
+            <span>添加分卷</span>
           </button>
         </div>
 
@@ -266,14 +329,14 @@
               </div>
             </div>
             <div>
-              <label class="text-[10px] text-ink-400">本卷核心使命 / 主线破局点：</label>
+              <label class="text-[10px] text-ink-400">本卷核心目标：</label>
               <textarea 
                 v-model="vol.core_goal" 
                 rows="2" 
                 class="w-full mt-0.5 bg-atelier-900 border border-atelier-750 rounded p-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60 resize-none font-serif"></textarea>
             </div>
             <div>
-              <label class="text-[10px] text-brand-amber">卷终高潮爆发点 (Climax Event)：</label>
+              <label class="text-[10px] text-brand-amber">卷终高潮爆发点：</label>
               <textarea 
                 v-model="vol.climax_event" 
                 rows="2" 
@@ -283,15 +346,15 @@
         </div>
       </div>
 
-      <!-- 5. 势力谱系与利益冲突暗线 (Factions & Agendas) -->
+      <!-- 势力阵营 -->
       <div class="p-4 bg-atelier-900 border border-atelier-750 rounded-xl space-y-3 shadow-atelier-sm">
         <div class="flex items-center justify-between">
           <div>
             <div class="flex items-center gap-2 text-xs font-serif font-bold text-brand-amber">
               <Swords class="w-3.5 h-3.5" />
-              <span>势力谱系与利益冲突暗线 (Factions & Secret Agendas)</span>
+              <span>势力阵营</span>
             </div>
-            <p class="text-[11px] text-ink-400 mt-0.5">多方势力各自为战并具备隐秘诉求，杜绝脸谱化降智反派。</p>
+            <p class="text-[11px] text-ink-400 mt-0.5">各大派系、立场冲突与暗线图谋。</p>
           </div>
           <button 
             @click="addFrameworkFaction" 
@@ -328,7 +391,7 @@
                 class="w-full mt-0.5 bg-atelier-900 border border-atelier-750 rounded px-2 py-1 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60">
             </div>
             <div>
-              <label class="text-[10px] text-rose-400">核心诉求与暗线阴谋 (Secret Agenda)：</label>
+              <label class="text-[10px] text-rose-400">暗线图谋：</label>
               <textarea 
                 v-model="fac.secret_agenda" 
                 rows="2" 
@@ -353,8 +416,22 @@ import {
   Layers, 
   ScrollText, 
   Swords, 
-  Plus 
+  Plus,
+  Sliders,
+  Loader2
 } from 'lucide-vue-next';
+
+function setProjectWordsTarget(target) {
+  if (!state.currentProject) return;
+  state.currentProject.default_words_target = target;
+  state.wordsTarget = target;
+}
+
+function setProjectNarrativeStyle(style) {
+  if (!state.currentProject) return;
+  state.currentProject.default_narrative_style = style;
+  state.narrativeStyle = style;
+}
 
 function addFrameworkAxiom() {
   if (!state.currentProject?.framework) return;

@@ -25,10 +25,12 @@ func TestSQLiteStore_CRUD(t *testing.T) {
 
 	// 1. Create project
 	p := &domain.Project{
-		ID:             "proj-001",
-		Title:          "极道修仙传",
-		TargetPlatform: "番茄脑洞",
-		WorldRules:     "筑基期不能跨界传信",
+		ID:                    "proj-001",
+		Title:                 "极道修仙传",
+		TargetPlatform:        "番茄脑洞",
+		WorldRules:            "筑基期不能跨界传信",
+		DefaultWordsTarget:    3500,
+		DefaultNarrativeStyle: "fastpaced",
 		Protagonist: domain.Protagonist{
 			NameAndLevel: "叶天 (练气九层)",
 			Inventory:    "生锈铁剑x1, 回春丹x3",
@@ -50,6 +52,12 @@ func TestSQLiteStore_CRUD(t *testing.T) {
 	}
 	if gotP.Protagonist.NameAndLevel != "叶天 (练气九层)" {
 		t.Errorf("expected Protagonist name 叶天 (练气九层), got %s", gotP.Protagonist.NameAndLevel)
+	}
+	if gotP.DefaultWordsTarget != 3500 {
+		t.Errorf("expected DefaultWordsTarget 3500, got %d", gotP.DefaultWordsTarget)
+	}
+	if gotP.DefaultNarrativeStyle != "fastpaced" {
+		t.Errorf("expected DefaultNarrativeStyle fastpaced, got %s", gotP.DefaultNarrativeStyle)
 	}
 
 	// 3. Save chapters

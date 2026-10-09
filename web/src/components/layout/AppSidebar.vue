@@ -47,40 +47,45 @@
         </button>
       </div>
 
-      <!-- 主导航列表 -->
-      <nav class="p-2 space-y-0.5 overflow-y-auto">
-        <button 
-          v-for="item in navItems" 
-          :key="item.id"
-          @click="selectTab(item.id)"
-          :title="item.desc"
-          :class="[
-            'w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition group cursor-pointer text-left',
-            state.activeTab === item.id 
-              ? 'bg-atelier-800 text-brand-amber shadow-atelier-sm font-semibold' 
-              : 'text-ink-300 hover:text-ink-100 hover:bg-atelier-850'
-          ]">
-          <div class="flex items-center gap-2.5 min-w-0">
-            <component 
-              :is="item.icon" 
-              :class="[
-                'w-4 h-4 shrink-0 transition-colors',
-                state.activeTab === item.id ? 'text-brand-amber' : 'text-ink-400 group-hover:text-ink-200'
-              ]" 
-            />
-            <span class="truncate">{{ item.label }}</span>
+      <!-- 主导航列表 (按小白实际创作工序分组) -->
+      <nav class="flex-1 p-2 space-y-3 overflow-y-auto min-h-0">
+        <div v-for="group in navGroups" :key="group.title" class="space-y-0.5">
+          <div class="px-3 pt-1 pb-1 text-[10px] font-mono tracking-wider text-ink-400 uppercase">
+            {{ group.title }}
           </div>
-          <span 
-            v-if="item.badge" 
-            class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-atelier-750 text-ink-300">
-            {{ item.badge }}
-          </span>
-        </button>
+          <button 
+            v-for="item in group.items" 
+            :key="item.id"
+            @click="selectTab(item.id)"
+            :title="item.desc"
+            :class="[
+              'w-full flex items-center justify-between px-3 py-1.5 rounded-md text-xs font-medium transition group cursor-pointer text-left',
+              state.activeTab === item.id 
+                ? 'bg-atelier-800 text-brand-amber shadow-atelier-sm font-semibold' 
+                : 'text-ink-300 hover:text-ink-100 hover:bg-atelier-850'
+            ]">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <component 
+                :is="item.icon" 
+                :class="[
+                  'w-4 h-4 shrink-0 transition-colors',
+                  state.activeTab === item.id ? 'text-brand-amber' : 'text-ink-400 group-hover:text-ink-200'
+                ]" 
+              />
+              <span class="truncate">{{ item.label }}</span>
+            </div>
+            <span 
+              v-if="item.badge" 
+              class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-atelier-750 text-ink-300 shrink-0">
+              {{ item.badge }}
+            </span>
+          </button>
+        </div>
       </nav>
     </div>
 
     <!-- 底部导出与状态 -->
-    <div class="p-3 border-t border-atelier-750 bg-atelier-950/60 space-y-2">
+    <div class="p-3 border-t border-atelier-750 bg-atelier-950/60 space-y-2 shrink-0">
       <div class="grid grid-cols-2 gap-1.5">
         <a 
           :href="state.currentProject ? '/api/projects/' + state.currentProject.id + '/export/json' : '#'" 
@@ -110,10 +115,10 @@
 import { computed } from 'vue';
 import { state, actions } from '../../stores/appState';
 import {
-  PenTool,
-  LayoutGrid,
-  BookOpen,
   Compass,
+  BookOpen,
+  LayoutGrid,
+  PenTool,
   Cpu,
   Anchor,
   Archive,
@@ -125,16 +130,36 @@ import {
   BookDown
 } from 'lucide-vue-next';
 
-const navItems = computed(() => [
-  { id: 'workbench', label: '写正文', desc: '构思、生成与打磨每章手稿', icon: PenTool, badge: state.chapters.length ? `第${state.chapters.length + 1}章` : '' },
-  { id: 'matrix', label: '全书大纲', desc: '全书章节结构与剧情路线', icon: LayoutGrid, badge: state.matrixOverview?.total_scenes ? `${state.matrixOverview.total_scenes}场` : '' },
-  { id: 'codex', label: '设定集', desc: '人物、势力与世界观档案', icon: BookOpen, badge: state.codexEntries.length ? `${state.codexEntries.length}条` : '' },
-  { id: 'framework', label: '作品设定', desc: '核心设定、主线与文风基调', icon: Compass },
-  { id: 'statemachine', label: '人物状态', desc: '主角境界、战力与物品变动', icon: Cpu },
-  { id: 'hooks', label: '伏笔簿', desc: '记录剧情伏笔与回收进度', icon: Anchor, badge: state.hooks.filter(h => h.status !== 'RESOLVED').length ? `${state.hooks.filter(h => h.status !== 'RESOLVED').length}线` : '' },
-  { id: 'chapters', label: '章节目录', desc: '已完稿章节的归档与浏览', icon: Archive, badge: `${state.chapters.length}章` },
-  { id: 'analytics', label: '全书体检', desc: '篇幅节奏、字数与剧情走势', icon: BarChart3 },
-  { id: 'config', label: 'AI 配置', desc: '接入的大模型与密钥管理', icon: Settings },
+const navGroups = computed(() => [
+  {
+    title: '准备构思',
+    items: [
+      { id: 'framework', label: '作品设定', desc: '核心设定、规则与文风基调', icon: Compass },
+      { id: 'codex', label: '设定集', desc: '人物、势力与世界观档案', icon: BookOpen, badge: state.codexEntries.length ? `${state.codexEntries.length}条` : '' },
+      { id: 'matrix', label: '全书大纲', desc: '全书章节结构与剧情路线', icon: LayoutGrid, badge: state.matrixOverview?.total_scenes ? `${state.matrixOverview.total_scenes}场` : '' },
+    ]
+  },
+  {
+    title: '动笔写作',
+    items: [
+      { id: 'workbench', label: '写正文', desc: '构思、起草与打磨每章手稿', icon: PenTool, badge: state.chapters.length ? `第${state.chapters.length + 1}章` : '第1章' },
+      { id: 'statemachine', label: '人物状态', desc: '主角境界、战力与物品变动', icon: Cpu },
+      { id: 'hooks', label: '伏笔簿', desc: '记录剧情暗线与回收进度', icon: Anchor, badge: state.hooks.filter(h => h.status !== 'RESOLVED').length ? `${state.hooks.filter(h => h.status !== 'RESOLVED').length}线` : '' },
+    ]
+  },
+  {
+    title: '成果阅览',
+    items: [
+      { id: 'chapters', label: '章节目录', desc: '已完稿章节的归档与浏览', icon: Archive, badge: `${state.chapters.length}章` },
+      { id: 'analytics', label: '全书体检', desc: '篇幅节奏、字数与走势', icon: BarChart3 },
+    ]
+  },
+  {
+    title: '系统设置',
+    items: [
+      { id: 'config', label: 'AI 配置', desc: '接入的大模型与密钥管理', icon: Settings },
+    ]
+  }
 ]);
 
 function selectTab(tabId) {

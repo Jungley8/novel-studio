@@ -67,38 +67,32 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Update independent providers if specified
-		if updated.ReviewerProvider != nil {
-			if s.cfg.ReviewerProvider == nil {
-				s.cfg.ReviewerProvider = &config.ProviderConfig{}
+		updateProvider := func(cur **config.ProviderConfig, in *config.ProviderConfig) {
+			if in == nil {
+				*cur = nil
+				return
 			}
-			s.cfg.ReviewerProvider.APIBase = updated.ReviewerProvider.APIBase
-			s.cfg.ReviewerProvider.Model = updated.ReviewerProvider.Model
-			if updated.ReviewerProvider.APIKey != "" && !strings.Contains(updated.ReviewerProvider.APIKey, "...") && !strings.Contains(updated.ReviewerProvider.APIKey, "***") {
-				s.cfg.ReviewerProvider.APIKey = updated.ReviewerProvider.APIKey
+			if *cur == nil {
+				*cur = &config.ProviderConfig{}
+			}
+			(*cur).APIBase = strings.TrimSpace(in.APIBase)
+			(*cur).Model = strings.TrimSpace(in.Model)
+			newKey := strings.TrimSpace(in.APIKey)
+			if newKey == "" {
+				// Explicitly cleared
+				(*cur).APIKey = ""
+			} else if !strings.Contains(newKey, "...") && !strings.Contains(newKey, "***") {
+				// New valid key
+				(*cur).APIKey = newKey
+			}
+			if (*cur).APIBase == "" && (*cur).APIKey == "" && (*cur).Model == "" {
+				*cur = nil
 			}
 		}
 
-		if updated.WriterProvider != nil {
-			if s.cfg.WriterProvider == nil {
-				s.cfg.WriterProvider = &config.ProviderConfig{}
-			}
-			s.cfg.WriterProvider.APIBase = updated.WriterProvider.APIBase
-			s.cfg.WriterProvider.Model = updated.WriterProvider.Model
-			if updated.WriterProvider.APIKey != "" && !strings.Contains(updated.WriterProvider.APIKey, "...") && !strings.Contains(updated.WriterProvider.APIKey, "***") {
-				s.cfg.WriterProvider.APIKey = updated.WriterProvider.APIKey
-			}
-		}
-
-		if updated.ReasonerProvider != nil {
-			if s.cfg.ReasonerProvider == nil {
-				s.cfg.ReasonerProvider = &config.ProviderConfig{}
-			}
-			s.cfg.ReasonerProvider.APIBase = updated.ReasonerProvider.APIBase
-			s.cfg.ReasonerProvider.Model = updated.ReasonerProvider.Model
-			if updated.ReasonerProvider.APIKey != "" && !strings.Contains(updated.ReasonerProvider.APIKey, "...") && !strings.Contains(updated.ReasonerProvider.APIKey, "***") {
-				s.cfg.ReasonerProvider.APIKey = updated.ReasonerProvider.APIKey
-			}
-		}
+		updateProvider(&s.cfg.ReviewerProvider, updated.ReviewerProvider)
+		updateProvider(&s.cfg.WriterProvider, updated.WriterProvider)
+		updateProvider(&s.cfg.ReasonerProvider, updated.ReasonerProvider)
 
 		if s.llmClient != nil {
 			s.llmClient.UpdateCredentials(s.cfg.APIBase, s.cfg.APIKey)

@@ -33,12 +33,24 @@ export const state = reactive({
     reasoning_model: 'deepseek-reasoner',
     writer_model: 'deepseek-chat',
     reviewer_model: 'deepseek-reasoner',
+    reasoner_provider: {
+      api_base: '',
+      api_key: '',
+      model: '',
+    },
+    writer_provider: {
+      api_base: '',
+      api_key: '',
+      model: '',
+    },
     reviewer_provider: {
       api_base: '',
       api_key: '',
       model: '',
     },
   },
+  enableReasonerProvider: false,
+  enableWriterProvider: false,
   enableReviewerProvider: false,
   configTestStatus: {},
 

@@ -99,14 +99,16 @@ type ProjectFramework struct {
 
 // Project represents a novel book project.
 type Project struct {
-	ID             string            `json:"id"`
-	Title          string            `json:"title"`
-	TargetPlatform string            `json:"target_platform"` // e.g. "番茄脑洞", "起点仙侠", "知乎盐言"
-	WorldRules     string            `json:"world_rules"`
-	Protagonist    Protagonist       `json:"protagonist"`
-	Framework      *ProjectFramework `json:"framework,omitempty"`
-	CreatedAt      time.Time         `json:"created_at"`
-	UpdatedAt      time.Time         `json:"updated_at"`
+	ID                    string            `json:"id"`
+	Title                 string            `json:"title"`
+	TargetPlatform        string            `json:"target_platform"` // e.g. "番茄脑洞", "起点仙侠", "知乎盐言"
+	WorldRules            string            `json:"world_rules"`
+	Protagonist           Protagonist       `json:"protagonist"`
+	Framework             *ProjectFramework `json:"framework,omitempty"`
+	DefaultWordsTarget    int               `json:"default_words_target,omitempty"`   // e.g. 2000, 3000, 4000
+	DefaultNarrativeStyle string            `json:"default_narrative_style,omitempty"` // e.g. "hardboiled", "fastpaced", "classical", "slang", "omniscient"
+	CreatedAt             time.Time         `json:"created_at"`
+	UpdatedAt             time.Time         `json:"updated_at"`
 }
 
 func (p *Project) Validate() error {
@@ -117,6 +119,13 @@ func (p *Project) Validate() error {
 	p.TargetPlatform = strings.TrimSpace(p.TargetPlatform)
 	if p.TargetPlatform == "" {
 		p.TargetPlatform = "通用网文"
+	}
+	if p.DefaultWordsTarget <= 0 {
+		p.DefaultWordsTarget = 2000
+	}
+	p.DefaultNarrativeStyle = strings.TrimSpace(p.DefaultNarrativeStyle)
+	if p.DefaultNarrativeStyle == "" {
+		p.DefaultNarrativeStyle = "hardboiled"
 	}
 	return nil
 }

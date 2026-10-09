@@ -49,6 +49,8 @@ func (s *SQLiteStore) migrate() error {
 		world_rules TEXT,
 		protagonist_json TEXT,
 		framework_json TEXT,
+		default_words_target INTEGER DEFAULT 2000,
+		default_narrative_style TEXT DEFAULT 'hardboiled',
 		created_at TIMESTAMP NOT NULL,
 		updated_at TIMESTAMP NOT NULL
 	);
@@ -193,6 +195,10 @@ func (s *SQLiteStore) migrate() error {
 	_, _ = s.db.Exec(`ALTER TABLE chapters ADD COLUMN review_json TEXT;`)
 	_, _ = s.db.Exec(`ALTER TABLE projects ADD COLUMN framework_json TEXT;`)
 	_, _ = s.db.Exec(`UPDATE projects SET framework_json = '' WHERE framework_json IS NULL;`)
+	_, _ = s.db.Exec(`ALTER TABLE projects ADD COLUMN default_words_target INTEGER DEFAULT 2000;`)
+	_, _ = s.db.Exec(`ALTER TABLE projects ADD COLUMN default_narrative_style TEXT DEFAULT 'hardboiled';`)
+	_, _ = s.db.Exec(`UPDATE projects SET default_words_target = 2000 WHERE default_words_target IS NULL OR default_words_target = 0;`)
+	_, _ = s.db.Exec(`UPDATE projects SET default_narrative_style = 'hardboiled' WHERE default_narrative_style IS NULL OR default_narrative_style = '';`)
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN archetype TEXT DEFAULT '';`)
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN voice_tone TEXT DEFAULT '';`)
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN core_motivation TEXT DEFAULT '';`)
@@ -227,29 +233,31 @@ func (s *SQLiteStore) SaveProject(ctx context.Context, p *domain.Project) error 
 	}
 
 	query := `
-	INSERT INTO projects (id, title, target_platform, world_rules, protagonist_json, framework_json, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO projects (id, title, target_platform, world_rules, protagonist_json, framework_json, default_words_target, default_narrative_style, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		title = excluded.title,
 		target_platform = excluded.target_platform,
 		world_rules = excluded.world_rules,
 		protagonist_json = excluded.protagonist_json,
 		framework_json = excluded.framework_json,
+		default_words_target = excluded.default_words_target,
+		default_narrative_style = excluded.default_narrative_style,
 		updated_at = excluded.updated_at;
 	`
 	_, err = s.db.ExecContext(ctx, query,
-		p.ID, p.Title, p.TargetPlatform, p.WorldRules, string(protagonistJSON), frameworkJSON, p.CreatedAt, p.UpdatedAt,
+		p.ID, p.Title, p.TargetPlatform, p.WorldRules, string(protagonistJSON), frameworkJSON, p.DefaultWordsTarget, p.DefaultNarrativeStyle, p.CreatedAt, p.UpdatedAt,
 	)
 	return err
 }
 
 func (s *SQLiteStore) GetProject(ctx context.Context, id string) (*domain.Project, error) {
-	query := `SELECT id, title, target_platform, world_rules, protagonist_json, COALESCE(framework_json, ''), created_at, updated_at FROM projects WHERE id = ?`
+	query := `SELECT id, title, target_platform, world_rules, protagonist_json, COALESCE(framework_json, ''), COALESCE(default_words_target, 2000), COALESCE(default_narrative_style, 'hardboiled'), created_at, updated_at FROM projects WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, query, id)
 
 	var p domain.Project
 	var protagonistJSON, frameworkJSON string
-	if err := row.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &protagonistJSON, &frameworkJSON, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	if err := row.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &protagonistJSON, &frameworkJSON, &p.DefaultWordsTarget, &p.DefaultNarrativeStyle, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("project not found")
 		}
@@ -269,7 +277,7 @@ func (s *SQLiteStore) GetProject(ctx context.Context, id string) (*domain.Projec
 }
 
 func (s *SQLiteStore) ListProjects(ctx context.Context) ([]*domain.Project, error) {
-	query := `SELECT id, title, target_platform, world_rules, protagonist_json, COALESCE(framework_json, ''), created_at, updated_at FROM projects ORDER BY updated_at DESC`
+	query := `SELECT id, title, target_platform, world_rules, protagonist_json, COALESCE(framework_json, ''), COALESCE(default_words_target, 2000), COALESCE(default_narrative_style, 'hardboiled'), created_at, updated_at FROM projects ORDER BY updated_at DESC`
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -280,7 +288,7 @@ func (s *SQLiteStore) ListProjects(ctx context.Context) ([]*domain.Project, erro
 	for rows.Next() {
 		var p domain.Project
 		var protagonistJSON, frameworkJSON string
-		if err := rows.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &protagonistJSON, &frameworkJSON, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &protagonistJSON, &frameworkJSON, &p.DefaultWordsTarget, &p.DefaultNarrativeStyle, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(protagonistJSON), &p.Protagonist)
