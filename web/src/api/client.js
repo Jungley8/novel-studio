@@ -210,4 +210,8 @@ export const api = {
   harmonize: (projectId, data) => apiFetch(`/api/projects/${projectId}/harmonize`, { method: 'POST', body: JSON.stringify(data) }),
   suggestHumanTouches: (projectId, data) => apiFetch(`/api/projects/${projectId}/suggest-human-touches`, { method: 'POST', body: JSON.stringify(data) }),
   sanitizeAI: (projectId, data) => apiFetch(`/api/projects/${projectId}/sanitize-ai`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // Studio
+  listStudioLibrary: () => apiFetch('/api/studio/library'),
+  studioChat: (data) => apiFetch('/api/studio/chat', { method: 'POST', body: JSON.stringify(data) }),
 };

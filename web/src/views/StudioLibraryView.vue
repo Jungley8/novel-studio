@@ -74,22 +74,20 @@
         </div>
       </div>
 
-      <!-- TODO: 等待 GET /api/studio/analytics 后端 Studio 级聚合接口提供 Token 花费数据 -->
-      <div class="p-3.5 bg-atelier-900 border border-atelier-750 rounded-xl shadow-atelier-sm" title="等待 GET /api/studio/analytics 聚合接口支持">
+      <div class="p-3.5 bg-atelier-900 border border-atelier-750 rounded-xl shadow-atelier-sm">
         <div class="text-[11px] font-mono text-ink-400 flex items-center justify-between">
           <span>Token 花费</span>
-          <span class="text-[9px] text-ink-500 font-normal">待后端</span>
+          <span class="text-[9px] text-ink-400 font-normal">全库累计</span>
         </div>
-        <div class="text-lg font-serif text-ink-400 mt-1">—</div>
+        <div class="text-lg font-serif font-bold text-ink-50 mt-1">{{ totalTokens.toLocaleString() }}</div>
       </div>
 
-      <!-- TODO: 等待 GET /api/studio/analytics 后端 Studio 级聚合接口提供评审通过率数据 -->
-      <div class="p-3.5 bg-atelier-900 border border-atelier-750 rounded-xl shadow-atelier-sm" title="等待 GET /api/studio/analytics 聚合接口支持">
+      <div class="p-3.5 bg-atelier-900 border border-atelier-750 rounded-xl shadow-atelier-sm">
         <div class="text-[11px] font-mono text-ink-400 flex items-center justify-between">
           <span>评审通过率</span>
-          <span class="text-[9px] text-ink-500 font-normal">待后端</span>
+          <span class="text-[9px] text-ink-400 font-normal">全库平均</span>
         </div>
-        <div class="text-lg font-serif text-ink-400 mt-1">—</div>
+        <div class="text-lg font-serif font-bold text-ink-50 mt-1">{{ avgReviewPassRate }}</div>
       </div>
     </div>
 
@@ -141,32 +139,29 @@
               <th class="py-3 px-4 font-semibold">当前章 / 进度</th>
               <th class="py-3 px-4 font-semibold text-center">OPEN 钩数</th>
               <th class="py-3 px-4 font-semibold text-center">超期钩数 (钩债务)</th>
-              <!-- TODO: 等待 GET /api/studio/analytics 后端 Studio 级聚合接口提供 Token 花费数据 -->
-              <th class="py-3 px-4 font-semibold text-center" title="等待 GET /api/studio/analytics">Token 花费</th>
-              <!-- TODO: 等待 GET /api/studio/analytics 后端 Studio 级聚合接口提供全书评审通过率 -->
-              <th class="py-3 px-4 font-semibold text-center" title="等待 GET /api/studio/analytics">评审通过率</th>
-              <th class="py-3 px-4 font-semibold">最近活动</th>
+              <th class="py-3 px-4 font-semibold text-center">Token 花费</th>
+              <th class="py-3 px-4 font-semibold text-center">评审通过率</th>
               <th class="py-3 px-4 font-semibold text-right">操作</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-atelier-750/60">
             <tr 
               v-for="item in libraryItems" 
-              :key="item.project.id"
+              :key="item.project_id"
               class="hover:bg-atelier-850/60 transition group cursor-pointer"
-              @click="openProject(item.project.id)">
+              @click="openProject(item.project_id)">
               
               <!-- 书名与平台定位 -->
               <td class="py-3.5 px-4">
                 <div class="flex items-center gap-2">
                   <span class="font-serif font-bold text-ink-50 group-hover:text-brand-amber transition-colors">
-                    {{ item.project.title }}
+                    {{ item.title }}
                   </span>
                   <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-atelier-800 text-ink-300 border border-atelier-700/80 shrink-0">
-                    {{ item.project.target_platform || '通用网文' }}
+                    {{ item.platform || '通用网文' }}
                   </span>
                   <span 
-                    v-if="state.selectedProjectId === item.project.id" 
+                    v-if="state.selectedProjectId === item.project_id" 
                     class="text-[9px] font-mono px-1.5 py-0.2 rounded bg-brand-amber/15 text-brand-amber border border-brand-amber/30">
                     当前激活
                   </span>
@@ -175,8 +170,8 @@
 
               <!-- 当前章 -->
               <td class="py-3.5 px-4 font-mono text-ink-200">
-                <span v-if="item.chaptersCount > 0" class="text-brand-amber font-semibold">
-                  第 {{ item.chaptersCount }} 章
+                <span v-if="item.archived_chapters > 0" class="text-brand-amber font-semibold">
+                  第 {{ item.archived_chapters }} 章
                 </span>
                 <span v-else class="text-ink-500">
                   尚未完稿 (草拟中)
@@ -186,45 +181,38 @@
               <!-- OPEN 钩数 -->
               <td class="py-3.5 px-4 text-center font-mono">
                 <span 
-                  :class="item.openHooksCount > 0 ? 'bg-atelier-800 text-ink-200' : 'text-ink-500'"
+                  :class="item.open_hooks > 0 ? 'bg-atelier-800 text-ink-200' : 'text-ink-500'"
                   class="px-2 py-0.5 rounded text-[11px]">
-                  {{ item.openHooksCount }}
+                  {{ item.open_hooks }}
                 </span>
               </td>
 
               <!-- 超期钩数 (钩债务) -->
               <td class="py-3.5 px-4 text-center font-mono">
                 <span 
-                  v-if="item.overdueHooksCount > 0" 
+                  v-if="item.overdue_hooks > 0" 
                   class="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
-                  {{ item.overdueHooksCount }}
+                  {{ item.overdue_hooks }}
                 </span>
                 <span v-else class="text-emerald-400/80 text-[11px]">
                   0
                 </span>
               </td>
 
-              <!-- Token 花费 (未接入聚合接口，按规范留 TODO 并显示 —) -->
-              <!-- TODO: 等待 GET /api/studio/analytics 后端 Studio 级聚合接口提供 Token 花费数据 -->
-              <td class="py-3.5 px-4 text-center font-mono text-ink-500">
-                —
+              <!-- Token 花费 -->
+              <td class="py-3.5 px-4 text-center font-mono text-ink-200">
+                {{ item.token_usage > 0 ? item.token_usage.toLocaleString() : '0' }}
               </td>
 
-              <!-- 评审通过率 (未接入聚合接口，按规范留 TODO 并显示 —) -->
-              <!-- TODO: 等待 GET /api/studio/analytics 后端 Studio 级聚合接口提供全书评审通过率 -->
-              <td class="py-3.5 px-4 text-center font-mono text-ink-500">
-                —
-              </td>
-
-              <!-- 最近活动时间 -->
-              <td class="py-3.5 px-4 font-mono text-[11px] text-ink-400">
-                {{ item.recentActivityText }}
+              <!-- 评审通过率 -->
+              <td class="py-3.5 px-4 text-center font-mono text-ink-200">
+                {{ item.archived_chapters > 0 ? `${Math.round((item.review_pass_rate || 0) * 100)}%` : '—' }}
               </td>
 
               <!-- 操作 -->
               <td class="py-3.5 px-4 text-right" @click.stop>
                 <button 
-                  @click="openProject(item.project.id)"
+                  @click="openProject(item.project_id)"
                   class="px-2.5 py-1 bg-atelier-800 hover:bg-brand-amber hover:text-atelier-950 text-ink-300 font-medium text-xs rounded border border-atelier-700 transition cursor-pointer flex items-center gap-1 ml-auto">
                   <span>进入工作台</span>
                   <ArrowUpRight class="w-3 h-3" />
@@ -258,106 +246,37 @@ const libraryItems = computed(() => rawItems.value);
 
 const totalProjects = computed(() => libraryItems.value.length);
 const totalChapters = computed(() => {
-  return libraryItems.value.reduce((acc, curr) => acc + (curr.chaptersCount || 0), 0);
+  return libraryItems.value.reduce((acc, curr) => acc + (curr.archived_chapters || 0), 0);
 });
 const totalOpenHooks = computed(() => {
-  return libraryItems.value.reduce((acc, curr) => acc + (curr.openHooksCount || 0), 0);
+  return libraryItems.value.reduce((acc, curr) => acc + (curr.open_hooks || 0), 0);
 });
 const totalOverdueHooks = computed(() => {
-  return libraryItems.value.reduce((acc, curr) => acc + (curr.overdueHooksCount || 0), 0);
+  return libraryItems.value.reduce((acc, curr) => acc + (curr.overdue_hooks || 0), 0);
 });
-
-function formatActivityDate(dateStr) {
-  if (!dateStr) return '—';
-  try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return '—';
-    const now = new Date();
-    const diffMs = now.getTime() - d.getTime();
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    const diffHours = Math.floor(diffMins / 60);
-    const diffDays = Math.floor(diffHours / 24);
-
-    if (diffMins < 5) return '刚刚';
-    if (diffMins < 60) return `${diffMins} 分钟前`;
-    if (diffHours < 24) return `${diffHours} 小时前`;
-    if (diffDays < 7) return `${diffDays} 天前`;
-
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  } catch (_) {
-    return '—';
-  }
-}
+const totalTokens = computed(() => {
+  return libraryItems.value.reduce((acc, curr) => acc + (curr.token_usage || 0), 0);
+});
+const avgReviewPassRate = computed(() => {
+  const withChapters = libraryItems.value.filter(item => (item.archived_chapters || 0) > 0);
+  if (withChapters.length === 0) return '—';
+  const sum = withChapters.reduce((acc, curr) => acc + (curr.review_pass_rate || 0), 0);
+  return `${Math.round((sum / withChapters.length) * 100)}%`;
+});
 
 async function fetchLibraryData() {
   isLoading.value = true;
   errorMessage.value = '';
 
   try {
-    // 1. 获取全库项目列表 (GET /api/projects)
-    const projects = await api.listProjects();
-    state.projects = projects;
-
-    if (!Array.isArray(projects) || projects.length === 0) {
-      rawItems.value = [];
-      return;
+    const items = await api.listStudioLibrary();
+    if (!Array.isArray(items)) {
+      throw new Error('返回数据格式异常：预期为作品列表数组');
     }
-
-    // 2. 并行拉取每个项目的真实关联数据 (hooks / chapters / analytics 如有)
-    const items = await Promise.all(
-      projects.map(async (project) => {
-        let chapters = [];
-        let hooks = [];
-
-        try {
-          chapters = await api.listChapters(project.id);
-        } catch (e) {
-          console.warn(`Failed to list chapters for ${project.id}:`, e);
-        }
-
-        try {
-          hooks = await api.listHooks(project.id);
-        } catch (e) {
-          console.warn(`Failed to list hooks for ${project.id}:`, e);
-        }
-
-        // 计算当前章与伏笔指标
-        const chaptersCount = Array.isArray(chapters) ? chapters.length : 0;
-        const openHooks = Array.isArray(hooks) ? hooks.filter(h => h.status === 'OPEN') : [];
-        const openHooksCount = openHooks.length;
-
-        // 超期钩数定义：OPEN 且目标揭晓章已落后于当前已写章节数
-        const overdueHooksCount = openHooks.filter(h => {
-          const target = Number(h.target_chapter) || 0;
-          return target > 0 && target <= chaptersCount;
-        }).length;
-
-        // 计算最近活动时间：取 project.updated_at、project.created_at 或最新章节 created_at
-        let latestTimestamp = project.updated_at || project.created_at || '';
-        if (Array.isArray(chapters) && chapters.length > 0) {
-          const latestChapter = chapters[chapters.length - 1];
-          if (latestChapter.created_at && (!latestTimestamp || new Date(latestChapter.created_at) > new Date(latestTimestamp))) {
-            latestTimestamp = latestChapter.created_at;
-          }
-        }
-
-        return {
-          project,
-          chaptersCount,
-          openHooksCount,
-          overdueHooksCount,
-          recentActivityText: formatActivityDate(latestTimestamp),
-          // TODO: 等待 GET /api/studio/analytics 提供 Token 花费与评审通过率
-        };
-      })
-    );
-
     rawItems.value = items;
   } catch (err) {
     console.error('fetchLibraryData error:', err);
+    rawItems.value = [];
     errorMessage.value = `获取多作品总览失败: ${err.message || '网络连接超时或后端服务未就绪'}`;
   } finally {
     isLoading.value = false;
