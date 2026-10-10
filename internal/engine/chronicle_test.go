@@ -71,6 +71,25 @@ func (m *mockChronicleStore) GetChapter(ctx context.Context, projectID string, c
 func (m *mockChronicleStore) ListChapters(ctx context.Context, projectID string) ([]*domain.Chapter, error) {
 	return m.chapters, nil
 }
+
+// Chapter Intents (章节意图卡) — 接口扩容 stub；engine 侧尚不消费意图卡，
+// 需要真实行为时由意图驱动任务的 agent 扩充（保持与 store.Store 接口同步）。
+func (m *mockChronicleStore) SaveChapterIntent(ctx context.Context, intent *domain.ChapterIntent) error {
+	return nil
+}
+func (m *mockChronicleStore) GetChapterIntent(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterIntent, error) {
+	return nil, nil
+}
+func (m *mockChronicleStore) ListChapterIntents(ctx context.Context, projectID string, volumeIndex int) ([]*domain.ChapterIntent, error) {
+	return nil, nil
+}
+func (m *mockChronicleStore) DeleteChapterIntent(ctx context.Context, projectID string, chapterIndex int) error {
+	return nil
+}
+func (m *mockChronicleStore) MarkIntentsStale(ctx context.Context, projectID string, volumeIndex int) (int64, error) {
+	return 0, nil
+}
+
 func (m *mockChronicleStore) SavePlotHook(ctx context.Context, hook *domain.PlotHook) error {
 	return nil
 }
