@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -423,5 +424,225 @@ func TestCanonChronicle_CodexAssembly(t *testing.T) {
 	}
 	if !strings.Contains(codexText, "【实体间羁绊与冲突事实 (Relations)】") || !strings.Contains(codexText, "NEMESIS") {
 		t.Errorf("expected NEMESIS relation between 楚枫 and 赵天霸 in codex text:\n%s", codexText)
+	}
+}
+
+func TestCanonChronicle_AssembleHorizon_VolumeResolution_Boundary(t *testing.T) {
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p_vol_boundary",
+			Title:          "仙道求索",
+			TargetPlatform: "起点仙侠",
+			WorldRules:     "天道有缺，大道争锋",
+			Framework: &domain.ProjectFramework{
+				VolumeArcs: []domain.VolumeArc{
+					{
+						VolumeIndex:       1,
+						Title:             "潜龙在渊",
+						Theme:             "底层求存",
+						CoreGoal:          "拜入宗门筑基成功",
+						Climax:            "力斩血蟒夺得筑基丹",
+						EstimatedChapters: 10,
+						KeyPayoffs:        []string{"身世之谜"},
+					},
+					{
+						VolumeIndex:       2,
+						Title:             "龙战于野",
+						Theme:             "宗门扬名",
+						CoreGoal:          "夺得宗门大比魁首",
+						Climax:            "剑败外门第一人",
+						EstimatedChapters: 20,
+						KeyPayoffs:        []string{"宗门大比"},
+					},
+				},
+			},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+
+	tests := []struct {
+		name          string
+		targetChapter int
+		wantVolIndex  int
+		wantTitle     string
+	}{
+		{name: "第1卷首章", targetChapter: 1, wantVolIndex: 1, wantTitle: "潜龙在渊"},
+		{name: "第1卷尾章", targetChapter: 10, wantVolIndex: 1, wantTitle: "潜龙在渊"},
+		{name: "第2卷首章", targetChapter: 11, wantVolIndex: 2, wantTitle: "龙战于野"},
+		{name: "第2卷尾章", targetChapter: 30, wantVolIndex: 2, wantTitle: "龙战于野"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			horizon, err := chronicle.AssembleHorizon(context.Background(), "p_vol_boundary", tc.targetChapter)
+			if err != nil {
+				t.Fatalf("AssembleHorizon failed: %v", err)
+			}
+			if horizon.CurrentVolume == nil {
+				t.Fatalf("expected CurrentVolume not nil for chapter %d", tc.targetChapter)
+			}
+			if horizon.CurrentVolume.VolumeIndex != tc.wantVolIndex {
+				t.Errorf("expected VolumeIndex %d, got %d", tc.wantVolIndex, horizon.CurrentVolume.VolumeIndex)
+			}
+			if horizon.CurrentVolume.Title != tc.wantTitle {
+				t.Errorf("expected Title %q, got %q", tc.wantTitle, horizon.CurrentVolume.Title)
+			}
+			if !strings.Contains(horizon.GlobalSummary, tc.wantTitle) {
+				t.Errorf("expected GlobalSummary to contain %q, got:\n%s", tc.wantTitle, horizon.GlobalSummary)
+			}
+			if strings.Contains(horizon.GlobalSummary, "超出已规划") {
+				t.Errorf("unexpected out of bounds note in GlobalSummary for hit chapter %d", tc.targetChapter)
+			}
+		})
+	}
+}
+
+func TestCanonChronicle_AssembleHorizon_VolumeResolution_OutOfBounds(t *testing.T) {
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p_vol_oob",
+			Title:          "仙道求索",
+			TargetPlatform: "起点仙侠",
+			WorldRules:     "天道有缺，大道争锋",
+			Framework: &domain.ProjectFramework{
+				VolumeArcs: []domain.VolumeArc{
+					{
+						VolumeIndex:       1,
+						Title:             "潜龙在渊",
+						EstimatedChapters: 10,
+						CoreGoal:          "拜入宗门",
+						Climax:            "力斩血蟒",
+					},
+					{
+						VolumeIndex:       2,
+						Title:             "龙战于野",
+						EstimatedChapters: 20,
+						CoreGoal:          "宗门扬名",
+						Climax:            "剑败强敌",
+					},
+				},
+			},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+
+	oobChapters := []int{31, 50, 100}
+	for _, ch := range oobChapters {
+		t.Run(fmt.Sprintf("超界第%d章", ch), func(t *testing.T) {
+			horizon, err := chronicle.AssembleHorizon(context.Background(), "p_vol_oob", ch)
+			if err != nil {
+				t.Fatalf("AssembleHorizon failed: %v", err)
+			}
+			// Fail-Closed: 超界章节 CurrentVolume 必须为 nil，严禁静默回退末卷
+			if horizon.CurrentVolume != nil {
+				t.Fatalf("expected CurrentVolume nil for out of bounds chapter %d, got VolumeIndex %d (%s)",
+					ch, horizon.CurrentVolume.VolumeIndex, horizon.CurrentVolume.Title)
+			}
+			// GlobalSummary 必须带有警示注记
+			if !strings.Contains(horizon.GlobalSummary, "超出已规划") {
+				t.Errorf("expected GlobalSummary to contain '超出已规划' for chapter %d, got:\n%s", ch, horizon.GlobalSummary)
+			}
+			if !strings.Contains(horizon.GlobalSummary, "目标章节超出已规划分卷，请先扩展卷纲") {
+				t.Errorf("expected exact note in GlobalSummary for chapter %d, got:\n%s", ch, horizon.GlobalSummary)
+			}
+		})
+	}
+}
+
+func TestCanonChronicle_AssembleHorizon_VolumeResolution_EmptyArcs(t *testing.T) {
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p_vol_empty",
+			Title:          "无卷项目",
+			TargetPlatform: "通用网文",
+			WorldRules:     "常规法则",
+			Framework: &domain.ProjectFramework{
+				VolumeArcs: nil,
+			},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	horizon, err := chronicle.AssembleHorizon(context.Background(), "p_vol_empty", 1)
+	if err != nil {
+		t.Fatalf("AssembleHorizon failed: %v", err)
+	}
+	if horizon.CurrentVolume != nil {
+		t.Fatalf("expected CurrentVolume nil for empty VolumeArcs, got %v", horizon.CurrentVolume)
+	}
+	if !strings.Contains(horizon.GlobalSummary, "超出已规划") {
+		t.Errorf("expected GlobalSummary to contain '超出已规划' for empty arcs, got:\n%s", horizon.GlobalSummary)
+	}
+}
+
+func TestCanonChronicle_VolumeResolution_GapMiss(t *testing.T) {
+	// 缝隙 Miss（两卷之间的人为断档）
+	spansWithGap := []domain.VolumeSpan{
+		{VolumeIndex: 1, StartChapter: 1, EndChapter: 10},
+		{VolumeIndex: 2, StartChapter: 15, EndChapter: 20}, // 11-14 为断档缝隙
+	}
+
+	arc1 := domain.VolumeArc{VolumeIndex: 1, Title: "初入仙门"}
+	arc2 := domain.VolumeArc{VolumeIndex: 2, Title: "下山历练"}
+	arcMap := map[int]*domain.VolumeArc{
+		1: &arc1,
+		2: &arc2,
+	}
+
+	// 缝隙章节必须 Miss 回 nil，永不猜测或回退
+	for _, ch := range []int{11, 12, 13, 14} {
+		vol := resolveVolumeArc(ch, spansWithGap, arcMap)
+		if vol != nil {
+			t.Errorf("expected nil for gap chapter %d, got VolumeIndex %d", ch, vol.VolumeIndex)
+		}
+	}
+
+	// 边界命中验证
+	if vol := resolveVolumeArc(10, spansWithGap, arcMap); vol == nil || vol.VolumeIndex != 1 {
+		t.Errorf("expected volume 1 for chapter 10, got %v", vol)
+	}
+	if vol := resolveVolumeArc(15, spansWithGap, arcMap); vol == nil || vol.VolumeIndex != 2 {
+		t.Errorf("expected volume 2 for chapter 15, got %v", vol)
+	}
+}
+
+func TestDeriveVolumeSpans(t *testing.T) {
+	arcs := []domain.VolumeArc{
+		{
+			VolumeIndex:       0, // 自动推断为 1
+			Title:             "首卷",
+			EstimatedChapters: 0, // 默认回退 40
+			CoreGoal:          "开局立足",
+		},
+		{
+			VolumeIndex:       2,
+			Title:             "次卷",
+			EstimatedChapters: 25,
+			CoreGoal:          "进阶宗门",
+		},
+	}
+
+	spans, arcMap := deriveVolumeSpans(arcs)
+	if len(spans) != 2 {
+		t.Fatalf("expected 2 spans, got %d", len(spans))
+	}
+
+	// Span 1: [1, 40]
+	if spans[0].VolumeIndex != 1 || spans[0].StartChapter != 1 || spans[0].EndChapter != 40 {
+		t.Errorf("unexpected span 0: %+v", spans[0])
+	}
+	// Span 2: [41, 65]
+	if spans[1].VolumeIndex != 2 || spans[1].StartChapter != 41 || spans[1].EndChapter != 65 {
+		t.Errorf("unexpected span 1: %+v", spans[1])
+	}
+
+	// arcMap 必须保留原始指针及字段
+	if arcMap[1] == nil || arcMap[1].Title != "首卷" || arcMap[1].CoreGoal != "开局立足" {
+		t.Errorf("arcMap[1] corrupted: %+v", arcMap[1])
+	}
+	if arcMap[2] == nil || arcMap[2].Title != "次卷" || arcMap[2].CoreGoal != "进阶宗门" {
+		t.Errorf("arcMap[2] corrupted: %+v", arcMap[2])
 	}
 }
