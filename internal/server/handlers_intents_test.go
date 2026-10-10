@@ -6,10 +6,17 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Jungley8/novel-studio/internal/config"
 	"github.com/Jungley8/novel-studio/internal/domain"
+	"github.com/Jungley8/novel-studio/internal/engine"
+	"github.com/Jungley8/novel-studio/internal/server"
+	"github.com/Jungley8/novel-studio/internal/store"
 )
 
 func TestIntentsAPI_FullLifecycle(t *testing.T) {
@@ -376,5 +383,305 @@ func TestIntentsAPI_FrameworkVolumeChangeLinkage(t *testing.T) {
 	}
 	if got11.Status != domain.IntentStatusLocked {
 		t.Errorf("expected Chapter 11 status LOCKED because Vol 2 boundary was untouched, got %s", got11.Status)
+	}
+}
+
+func setupTestServerForIntentsGenerate(t *testing.T, llmHandler http.HandlerFunc) (*server.Server, store.Store, *httptest.Server) {
+	mockServer := httptest.NewServer(llmHandler)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	cfgPath := filepath.Join(tmpDir, "cfg.json")
+
+	s, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.APIBase = mockServer.URL
+	cfg.APIKey = "sk-test-key"
+	cfg.ReasoningModel = "test-reasoner"
+	llmClient := engine.NewHTTPLLMClient(mockServer.URL, "sk-test-key")
+	orch := engine.NewOrchestrator(llmClient)
+	linter := engine.NewLinter(nil)
+
+	srv, err := server.New(cfg, cfgPath, s, llmClient, orch, linter)
+	if err != nil {
+		t.Fatalf("server.New failed: %v", err)
+	}
+	return srv, s, mockServer
+}
+
+func TestIntentsAPI_GenerateFullChain(t *testing.T) {
+	var callCount int32
+	mockCardsJSON := `[
+		{
+			"chapter_index": 1,
+			"conflict": "第一章冲突：主角初露锋芒",
+			"pov": "主角",
+			"emotion_curve": ["期待", "压抑", "爆发"],
+			"hook_plants": ["古老铜镜异动"],
+			"hook_payoffs": [],
+			"tension_target": 6,
+			"expected_mutation": {"inventory_delta": "获得古铜镜", "power_delta": "通脉一层"}
+		},
+		{
+			"chapter_index": 2,
+			"conflict": "第二章冲突：恶霸上门刁难",
+			"pov": "主角",
+			"emotion_curve": ["愤怒", "隐忍", "反击"],
+			"hook_plants": [],
+			"hook_payoffs": ["古老铜镜异动"],
+			"tension_target": 7,
+			"expected_mutation": {"inventory_delta": "缴获培元丹", "power_delta": "通脉二层"}
+		},
+		{
+			"chapter_index": 3,
+			"conflict": "第三章冲突：卷末大比初战告捷",
+			"pov": "主角",
+			"emotion_curve": ["紧张", "激烈", "扬眉吐气"],
+			"hook_plants": ["神秘黑袍人现身"],
+			"hook_payoffs": [],
+			"tension_target": 9,
+			"expected_mutation": {"inventory_delta": "家族奖励贡献点", "power_delta": "通脉三层"}
+		}
+	]`
+
+	srv, s, mockServer := setupTestServerForIntentsGenerate(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&callCount, 1)
+		content := "```json\n" + mockCardsJSON + "\n```"
+
+		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+			deltaPayload, _ := json.Marshal(map[string]any{
+				"choices": []any{
+					map[string]any{
+						"delta": map[string]string{"content": content},
+					},
+				},
+			})
+			_, _ = w.Write([]byte("data: " + string(deltaPayload) + "\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			usagePayload, _ := json.Marshal(map[string]any{
+				"usage": map[string]int{
+					"prompt_tokens":     120,
+					"completion_tokens": 280,
+					"total_tokens":      400,
+				},
+			})
+			_, _ = w.Write([]byte("data: " + string(usagePayload) + "\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]string{
+						"role":    "assistant",
+						"content": content,
+					},
+				},
+			},
+			"usage": map[string]int{
+				"prompt_tokens":     120,
+				"completion_tokens": 280,
+				"total_tokens":      400,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+	defer mockServer.Close()
+
+	ctx := context.Background()
+	projectID := "proj-intents-gen"
+	p := &domain.Project{
+		ID:             projectID,
+		Title:          "推演全链测试项目",
+		TargetPlatform: "起点仙侠",
+		WorldRules:     "仙侠世界，大道争锋",
+		Framework: &domain.ProjectFramework{
+			ThemePremise: "逆天改命",
+			VolumeArcs: []domain.VolumeArc{
+				{
+					VolumeIndex:  1,
+					Title:        "第一卷：潜龙出渊",
+					CoreGoal:     "立足家族，破局考核",
+					Climax:       "家族大比夺魁",
+					KeyPayoffs:   []string{"击溃宿敌"},
+					StartChapter: 1,
+					EndChapter:   3,
+					Status:       domain.VolumeStatusDraft,
+				},
+			},
+		},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := s.SaveProject(ctx, p); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	// 1. 首次推演：POST /api/projects/{id}/intents/generate -> 200 created=3
+	genReqBody := map[string]int{"volume_index": 1}
+	raw, _ := json.Marshal(genReqBody)
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/intents/generate", bytes.NewReader(raw))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST intents generate: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var genResp struct {
+		Created int                    `json:"created"`
+		Intents []domain.ChapterIntent `json:"intents"`
+		Tokens  engine.TokenUsage      `json:"tokens"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &genResp); err != nil {
+		t.Fatalf("unmarshal genResp failed: %v", err)
+	}
+	if genResp.Created != 3 {
+		t.Fatalf("expected created=3, got %d", genResp.Created)
+	}
+	if len(genResp.Intents) != 3 {
+		t.Fatalf("expected 3 intents in response, got %d", len(genResp.Intents))
+	}
+	if genResp.Tokens.TotalTokens != 400 {
+		t.Errorf("expected 400 total tokens, got %d", genResp.Tokens.TotalTokens)
+	}
+	if atomic.LoadInt32(&callCount) != 1 {
+		t.Fatalf("expected 1 LLM call after first generate, got %d", atomic.LoadInt32(&callCount))
+	}
+
+	// 2. GET list 验证全部 3 张卡已落库且 Status 为 DRAFT
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/intents?volume=1", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET intents list: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var listVol1 []*domain.ChapterIntent
+	if err := json.Unmarshal(w.Body.Bytes(), &listVol1); err != nil {
+		t.Fatalf("unmarshal listVol1 failed: %v", err)
+	}
+	if len(listVol1) != 3 {
+		t.Fatalf("expected 3 intents in store, got %d", len(listVol1))
+	}
+	for i, card := range listVol1 {
+		if card.Status != domain.IntentStatusDraft {
+			t.Errorf("card %d (ch %d) expected Status DRAFT, got %s", i, card.ChapterIndex, card.Status)
+		}
+		if card.Conflict == "" {
+			t.Errorf("card %d conflict is empty", i)
+		}
+	}
+
+	// 3. 二次调用：所有章节已有意图卡，created=0 且 LLM 未被再次调用
+	req = httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/intents/generate", bytes.NewReader(raw))
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST intents generate 2nd call: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var genResp2 struct {
+		Created int                    `json:"created"`
+		Intents []domain.ChapterIntent `json:"intents"`
+		Tokens  engine.TokenUsage      `json:"tokens"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &genResp2); err != nil {
+		t.Fatalf("unmarshal genResp2 failed: %v", err)
+	}
+	if genResp2.Created != 0 {
+		t.Fatalf("expected created=0 on 2nd call, got %d", genResp2.Created)
+	}
+	if len(genResp2.Intents) != 0 {
+		t.Fatalf("expected 0 intents on 2nd call, got %d", len(genResp2.Intents))
+	}
+	if atomic.LoadInt32(&callCount) != 1 {
+		t.Fatalf("expected LLM not called on 2nd call, callCount remains 1, got %d", atomic.LoadInt32(&callCount))
+	}
+}
+
+func TestIntentsAPI_GenerateErrors(t *testing.T) {
+	srv, s, mockServer := setupTestServerForIntentsGenerate(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{}})
+	})
+	defer mockServer.Close()
+
+	ctx := context.Background()
+	projectID := "proj-intents-err"
+
+	// 1. Missing project -> 404
+	body, _ := json.Marshal(map[string]int{"volume_index": 1})
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/non-existent/intents/generate", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("missing project: expected 404, got %d", w.Code)
+	}
+
+	// Create project without framework
+	pNoFw := &domain.Project{
+		ID:        projectID,
+		Title:     "无架构项目",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	_ = s.SaveProject(ctx, pNoFw)
+
+	// 2. Project without framework -> 400 "framework not bootstrapped"
+	req = httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/intents/generate", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("framework nil: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "framework not bootstrapped") {
+		t.Errorf("expected 'framework not bootstrapped', got %s", w.Body.String())
+	}
+
+	// 3. Invalid volume_index (0 and negative) -> 400
+	badVol, _ := json.Marshal(map[string]int{"volume_index": 0})
+	req = httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/intents/generate", bytes.NewReader(badVol))
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("volume_index 0: expected 400, got %d", w.Code)
+	}
+
+	// 4. Arc not found -> 404
+	pNoFw.Framework = &domain.ProjectFramework{
+		VolumeArcs: []domain.VolumeArc{
+			{VolumeIndex: 1, StartChapter: 1, EndChapter: 10},
+		},
+	}
+	_ = s.SaveProject(ctx, pNoFw)
+
+	vol99, _ := json.Marshal(map[string]int{"volume_index": 99})
+	req = httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/intents/generate", bytes.NewReader(vol99))
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("volume 99 not found: expected 404, got %d", w.Code)
+	}
+
+	// 5. Method not allowed (GET) -> 405
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/intents/generate", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET generate: expected 405, got %d", w.Code)
 	}
 }
