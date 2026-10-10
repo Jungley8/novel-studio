@@ -242,6 +242,61 @@ func (s *Server) handleStudioChat(w http.ResponseWriter, r *http.Request) {
 		default: // scene_brainstorm
 			sysPrompt = `你是全能的小说创作剧情策划与宏观灵感智囊。你的职责是协助作者进行跨项目全局头脑风暴，攻克卡文瓶颈、设计反转桥段、推演动机与世界观冲突。回复必须富有启发性、直接切入戏剧冲突核心。`
 		}
+
+		projects, err := s.store.ListProjects(ctx)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, "list projects: "+err.Error())
+			return
+		}
+
+		var overview strings.Builder
+		overview.WriteString("【全库作品概览（跨项目脑暴上下文）】\n")
+		if len(projects) == 0 {
+			overview.WriteString("（全库暂无作品）")
+		} else {
+			for i, p := range projects {
+				if i > 0 {
+					overview.WriteString("\n")
+				}
+				var parts []string
+				titlePart := fmt.Sprintf("《%s》", p.Title)
+				if strings.TrimSpace(p.TargetPlatform) != "" {
+					titlePart += fmt.Sprintf("（%s）", strings.TrimSpace(p.TargetPlatform))
+				}
+				parts = append(parts, titlePart)
+
+				if p.Framework != nil && strings.TrimSpace(p.Framework.ThemePremise) != "" {
+					premise := strings.TrimSpace(p.Framework.ThemePremise)
+					runes := []rune(premise)
+					if len(runes) > 100 {
+						premise = string(runes[:100])
+					}
+					parts = append(parts, fmt.Sprintf("立意：%s", premise))
+				}
+
+				chapters, err := s.store.ListChapters(ctx, p.ID)
+				if err != nil {
+					chapters = nil
+				}
+				parts = append(parts, fmt.Sprintf("已归档章数：%d", len(chapters)))
+
+				hooks, err := s.store.ListPlotHooks(ctx, p.ID)
+				if err != nil {
+					hooks = nil
+				}
+				openHooks := 0
+				for _, h := range hooks {
+					if h != nil && h.Status == domain.HookStatusOpen {
+						openHooks++
+					}
+				}
+				parts = append(parts, fmt.Sprintf("开放钩数：%d", openHooks))
+
+				overview.WriteString("- " + strings.Join(parts, " | "))
+			}
+		}
+
+		sysPrompt += "\n\n" + overview.String()
 	}
 
 	if s.llmRouter == nil {

@@ -48,6 +48,7 @@
             <option value="番茄脑洞">番茄脑洞 (快节奏爽文 / 密集反转 / 极致逆袭)</option>
             <option value="知乎盐言">知乎盐言 (第一人称 / 强悬疑复仇 / 情绪高压)</option>
             <option value="海外短剧">海外短剧 (高概念冲突 / 强钩子钩锁 / 豪门狼人)</option>
+            <option value="通用网文">通用网文 (经典升级流 / 宏大世界观)</option>
           </select>
         </div>
 
@@ -120,7 +121,7 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue';
+import { reactive, ref, watch } from 'vue';
 import { state, actions, notify } from '../../stores/appState';
 import { api } from '../../api/client';
 import { BookPlus } from 'lucide-vue-next';
@@ -134,6 +135,21 @@ const form = reactive({
   concept: '',
   protagonist_name: '',
 });
+
+watch(
+  () => state.showNewProjectModal,
+  (isOpen, wasOpen) => {
+    if (isOpen && !wasOpen && state.newProjectPrefill) {
+      form.title = state.newProjectPrefill.title || '';
+      form.concept = state.newProjectPrefill.concept || '';
+      if (state.newProjectPrefill.platform) {
+        form.target_platform = state.newProjectPrefill.platform;
+      }
+      form.genesis_mode = true;
+      state.newProjectPrefill = null;
+    }
+  }
+);
 
 const bestsellerPresets = [
   {
