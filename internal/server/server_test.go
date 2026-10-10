@@ -403,15 +403,75 @@ func TestServer_MatrixScenesAndAnalytics(t *testing.T) {
 		t.Fatalf("prompt preview failed: %d, body: %s", w.Code, w.Body.String())
 	}
 	var prevResp struct {
-		SystemPrompt        string `json:"system_prompt"`
-		UserPrompt          string `json:"user_prompt"`
-		Components          []any  `json:"components"`
-		TotalTokensEstimate int    `json:"total_tokens_estimate"`
+		SystemPrompt string `json:"system_prompt"`
+		UserPrompt   string `json:"user_prompt"`
+		Components   []struct {
+			Name          string `json:"name"`
+			Description   string `json:"description"`
+			Content       string `json:"content"`
+			TokenEstimate int    `json:"token_estimate"`
+		} `json:"components"`
+		TotalTokensEstimate int `json:"total_tokens_estimate"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &prevResp)
-	if len(prevResp.Components) != 4 || prevResp.TotalTokensEstimate <= 0 {
-		t.Errorf("invalid prompt preview response: %+v", prevResp)
+	if len(prevResp.Components) != 5 || prevResp.TotalTokensEstimate <= 0 {
+		t.Fatalf("expected 5 components in prompt preview response, got %d (tokens: %d)", len(prevResp.Components), prevResp.TotalTokensEstimate)
 	}
+
+	gateComp := prevResp.Components[4]
+	if gateComp.Name != "评审门禁 (Review Gate)" {
+		t.Errorf("expected 5th component Name to be '评审门禁 (Review Gate)', got %q", gateComp.Name)
+	}
+	if !strings.Contains(gateComp.Content, "≥80") {
+		t.Errorf("expected 5th component to contain '≥80', got %q", gateComp.Content)
+	}
+	if !strings.Contains(gateComp.Content, "本章暂无评审记录") {
+		t.Errorf("expected 5th component without checkpoint to contain '本章暂无评审记录', got %q", gateComp.Content)
+	}
+
+	// Test Prompt Preview with Checkpoint AuditReport
+	cpWithAudit := &domain.ChapterCheckpoint{
+		ProjectID:    created.ID,
+		ChapterIndex: 1,
+		Phase:        domain.CheckpointPhaseAudited,
+		AuditReport: &domain.AuditReport{
+			Verdict: domain.ReviewVerdictAccepted,
+			Score:   85,
+			Issues:  []string{"首段环境描写稍显冗余", "第二节拍动作交代过快"},
+		},
+	}
+	if err := s.SaveCheckpoint(ctx, cpWithAudit); err != nil {
+		t.Fatalf("save checkpoint failed: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/projects/"+created.ID+"/prompt-preview", bytes.NewReader(prevBody))
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("prompt preview with checkpoint failed: %d", w.Code)
+	}
+	var prevRespWithAudit struct {
+		Components []struct {
+			Name    string `json:"name"`
+			Content string `json:"content"`
+		} `json:"components"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &prevRespWithAudit)
+	if len(prevRespWithAudit.Components) != 5 {
+		t.Fatalf("expected 5 components with checkpoint, got %d", len(prevRespWithAudit.Components))
+	}
+	gateWithAudit := prevRespWithAudit.Components[4]
+	if !strings.Contains(gateWithAudit.Content, string(domain.ReviewVerdictAccepted)) {
+		t.Errorf("expected 5th component to contain verdict %s, got %q", domain.ReviewVerdictAccepted, gateWithAudit.Content)
+	}
+	if !strings.Contains(gateWithAudit.Content, "85") {
+		t.Errorf("expected 5th component to contain score 85, got %q", gateWithAudit.Content)
+	}
+	if !strings.Contains(gateWithAudit.Content, "首段环境描写稍显冗余") {
+		t.Errorf("expected 5th component to contain issue, got %q", gateWithAudit.Content)
+	}
+
+	_ = s.ClearCheckpoint(ctx, created.ID, 1)
 
 	// 9. Test Analytics Heatmap
 	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+created.ID+"/analytics/heatmap", nil)

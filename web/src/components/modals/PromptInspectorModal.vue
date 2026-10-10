@@ -12,7 +12,7 @@
           </div>
           <div>
             <h3 class="text-sm font-serif font-bold text-ink-50 tracking-wide">提示词积木装配透视 (Prompt Inspector)</h3>
-            <p class="text-[10px] text-ink-400">底层发往大模型的四层解耦组装视界与 Token 精确测算</p>
+            <p class="text-[10px] text-ink-400">底层解耦组装视界、评审门禁与 Token 精确测算</p>
           </div>
         </div>
 
@@ -32,7 +32,7 @@
 
       <!-- 内容主体 -->
       <div class="flex-1 p-6 overflow-y-auto space-y-5" v-if="previewData">
-        <!-- 4 大积木组件网格 -->
+        <!-- 积木组件网格 -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
           <div 
             v-for="(comp, idx) in previewData.components" 

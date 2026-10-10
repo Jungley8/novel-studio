@@ -779,6 +779,89 @@ func (s *Server) handlePromptPreview(w http.ResponseWriter, r *http.Request, pro
 		},
 	}
 
+	horizonContext := horizon.RollingCanonText
+	if horizon.TailAnchor != "" {
+		if horizonContext != "" {
+			horizonContext += "\n" + horizon.TailAnchor
+		} else {
+			horizonContext = horizon.TailAnchor
+		}
+	}
+
+	var linterRes domain.LinterResult
+	if s.linter != nil {
+		linterRes = s.linter.Analyze(horizonContext)
+	} else if s.qualityGate != nil {
+		linterRes = s.qualityGate.FastAnalyze(horizonContext)
+	}
+
+	var heuristicSummary string
+	if strings.TrimSpace(horizonContext) == "" {
+		heuristicSummary = "前序上下文为空，本章暂无启发式预检数据"
+	} else {
+		var details []string
+		details = append(details, fmt.Sprintf("突发度: %d/100", linterRes.BurstinessScore))
+		if len(linterRes.HitBannedWords) > 0 {
+			details = append(details, fmt.Sprintf("命中毒词套词(%d处): %s", len(linterRes.HitBannedWords), strings.Join(linterRes.HitBannedWords, ", ")))
+		} else {
+			details = append(details, "零违禁套词")
+		}
+		details = append(details, fmt.Sprintf("感叹号密度: %.1f/千字", linterRes.ExclamationDensity))
+		if linterRes.DialogueRatio > 0 {
+			details = append(details, fmt.Sprintf("对话占比: %.1f%%", linterRes.DialogueRatio*100))
+		}
+		if len(linterRes.TopRepeatedNgrams) > 0 {
+			details = append(details, fmt.Sprintf("高频重复短语: %s", strings.Join(linterRes.TopRepeatedNgrams, ", ")))
+		}
+		if len(linterRes.EmpiricalTells) > 0 {
+			details = append(details, fmt.Sprintf("AI腔调特征: %s", strings.Join(linterRes.EmpiricalTells, ", ")))
+		}
+		status := "PASS"
+		if !linterRes.Passed {
+			status = "WARN"
+		}
+		heuristicSummary = fmt.Sprintf("[%s] %s", status, strings.Join(details, "；"))
+	}
+
+	var lastAuditSummary string
+	cp, err := s.store.GetCheckpoint(ctx, projectID, req.ChapterIndex)
+	if err == nil && cp != nil && cp.AuditReport != nil {
+		rep := cp.AuditReport
+		var issuesText string
+		if len(rep.Issues) > 0 {
+			top := rep.Issues
+			if len(top) > 3 {
+				top = top[:3]
+			}
+			var topLines []string
+			for i, iss := range top {
+				topLines = append(topLines, fmt.Sprintf("%d. %s", i+1, iss))
+			}
+			issuesText = fmt.Sprintf("\nTop 3 待改问题:\n  %s", strings.Join(topLines, "\n  "))
+		} else {
+			issuesText = "\nTop 3 待改问题: 无"
+		}
+		lastAuditSummary = fmt.Sprintf("评级: %s | 评分: %d%s", rep.Verdict, rep.Score, issuesText)
+	} else {
+		lastAuditSummary = "本章暂无评审记录"
+	}
+
+	var reviewGateContent strings.Builder
+	reviewGateContent.WriteString("【Fail-Closed 放行规则】\n")
+	reviewGateContent.WriteString("ACCEPTED && ≥80 && 零套词 && 感叹号不超标；任一分庭 REVISION 即驳回；耗尽返工停线待人工\n\n")
+	reviewGateContent.WriteString("【本章启发式预检摘要】\n")
+	reviewGateContent.WriteString(heuristicSummary)
+	reviewGateContent.WriteString("\n\n")
+	reviewGateContent.WriteString("【历史评审记录】\n")
+	reviewGateContent.WriteString(lastAuditSummary)
+
+	components = append(components, PromptComponentPreview{
+		Name:          "评审门禁 (Review Gate)",
+		Description:   "Fail-Closed 放行规则、本章启发式预检与历史评审记录",
+		Content:       reviewGateContent.String(),
+		TokenEstimate: estimateTokens(reviewGateContent.String()),
+	})
+
 	totalTokens := 0
 	for _, c := range components {
 		totalTokens += c.TokenEstimate
