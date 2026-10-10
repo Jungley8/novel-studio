@@ -279,8 +279,16 @@ func TestOrchestrator_BootstrapFramework(t *testing.T) {
 	}
 	if len(fw.VolumeArcs) != 1 {
 		t.Errorf("expected 1 volume arc, got %d", len(fw.VolumeArcs))
-	} else if fw.VolumeArcs[0].VolumeIndex != 1 {
-		t.Errorf("expected volume_index 1, got %d", fw.VolumeArcs[0].VolumeIndex)
+	} else {
+		if fw.VolumeArcs[0].VolumeIndex != 1 {
+			t.Errorf("expected volume_index 1, got %d", fw.VolumeArcs[0].VolumeIndex)
+		}
+		if fw.VolumeArcs[0].StartChapter != 1 || fw.VolumeArcs[0].EndChapter != 30 {
+			t.Errorf("expected volume range [1, 30], got [%d, %d]", fw.VolumeArcs[0].StartChapter, fw.VolumeArcs[0].EndChapter)
+		}
+		if fw.VolumeArcs[0].Status != domain.VolumeStatusDraft {
+			t.Errorf("expected volume status DRAFT, got %s", fw.VolumeArcs[0].Status)
+		}
 	}
 	if len(fw.SeedHooks) != 1 {
 		t.Errorf("expected 1 seed hook, got %d", len(fw.SeedHooks))
