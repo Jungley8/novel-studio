@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -423,5 +425,288 @@ func TestCanonChronicle_CodexAssembly(t *testing.T) {
 	}
 	if !strings.Contains(codexText, "【实体间羁绊与冲突事实 (Relations)】") || !strings.Contains(codexText, "NEMESIS") {
 		t.Errorf("expected NEMESIS relation between 楚枫 and 赵天霸 in codex text:\n%s", codexText)
+	}
+}
+
+// Test ①: 构造超大 WorldRules → 返回可操作错误且错误文本含超限项 ID
+func TestCanonChronicle_ContextBudget_WorldRulesOverflow(t *testing.T) {
+	hugeRules := strings.Repeat("天地初开，法则晦涩。神魔之战绵延三千纪元，血染星空，大道崩塌。", 800)
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p_rules_overflow",
+			Title:          "逆天神魔传",
+			TargetPlatform: "起点中文网",
+			WorldRules:     hugeRules,
+		},
+		chapters: []*domain.Chapter{
+			{
+				ChapterIndex: 1,
+				Title:        "开天辟地",
+				Content:      "混沌未分天地乱，茫茫渺渺无人见。",
+			},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	// Default budget is 12000 tokens. hugeRules is ~24,000 runes = ~12,000 tokens for rules alone,
+	// plus chapter and summary makes it strictly overflow.
+	horizon, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_rules_overflow", 2)
+	if err == nil {
+		t.Fatalf("expected actionable error for oversized WorldRules, got nil (horizon=%v)", horizon)
+	}
+
+	errText := err.Error()
+	if !strings.Contains(errText, "global/rules") {
+		t.Errorf("expected actionable error to contain overflow item ID 'global/rules', got: %s", errText)
+	}
+	if !strings.Contains(errText, "context_budget_tokens") {
+		t.Errorf("expected actionable error to suggest adjusting 'context_budget_tokens', got: %s", errText)
+	}
+	if trace == nil || len(trace.ProtectedIDs) == 0 {
+		t.Errorf("expected trace with recorded protected IDs even on overflow, got: %v", trace)
+	}
+
+	// Also verify that the standard AssembleHorizon signature returns the same actionable error
+	_, rawErr := chronicle.AssembleHorizon(context.Background(), "p_rules_overflow", 2)
+	if rawErr == nil || !strings.Contains(rawErr.Error(), "global/rules") {
+		t.Errorf("expected AssembleHorizon to bubble the actionable error, got: %v", rawErr)
+	}
+}
+
+// Test ②: 构造 10 条跨卷回调 → 确定性截断（两次运行结果一致）且 DroppedIDs 非空
+func TestCanonChronicle_ContextBudget_TenCallbacksTruncationDeterministic(t *testing.T) {
+	// Construct 15 chapters (target chapter: 15)
+	// Recent chapters: 12, 13, 14
+	// Older chapters: 1..11
+	chapters := make([]*domain.Chapter, 0, 14)
+	for i := 1; i <= 14; i++ {
+		chapters = append(chapters, &domain.Chapter{
+			ChapterIndex: i,
+			Title:        fmt.Sprintf("第 %d 章 历史纪事", i),
+			CoreConflict: fmt.Sprintf("历史章节冲突 %d", i),
+			Content:      fmt.Sprintf("这是第 %d 章的正史正文内容，记录着曾经发生的惊心动魄的故事与暗流涌动。", i),
+		})
+	}
+
+	// Construct 10 hooks in older chapters (1..10)
+	// Hook 1: Urgent (TargetChapter: 16 <= 15+2)
+	// Hook 2: Urgent (TargetChapter: 17 <= 15+2)
+	// Hooks 3..10: Non-urgent with increasing target chapters
+	hooks := []*domain.PlotHook{
+		{
+			ID:             "hook_urgent_1",
+			Title:          "伏笔1-极度紧急",
+			Details:        strings.Repeat("紧急伏笔详情设定，必须在本章或下章立即引爆结算。", 5),
+			CreatedChapter: 1,
+			TargetChapter:  16,
+			Status:         domain.HookStatusOpen,
+		},
+		{
+			ID:             "hook_urgent_2",
+			Title:          "伏笔2-紧随其后",
+			Details:        strings.Repeat("次紧急伏笔详情设定，属于近期必须处理的重大支线因果。", 5),
+			CreatedChapter: 2,
+			TargetChapter:  17,
+			Status:         domain.HookStatusFermenting,
+		},
+		{
+			ID:             "hook_far_3",
+			Title:          "伏笔3-远期20",
+			Details:        strings.Repeat("较远期的伏笔线索，涉及下一卷宗门大比的暗线伏笔。", 5),
+			CreatedChapter: 3,
+			TargetChapter:  20,
+			Status:         domain.HookStatusOpen,
+		},
+		{
+			ID:             "hook_far_4",
+			Title:          "伏笔4-远期25",
+			Details:        strings.Repeat("远期伏笔线索，潜藏在深渊地下的古老妖皇封印。", 5),
+			CreatedChapter: 4,
+			TargetChapter:  25,
+			Status:         domain.HookStatusOpen,
+		},
+		{
+			ID:             "hook_far_5",
+			Title:          "伏笔5-远期30",
+			Details:        strings.Repeat("极远期伏笔线索，域外天魔降临之兆。", 5),
+			CreatedChapter: 5,
+			TargetChapter:  30,
+			Status:         domain.HookStatusOpen,
+		},
+		{
+			ID:             "hook_far_6",
+			Title:          "伏笔6-远期35",
+			Details:        strings.Repeat("极远期伏笔线索，远古仙帝佩剑遗失之谜。", 5),
+			CreatedChapter: 6,
+			TargetChapter:  35,
+			Status:         domain.HookStatusOpen,
+		},
+		{
+			ID:             "hook_far_7",
+			Title:          "伏笔7-远期40",
+			Details:        strings.Repeat("极远期伏笔线索，轮回秘境钥匙碎片之一。", 5),
+			CreatedChapter: 7,
+			TargetChapter:  40,
+			Status:         domain.HookStatusOpen,
+		},
+		{
+			ID:             "hook_far_8",
+			Title:          "伏笔8-远期45",
+			Details:        strings.Repeat("极远期伏笔线索，主角身世玉佩第二道封印。", 5),
+			CreatedChapter: 8,
+			TargetChapter:  45,
+			Status:         domain.HookStatusOpen,
+		},
+		{
+			ID:             "hook_far_9",
+			Title:          "伏笔9-远期50",
+			Details:        strings.Repeat("极远期伏笔线索，九重天阙飞升天梯断裂因果。", 5),
+			CreatedChapter: 9,
+			TargetChapter:  50,
+			Status:         domain.HookStatusOpen,
+		},
+		{
+			ID:             "hook_far_10",
+			Title:          "伏笔10-远期60",
+			Details:        strings.Repeat("全书大后期伏笔，开天神斧最终降世地点线索。", 5),
+			CreatedChapter: 10,
+			TargetChapter:  60,
+			Status:         domain.HookStatusOpen,
+		},
+	}
+
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:         "p_10_callbacks",
+			Title:      "十方因果录",
+			WorldRules: "因果循环，报应不爽。",
+		},
+		chapters: chapters,
+		hooks:    hooks,
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	// Set a tight budget (e.g. 600 tokens) so protected window (~150 tokens) passes,
+	// but only a few callbacks fit within the remaining ~450 tokens.
+	chronicle.SetBudgetTokens(600)
+
+	// Run 1
+	horizon1, trace1, err1 := chronicle.AssembleHorizonTraced(context.Background(), "p_10_callbacks", 15)
+	if err1 != nil {
+		t.Fatalf("Run 1 AssembleHorizonTraced failed: %v", err1)
+	}
+
+	// Run 2
+	horizon2, trace2, err2 := chronicle.AssembleHorizonTraced(context.Background(), "p_10_callbacks", 15)
+	if err2 != nil {
+		t.Fatalf("Run 2 AssembleHorizonTraced failed: %v", err2)
+	}
+
+	// Verify truncation occurred
+	if !trace1.Truncated {
+		t.Fatalf("expected trace1.Truncated to be true")
+	}
+	if len(trace1.DroppedIDs) == 0 {
+		t.Fatalf("expected trace1.DroppedIDs to be non-empty, got 0 dropped items")
+	}
+
+	// Verify determinism: identical results on consecutive runs
+	if !reflect.DeepEqual(trace1.DroppedIDs, trace2.DroppedIDs) {
+		t.Errorf("non-deterministic DroppedIDs:\nrun1: %v\nrun2: %v", trace1.DroppedIDs, trace2.DroppedIDs)
+	}
+	if !reflect.DeepEqual(trace1.CompressibleIDs, trace2.CompressibleIDs) {
+		t.Errorf("non-deterministic CompressibleIDs:\nrun1: %v\nrun2: %v", trace1.CompressibleIDs, trace2.CompressibleIDs)
+	}
+	if trace1.EstimatedTokens != trace2.EstimatedTokens {
+		t.Errorf("non-deterministic EstimatedTokens: run1=%d run2=%d", trace1.EstimatedTokens, trace2.EstimatedTokens)
+	}
+	if horizon1.HistoricalCallbacks != horizon2.HistoricalCallbacks {
+		t.Errorf("non-deterministic HistoricalCallbacks text output")
+	}
+
+	// Verify priority invariants:
+	// Urgent items (hook_urgent_1, hook_urgent_2) must be retained in CompressibleIDs
+	hasUrgent1 := false
+	hasUrgent2 := false
+	for _, id := range trace1.CompressibleIDs {
+		if id == "callback/hook_urgent_1" {
+			hasUrgent1 = true
+		}
+		if id == "callback/hook_urgent_2" {
+			hasUrgent2 = true
+		}
+	}
+	if !hasUrgent1 || !hasUrgent2 {
+		t.Errorf("expected urgent callbacks to be retained in CompressibleIDs, got CompressibleIDs=%v", trace1.CompressibleIDs)
+	}
+
+	// The farthest hook (hook_far_10) must be dropped
+	hasFar10Dropped := false
+	for _, id := range trace1.DroppedIDs {
+		if id == "callback/hook_far_10" {
+			hasFar10Dropped = true
+		}
+	}
+	if !hasFar10Dropped {
+		t.Errorf("expected farthest callback/hook_far_10 to be dropped, got DroppedIDs=%v", trace1.DroppedIDs)
+	}
+}
+
+// Test ③: Codex 长条目 → 截断标记存在
+func TestCanonChronicle_ContextBudget_CodexDetailsTruncation(t *testing.T) {
+	longDetails := strings.Repeat("万古魔帝身怀吞天魔功，曾在太古星空深处斩灭神明三千尊，肉身不朽，魂魄不灭。", 15) // ~555 runes > 300 runes
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:         "p_codex_long",
+			Title:      "魔帝出世录",
+			WorldRules: "神魔皆以强者为尊。",
+		},
+		chapters: []*domain.Chapter{
+			{
+				ChapterIndex: 1,
+				Title:        "魔帝苏醒",
+				CoreConflict: "封印松动",
+				Content:      "天地变色，封魔渊下万古魔帝缓缓睁开双眼，修罗魔气滔天而起。",
+			},
+		},
+		codexEntries: []*domain.CodexEntry{
+			{
+				ID:              "e_mowang",
+				Name:            "万古魔帝",
+				Category:        domain.CategoryCharacter,
+				Archetype:       "ANTAGONIST",
+				DetailsMarkdown: longDetails,
+				TrackingMode:    domain.TrackingModeAutoMention,
+			},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	horizon, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_codex_long", 2)
+	if err != nil {
+		t.Fatalf("AssembleHorizonTraced failed: %v", err)
+	}
+
+	codexText := horizon.CodexContextText
+	if !strings.Contains(codexText, "…[truncated]") {
+		t.Errorf("expected Codex DetailsMarkdown to be truncated with '…[truncated]', got:\n%s", codexText)
+	}
+
+	// Requirement 4: truncated in-place, accounts for tokens, but does NOT enter DroppedIDs
+	for _, id := range trace.DroppedIDs {
+		if id == "codex/e_mowang" {
+			t.Errorf("truncated codex details should NOT enter DroppedIDs, but found: %s", id)
+		}
+	}
+
+	foundInCompressible := false
+	for _, id := range trace.CompressibleIDs {
+		if id == "codex/e_mowang" {
+			foundInCompressible = true
+			break
+		}
+	}
+	if !foundInCompressible {
+		t.Errorf("expected codex/e_mowang to be in CompressibleIDs, got: %v", trace.CompressibleIDs)
 	}
 }
