@@ -269,6 +269,29 @@ func (s *SQLiteStore) migrate() error {
 		FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
 		FOREIGN KEY(forecast_id) REFERENCES narrative_forecasts(id) ON DELETE CASCADE
 	);
+
+	CREATE TABLE IF NOT EXISTS chapter_versions (
+		id TEXT PRIMARY KEY,
+		project_id TEXT NOT NULL,
+		chapter_index INTEGER NOT NULL,
+		source TEXT NOT NULL,
+		word_count INTEGER NOT NULL,
+		content_hash TEXT NOT NULL,
+		content TEXT NOT NULL,
+		created_at DATETIME NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS chapter_state_snapshots (
+		id TEXT PRIMARY KEY,
+		project_id TEXT NOT NULL,
+		chapter_index INTEGER NOT NULL,
+		protagonist_json TEXT NOT NULL,
+		hooks_json TEXT NOT NULL,
+		created_at DATETIME NOT NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_chapter_versions_proj_chap ON chapter_versions(project_id, chapter_index, created_at);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_chapter_state_snapshots_proj_chap ON chapter_state_snapshots(project_id, chapter_index);
 	`
 	if _, err := s.db.Exec(schema); err != nil {
 		return err
@@ -972,6 +995,10 @@ func (s *SQLiteStore) CommitChapter(ctx context.Context, projectID string, c *do
 		return nil, fmt.Errorf("insert chapter in tx: %w", err)
 	}
 
+	if err := s.insertChapterVersionTx(tx, projectID, c, "commit"); err != nil {
+		return nil, fmt.Errorf("insert chapter version in tx: %w", err)
+	}
+
 	// 3. Atomically apply StateMutation to protagonist via EntityLedger
 	var newProtagonistJSON string
 	if protagonist != nil {
@@ -1070,6 +1097,10 @@ func (s *SQLiteStore) CommitChapter(ctx context.Context, projectID string, c *do
 				}
 			}
 		}
+	}
+
+	if err := s.insertStateSnapshotTx(ctx, tx, projectID, c.ChapterIndex); err != nil {
+		return nil, fmt.Errorf("insert state snapshot in tx: %w", err)
 	}
 
 	// 5. Clear checkpoint if one was saved during drafting
@@ -1192,6 +1223,10 @@ func (s *SQLiteStore) SaveChapter(ctx context.Context, c *domain.Chapter) error 
 		c.BurstinessScore, c.LinterPassed, reviewJSON, c.CreatedAt,
 	); err != nil {
 		return err
+	}
+
+	if err := s.insertChapterVersionTx(tx, c.ProjectID, c, "edit"); err != nil {
+		return fmt.Errorf("insert chapter version in tx: %w", err)
 	}
 
 	afterBytes, _ := json.Marshal(c)
