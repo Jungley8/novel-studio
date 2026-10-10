@@ -270,6 +270,11 @@ func (o *Orchestrator) DeriveBeatsForChapterType(
 		userPrompt = strings.Replace(userPrompt, "请推演输出严格合法的 JSON。", planBlock+"请推演输出严格合法的 JSON。", 1)
 	}
 
+	if horizon != nil && horizon.ConsumedIntent != nil {
+		intentBlock := buildChapterIntentPromptBlock(horizon.ConsumedIntent)
+		userPrompt = strings.Replace(userPrompt, "请推演输出严格合法的 JSON。", intentBlock+"请推演输出严格合法的 JSON。", 1)
+	}
+
 	ctxRole := ContextWithRole(ctx, RoleReasoner)
 	resp, usage, err := SafeChatCompletionWithStreamFallback(ctxRole, o.client, reasoningModel, systemPrompt, userPrompt, 0.4, nil)
 	if err != nil {
@@ -287,6 +292,64 @@ func (o *Orchestrator) DeriveBeatsForChapterType(
 	out.Usage = usage
 
 	return &out, nil
+}
+
+func buildChapterIntentPromptBlock(intent *domain.ChapterIntent) string {
+	if intent == nil {
+		return ""
+	}
+	var lines []string
+	lines = append(lines, "【本章意图卡（作者已锁定，节拍必须服务该意图）】")
+	if strings.TrimSpace(intent.Conflict) != "" {
+		lines = append(lines, fmt.Sprintf("核心冲突：%s", strings.TrimSpace(intent.Conflict)))
+	}
+	if strings.TrimSpace(intent.POV) != "" {
+		lines = append(lines, fmt.Sprintf("POV 视角：%s", strings.TrimSpace(intent.POV)))
+	}
+	var curves []string
+	for _, c := range intent.EmotionCurve {
+		if s := strings.TrimSpace(c); s != "" {
+			curves = append(curves, s)
+		}
+	}
+	if len(curves) > 0 {
+		lines = append(lines, fmt.Sprintf("情绪曲线：%s", strings.Join(curves, " → ")))
+	}
+	if intent.TensionTarget > 0 {
+		lines = append(lines, fmt.Sprintf("张力目标：%d/10", intent.TensionTarget))
+	}
+	var plants []string
+	for _, p := range intent.HookPlants {
+		if s := strings.TrimSpace(p); s != "" {
+			plants = append(plants, s)
+		}
+	}
+	if len(plants) > 0 {
+		lines = append(lines, fmt.Sprintf("埋设伏笔：%s", strings.Join(plants, "、")))
+	}
+	var payoffs []string
+	for _, p := range intent.HookPayoffs {
+		if s := strings.TrimSpace(p); s != "" {
+			payoffs = append(payoffs, s)
+		}
+	}
+	if len(payoffs) > 0 {
+		lines = append(lines, fmt.Sprintf("回收伏笔：%s", strings.Join(payoffs, "、")))
+	}
+	if !isStateMutationEmpty(intent.ExpectedMutation) {
+		if b, err := json.Marshal(intent.ExpectedMutation); err == nil {
+			lines = append(lines, fmt.Sprintf("预期状态变迁：%s", string(b)))
+		}
+	}
+	lines = append(lines, "铁律：冲突不得偏离此意图；与正史、状态机、世界公理冲突时以正史为准，并在节拍中体现调整与过渡。")
+
+	return strings.Join(lines, "\n") + "\n\n"
+}
+
+func isStateMutationEmpty(m domain.StateMutation) bool {
+	return strings.TrimSpace(m.InventoryDelta) == "" &&
+		strings.TrimSpace(m.PowerDelta) == "" &&
+		len(m.CharacterMutations) == 0
 }
 
 func (o *Orchestrator) RenderScene(

@@ -12,11 +12,13 @@ import (
 )
 
 type mockWorkshopLLMClient struct {
-	beatsJSON           string
-	renderDraft         string
-	reviewJSON          string
-	settleJSON          string
-	capturedBeatsPrompt string
+	beatsJSON            string
+	renderDraft          string
+	reviewJSON           string
+	settleJSON           string
+	suggestConflictText  string
+	suggestConflictCalls int
+	capturedBeatsPrompt  string
 }
 
 func (m *mockWorkshopLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
@@ -25,6 +27,13 @@ func (m *mockWorkshopLLMClient) ChatCompletion(ctx context.Context, model, syste
 			return m.settleJSON, nil
 		}
 		return `{"inventory_delta":"","power_delta":"","character_mutations":[],"evidence":[]}`, nil
+	}
+	if strings.Contains(systemPrompt, "白金级剧情架构师") || strings.Contains(systemPrompt, "高潮推演专家") {
+		m.suggestConflictCalls++
+		if m.suggestConflictText != "" {
+			return m.suggestConflictText, nil
+		}
+		return "推演的黄金冲突", nil
 	}
 	if strings.Contains(systemPrompt, "总设计师") {
 		m.capturedBeatsPrompt = userPrompt
@@ -1838,6 +1847,312 @@ func TestChapterWorkshop_PlanInjection(t *testing.T) {
 		}
 		if !hasWarning {
 			t.Errorf("expected Audit.Issues to contain plan injection warning, got: %v", res.Audit.Issues)
+		}
+	})
+}
+
+func TestChapterWorkshop_ChapterIntent_Integration(t *testing.T) {
+	beatsResp := `{
+		"beats": [
+			{"phase": "蓄力压迫", "tension": 6, "action": "反派带队堵截主角洞府", "expectation_broken": "反派预料主角会求饶"},
+			{"phase": "绝地反转", "tension": 9, "action": "主角引动护山大阵反扣杀", "expectation_broken": "反派全部被镇压"}
+		],
+		"state_mutation": {
+			"inventory_delta": "+战利品储物袋",
+			"power_delta": "威名初显"
+		}
+	}`
+	reviewResp := `{
+		"verdict": "ACCEPTED",
+		"score": 90,
+		"issues": [],
+		"suggestions": "节奏明快，表现良好"
+	}`
+
+	setup := func(intent *domain.ChapterIntent) (*ChapterWorkshop, *mockWorkshopLLMClient, *mockChronicleStore) {
+		client := &mockWorkshopLLMClient{
+			beatsJSON:   beatsResp,
+			renderDraft: "夜幕低垂。三名黑衣修士逼近洞府门前。林凡指尖轻扣石壁。阵纹骤亮，雷光咆哮如龙！",
+			reviewJSON:  reviewResp,
+		}
+		orch := NewOrchestrator(client)
+		qGate := NewQualityGate(client, nil)
+		store := &mockChronicleStore{
+			project: &domain.Project{
+				ID:             "p-intent",
+				Title:          "万域封神",
+				TargetPlatform: "番茄脑洞",
+				WorldRules:     "杀生夺灵，因果必报",
+			},
+			codexEntries: []*domain.CodexEntry{
+				{
+					ID:        "codex_p-intent_pro",
+					ProjectID: "p-intent",
+					Category:  domain.CategoryCharacter,
+					Archetype: "PROTAGONIST",
+					Name:      "林凡",
+					Realm:     "练气圆满",
+					Inventory: "青玉短剑",
+				},
+			},
+			chapters: []*domain.Chapter{},
+			hooks:    []*domain.PlotHook{},
+		}
+		if intent != nil {
+			_ = store.SaveChapterIntent(context.Background(), intent)
+		}
+		chronicle := NewCanonChronicle(store)
+		ws := NewChapterWorkshop(orch, chronicle, qGate, store)
+		return ws, client, store
+	}
+
+	t.Run("case1_intent_conflict_auto_beats_prompt_and_no_suggest", func(t *testing.T) {
+		intent := &domain.ChapterIntent{
+			ProjectID:     "p-intent",
+			ChapterIndex:  1,
+			VolumeIndex:   1,
+			Conflict:      "拍卖会暗杀",
+			TensionTarget: 8,
+			Status:        domain.IntentStatusLocked,
+		}
+		ws, client, _ := setup(intent)
+
+		var events []WorkshopEvent
+		res, err := ws.ProduceChapter(context.Background(), WorkshopProduceRequest{
+			ProjectID:       "p-intent",
+			ChapterIndex:    1,
+			ReasoningModel:  "mock-r1",
+			WriterModel:     "mock-v3",
+			ReviewerModel:   "mock-reviewer",
+			WordsTarget:     2000,
+			AutoCommit:      true,
+			MaxRewriteLoops: 1,
+			OnProgress: func(ev WorkshopEvent) {
+				events = append(events, ev)
+			},
+		})
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+
+		// 1. beats prompt contains "【本章意图卡" and "拍卖会暗杀"
+		if !strings.Contains(client.capturedBeatsPrompt, "【本章意图卡") {
+			t.Errorf("expected beats prompt to contain '【本章意图卡', got: %s", client.capturedBeatsPrompt)
+		}
+		if !strings.Contains(client.capturedBeatsPrompt, "拍卖会暗杀") {
+			t.Errorf("expected beats prompt to contain '拍卖会暗杀', got: %s", client.capturedBeatsPrompt)
+		}
+
+		// 2. result.CoreConflict == "拍卖会暗杀"
+		if res.CoreConflict != "拍卖会暗杀" {
+			t.Errorf("expected res.CoreConflict '拍卖会暗杀', got: %q", res.CoreConflict)
+		}
+
+		// 3. no suggest LLM call occurred
+		if client.suggestConflictCalls != 0 {
+			t.Errorf("expected 0 suggestConflictCalls, got: %d", client.suggestConflictCalls)
+		}
+
+		// Verify event was emitted
+		foundEmit := false
+		for _, ev := range events {
+			if strings.Contains(ev.Message, "本章冲突取自意图卡：拍卖会暗杀") {
+				foundEmit = true
+				break
+			}
+		}
+		if !foundEmit {
+			t.Errorf("expected event '本章冲突取自意图卡：拍卖会暗杀' to be emitted")
+		}
+	})
+
+	t.Run("case2_priority_explicit_conflict_overrides_intent", func(t *testing.T) {
+		intent := &domain.ChapterIntent{
+			ProjectID:     "p-intent",
+			ChapterIndex:  1,
+			VolumeIndex:   1,
+			Conflict:      "拍卖会暗杀",
+			TensionTarget: 8,
+			Status:        domain.IntentStatusLocked,
+		}
+		ws, client, _ := setup(intent)
+
+		res, err := ws.ProduceChapter(context.Background(), WorkshopProduceRequest{
+			ProjectID:       "p-intent",
+			ChapterIndex:    1,
+			CoreConflict:    "手动指定冲突",
+			ReasoningModel:  "mock-r1",
+			WriterModel:     "mock-v3",
+			ReviewerModel:   "mock-reviewer",
+			WordsTarget:     2000,
+			AutoCommit:      true,
+			MaxRewriteLoops: 1,
+		})
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+
+		if res.CoreConflict != "手动指定冲突" {
+			t.Errorf("expected res.CoreConflict '手动指定冲突', got: %q", res.CoreConflict)
+		}
+		if !strings.Contains(client.capturedBeatsPrompt, "【本章必须打破的核心冲突】\n手动指定冲突") {
+			t.Errorf("expected beats prompt to contain explicit core conflict, got: %s", client.capturedBeatsPrompt)
+		}
+	})
+
+	t.Run("case3_no_intent_regression_zero_behavior_change", func(t *testing.T) {
+		ws, client, _ := setup(nil)
+
+		res, err := ws.ProduceChapter(context.Background(), WorkshopProduceRequest{
+			ProjectID:       "p-intent",
+			ChapterIndex:    1,
+			CoreConflict:    "常规剧情冲突",
+			ReasoningModel:  "mock-r1",
+			WriterModel:     "mock-v3",
+			ReviewerModel:   "mock-reviewer",
+			WordsTarget:     2000,
+			AutoCommit:      true,
+			MaxRewriteLoops: 1,
+		})
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+
+		if strings.Contains(client.capturedBeatsPrompt, "【本章意图卡") {
+			t.Errorf("expected beats prompt NOT to contain '【本章意图卡' when intent is nil, got: %s", client.capturedBeatsPrompt)
+		}
+		if res.CoreConflict != "常规剧情冲突" {
+			t.Errorf("expected res.CoreConflict '常规剧情冲突', got: %q", res.CoreConflict)
+		}
+	})
+
+	t.Run("case4_stale_intent_warning_in_audit_issues", func(t *testing.T) {
+		intent := &domain.ChapterIntent{
+			ProjectID:     "p-intent",
+			ChapterIndex:  1,
+			VolumeIndex:   1,
+			Conflict:      "旧版过时冲突",
+			TensionTarget: 6,
+			Status:        domain.IntentStatusStale,
+		}
+		ws, _, _ := setup(intent)
+
+		res, err := ws.ProduceChapter(context.Background(), WorkshopProduceRequest{
+			ProjectID:       "p-intent",
+			ChapterIndex:    1,
+			ReasoningModel:  "mock-r1",
+			WriterModel:     "mock-v3",
+			ReviewerModel:   "mock-reviewer",
+			WordsTarget:     2000,
+			AutoCommit:      true,
+			MaxRewriteLoops: 1,
+		})
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+
+		if res.Audit == nil {
+			t.Fatalf("expected non-nil Audit report")
+		}
+		hasWarning := false
+		for _, iss := range res.Audit.Issues {
+			if strings.Contains(iss, "【意图卡警告】本章意图卡处于 STALE（上游卷纲已变更），建议重推意图卡后再生产") {
+				hasWarning = true
+				break
+			}
+		}
+		if !hasWarning {
+			t.Errorf("expected Audit.Issues to contain stale intent warning, got: %v", res.Audit.Issues)
+		}
+	})
+}
+
+func TestBuildChapterIntentPromptBlock(t *testing.T) {
+	t.Run("case5_full_fields_and_emotion_tension", func(t *testing.T) {
+		intent := &domain.ChapterIntent{
+			ProjectID:     "p-full",
+			ChapterIndex:  5,
+			VolumeIndex:   1,
+			Conflict:      "拍卖会暗杀与夺宝",
+			POV:           "林凡",
+			EmotionCurve:  []string{"压抑", "震惊", "亢奋"},
+			TensionTarget: 8,
+			HookPlants:    []string{"黑衣人遗留令牌", "拍卖行暗印"},
+			HookPayoffs:   []string{"此前获得的残破阵盘"},
+			ExpectedMutation: domain.StateMutation{
+				InventoryDelta: "获得残破阵盘，消耗灵石百枚",
+				PowerDelta:     "神念突破",
+				CharacterMutations: []domain.CharacterMutation{
+					{
+						Name:        "赵执事",
+						StatusDelta: "重伤濒死",
+					},
+				},
+			},
+			Status: domain.IntentStatusLocked,
+		}
+
+		block := buildChapterIntentPromptBlock(intent)
+
+		expectedSubstrings := []string{
+			"【本章意图卡（作者已锁定，节拍必须服务该意图）】",
+			"核心冲突：拍卖会暗杀与夺宝",
+			"POV 视角：林凡",
+			"情绪曲线：压抑 → 震惊 → 亢奋",
+			"张力目标：8/10",
+			"埋设伏笔：黑衣人遗留令牌、拍卖行暗印",
+			"回收伏笔：此前获得的残破阵盘",
+			"预期状态变迁：",
+			`"inventory_delta":"获得残破阵盘，消耗灵石百枚"`,
+			`"power_delta":"神念突破"`,
+			`"name":"赵执事"`,
+			"铁律：冲突不得偏离此意图；与正史、状态机、世界公理冲突时以正史为准，并在节拍中体现调整与过渡。",
+		}
+
+		for _, sub := range expectedSubstrings {
+			if !strings.Contains(block, sub) {
+				t.Errorf("expected block to contain %q, but got:\n%s", sub, block)
+			}
+		}
+	})
+
+	t.Run("case5_omitted_empty_fields", func(t *testing.T) {
+		intent := &domain.ChapterIntent{
+			ProjectID:    "p-minimal",
+			ChapterIndex: 2,
+			Conflict:     "极简冲突",
+		}
+
+		block := buildChapterIntentPromptBlock(intent)
+
+		if !strings.Contains(block, "【本章意图卡（作者已锁定，节拍必须服务该意图）】") {
+			t.Errorf("expected block to contain title")
+		}
+		if !strings.Contains(block, "核心冲突：极简冲突") {
+			t.Errorf("expected block to contain conflict")
+		}
+		if !strings.Contains(block, "铁律：冲突不得偏离此意图；与正史、状态机、世界公理冲突时以正史为准，并在节拍中体现调整与过渡。") {
+			t.Errorf("expected block to contain iron law")
+		}
+
+		omittedPrefixes := []string{
+			"POV 视角：",
+			"情绪曲线：",
+			"张力目标：",
+			"埋设伏笔：",
+			"回收伏笔：",
+			"预期状态变迁：",
+		}
+		for _, prefix := range omittedPrefixes {
+			if strings.Contains(block, prefix) {
+				t.Errorf("expected block NOT to contain %q when field is empty, but got:\n%s", prefix, block)
+			}
+		}
+	})
+
+	t.Run("nil_intent_returns_empty", func(t *testing.T) {
+		if got := buildChapterIntentPromptBlock(nil); got != "" {
+			t.Errorf("expected empty string for nil intent, got %q", got)
 		}
 	})
 }

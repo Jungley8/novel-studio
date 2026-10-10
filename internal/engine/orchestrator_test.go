@@ -635,3 +635,79 @@ func TestOrchestrator_DeriveBeatsForChapterType_PlanInjection(t *testing.T) {
 		t.Errorf("expected prompt NOT to contain candidate plan header when horizon is nil, got: %s", mockNil.capturedUserPrompt)
 	}
 }
+
+func TestOrchestrator_DeriveBeats_ChapterIntent(t *testing.T) {
+	mockJSON := `{
+		"beats": [
+			{"phase": "蓄力压迫", "tension": 5, "action": "反派拦路叫嚣", "expectation_broken": "主角面色平静", "reader_emotion": "紧张压抑", "info_gap": "反派不知主角已突破"}
+		],
+		"state_mutation": {}
+	}`
+
+	// 1. Non-empty ConsumedIntent: prompt should contain intent header and fields
+	mock := &mockLLMClient{response: mockJSON}
+	orch := engine.NewOrchestrator(mock)
+	horizon := &engine.CanonHorizon{
+		TargetChapter: 2,
+		ConsumedIntent: &domain.ChapterIntent{
+			Conflict:      "暗夜伏击",
+			POV:           "主角",
+			EmotionCurve:  []string{"压抑", "反转"},
+			TensionTarget: 9,
+		},
+	}
+	out, err := orch.DeriveBeatsForChapterType(context.Background(), "mock-model", horizon, "暗夜伏击", domain.ChapterTypeEscalation)
+	if err != nil {
+		t.Fatalf("DeriveBeatsForChapterType failed: %v", err)
+	}
+	if len(out.Beats) != 1 {
+		t.Errorf("expected 1 beat, got %d", len(out.Beats))
+	}
+	if !strings.Contains(mock.capturedUserPrompt, "【本章意图卡（作者已锁定，节拍必须服务该意图）】") {
+		t.Errorf("expected prompt to contain intent header, got: %s", mock.capturedUserPrompt)
+	}
+	if !strings.Contains(mock.capturedUserPrompt, "核心冲突：暗夜伏击") {
+		t.Errorf("expected prompt to contain conflict, got: %s", mock.capturedUserPrompt)
+	}
+	if !strings.Contains(mock.capturedUserPrompt, "张力目标：9/10") {
+		t.Errorf("expected prompt to contain tension target, got: %s", mock.capturedUserPrompt)
+	}
+
+	// 2. Both SelectedPlanText and ConsumedIntent: plan block precedes intent block
+	mockBoth := &mockLLMClient{response: mockJSON}
+	orchBoth := engine.NewOrchestrator(mockBoth)
+	horizonBoth := &engine.CanonHorizon{
+		TargetChapter:    2,
+		SelectedPlanText: "暗中联络丹堂长老",
+		ConsumedIntent: &domain.ChapterIntent{
+			Conflict: "拍卖会暗杀",
+		},
+	}
+	_, err = orchBoth.DeriveBeatsForChapterType(context.Background(), "mock-model", horizonBoth, "拍卖会暗杀", domain.ChapterTypeEscalation)
+	if err != nil {
+		t.Fatalf("DeriveBeatsForChapterType failed: %v", err)
+	}
+	planIdx := strings.Index(mockBoth.capturedUserPrompt, "【作者选定的发展路线（剧情树候选计划，非正史）】")
+	intentIdx := strings.Index(mockBoth.capturedUserPrompt, "【本章意图卡（作者已锁定，节拍必须服务该意图）】")
+	jsonIdx := strings.Index(mockBoth.capturedUserPrompt, "请推演输出严格合法的 JSON。")
+	if planIdx == -1 || intentIdx == -1 || jsonIdx == -1 {
+		t.Fatalf("expected all blocks present: planIdx=%d, intentIdx=%d, jsonIdx=%d", planIdx, intentIdx, jsonIdx)
+	}
+	if !(planIdx < intentIdx && intentIdx < jsonIdx) {
+		t.Errorf("expected plan block < intent block < json instruction, got plan=%d, intent=%d, json=%d", planIdx, intentIdx, jsonIdx)
+	}
+
+	// 3. Nil ConsumedIntent: prompt should NOT contain intent header
+	mockNil := &mockLLMClient{response: mockJSON}
+	orchNil := engine.NewOrchestrator(mockNil)
+	horizonNil := &engine.CanonHorizon{
+		TargetChapter: 2,
+	}
+	_, err = orchNil.DeriveBeatsForChapterType(context.Background(), "mock-model", horizonNil, "常规冲突", domain.ChapterTypeEscalation)
+	if err != nil {
+		t.Fatalf("DeriveBeatsForChapterType failed: %v", err)
+	}
+	if strings.Contains(mockNil.capturedUserPrompt, "【本章意图卡") {
+		t.Errorf("expected prompt NOT to contain intent header when ConsumedIntent is nil, got: %s", mockNil.capturedUserPrompt)
+	}
+}

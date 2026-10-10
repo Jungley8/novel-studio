@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/domain"
@@ -19,6 +21,7 @@ type mockChronicleStore struct {
 	codexEntries   []*domain.CodexEntry
 	codexRelations []domain.EntityRelation
 	retros         map[int]*domain.VolumeRetrospective
+	intents        []*domain.ChapterIntent
 }
 
 func (m *mockChronicleStore) GetProject(ctx context.Context, id string) (*domain.Project, error) {
@@ -72,22 +75,66 @@ func (m *mockChronicleStore) ListChapters(ctx context.Context, projectID string)
 	return m.chapters, nil
 }
 
-// Chapter Intents (章节意图卡) — 接口扩容 stub；engine 侧尚不消费意图卡，
-// 需要真实行为时由意图驱动任务的 agent 扩充（保持与 store.Store 接口同步）。
+// Chapter Intents (章节意图卡) — 内存实现，与 sqlite_store 语义对齐
 func (m *mockChronicleStore) SaveChapterIntent(ctx context.Context, intent *domain.ChapterIntent) error {
+	if intent == nil {
+		return errors.New("chapter intent cannot be nil")
+	}
+	intent.UpdatedAt = time.Now()
+	for i, it := range m.intents {
+		if (intent.ProjectID == "" || it.ProjectID == "" || it.ProjectID == intent.ProjectID) && it.ChapterIndex == intent.ChapterIndex {
+			m.intents[i] = intent
+			return nil
+		}
+	}
+	m.intents = append(m.intents, intent)
 	return nil
 }
+
 func (m *mockChronicleStore) GetChapterIntent(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterIntent, error) {
+	for _, it := range m.intents {
+		if (projectID == "" || it.ProjectID == "" || it.ProjectID == projectID) && it.ChapterIndex == chapterIndex {
+			return it, nil
+		}
+	}
 	return nil, nil
 }
+
 func (m *mockChronicleStore) ListChapterIntents(ctx context.Context, projectID string, volumeIndex int) ([]*domain.ChapterIntent, error) {
-	return nil, nil
+	var list []*domain.ChapterIntent
+	for _, it := range m.intents {
+		if (projectID == "" || it.ProjectID == "" || it.ProjectID == projectID) && (volumeIndex <= 0 || it.VolumeIndex == volumeIndex) {
+			list = append(list, it)
+		}
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].ChapterIndex < list[j].ChapterIndex
+	})
+	return list, nil
 }
+
 func (m *mockChronicleStore) DeleteChapterIntent(ctx context.Context, projectID string, chapterIndex int) error {
+	for i, it := range m.intents {
+		if (projectID == "" || it.ProjectID == "" || it.ProjectID == projectID) && it.ChapterIndex == chapterIndex {
+			m.intents = append(m.intents[:i], m.intents[i+1:]...)
+			break
+		}
+	}
 	return nil
 }
+
 func (m *mockChronicleStore) MarkIntentsStale(ctx context.Context, projectID string, volumeIndex int) (int64, error) {
-	return 0, nil
+	var changed int64
+	for _, it := range m.intents {
+		if (projectID == "" || it.ProjectID == "" || it.ProjectID == projectID) && it.VolumeIndex == volumeIndex {
+			if it.Status == domain.IntentStatusLocked {
+				it.Status = domain.IntentStatusStale
+				it.UpdatedAt = time.Now()
+				changed++
+			}
+		}
+	}
+	return changed, nil
 }
 
 func (m *mockChronicleStore) SavePlotHook(ctx context.Context, hook *domain.PlotHook) error {
