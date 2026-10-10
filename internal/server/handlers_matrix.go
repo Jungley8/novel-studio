@@ -624,9 +624,13 @@ func (s *Server) handleProjectMatrix(w http.ResponseWriter, r *http.Request, pro
 			}
 		}
 
-		intentID := fmt.Sprintf("intent_%s_%d", projectID, req.ChapterIndex)
-		if intent != nil && strings.TrimSpace(intent.ID) != "" {
-			intentID = intent.ID
+		intentID := ""
+		if intent != nil {
+			if strings.TrimSpace(intent.ID) != "" {
+				intentID = intent.ID
+			} else {
+				intentID = fmt.Sprintf("intent_%s_%d", projectID, req.ChapterIndex)
+			}
 		}
 
 		for i := range scenes {

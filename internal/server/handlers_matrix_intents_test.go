@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -206,7 +205,7 @@ func TestMatrixAIGenerate_WithIntent(t *testing.T) {
 	}
 }
 
-func TestMatrixAIGenerate_WithoutIntent_FallbackID(t *testing.T) {
+func TestMatrixAIGenerate_WithoutIntent_NoIntentID(t *testing.T) {
 	mockScenesJSON := `[
 		{
 			"scene_index": 1,
@@ -255,9 +254,9 @@ func TestMatrixAIGenerate_WithoutIntent_FallbackID(t *testing.T) {
 	if len(scenes) != 1 {
 		t.Fatalf("expected 1 scene, got %d", len(scenes))
 	}
-	expectedFallbackID := fmt.Sprintf("intent_%s_5", projectID)
-	if scenes[0].ChapterIntentID != expectedFallbackID {
-		t.Errorf("expected fallback ChapterIntentID %q, got %q", expectedFallbackID, scenes[0].ChapterIntentID)
+	// 无意图卡时不得打上伪 ChapterIntentID，否则前端「意图联动」徽章会误亮
+	if scenes[0].ChapterIntentID != "" {
+		t.Errorf("expected empty ChapterIntentID when no intent exists, got %q", scenes[0].ChapterIntentID)
 	}
 }
 
