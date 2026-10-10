@@ -411,3 +411,146 @@ func TestVolumeBatch_ChapterSpanOver200_Error(t *testing.T) {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
+
+// 6. 第 2 章技术阻断（TechnicalBlocked）触发 NeedsHuman 停线 → Stopped=true、StopReason=HALTED、StoppedAtChapter=2、第 3 章未被生产
+type mockVolBatchTechBlockLLMClient struct {
+	mu               sync.Mutex
+	techBlockChapter int
+	currentChapter   int
+}
+
+func (m *mockVolBatchTechBlockLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	m.mu.Lock()
+	for i := 1; i <= 200; i++ {
+		if strings.Contains(userPrompt, fmt.Sprintf("第 %d 章", i)) || strings.Contains(systemPrompt, fmt.Sprintf("第 %d 章", i)) {
+			m.currentChapter = i
+			break
+		}
+	}
+	cur := m.currentChapter
+	m.mu.Unlock()
+
+	if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
+		if m.techBlockChapter > 0 && cur == m.techBlockChapter {
+			return "{unparseable-json-for-settler", nil
+		}
+		return `{"inventory_delta":"","power_delta":"","character_mutations":[],"evidence":[]}`, nil
+	}
+	if strings.Contains(systemPrompt, "分庭总审编") || strings.Contains(systemPrompt, "总审编") || strings.Contains(systemPrompt, "总编审") || strings.Contains(systemPrompt, "QualityGate") {
+		return `{
+			"verdict": "ACCEPTED",
+			"score": 90,
+			"issues": [],
+			"suggestions": "通过"
+		}`, nil
+	}
+	if strings.Contains(systemPrompt, "总设计师") || strings.Contains(systemPrompt, "剧情节拍") || strings.Contains(systemPrompt, "Beats") {
+		return `{
+			"beats": [
+				{"phase": "蓄力", "tension": 6, "action": "对峙", "expectation_broken": "反派失算"},
+				{"phase": "破局", "tension": 9, "action": "逆转", "expectation_broken": "全面击溃"}
+			],
+			"state_mutation": {"inventory_delta": "+战利品", "power_delta": "突破"}
+		}`, nil
+	}
+
+	return "夜色渐深，冷风呼啸。林凡拔出青玉长剑，一剑断去黑衣人退路。", nil
+}
+
+func (m *mockVolBatchTechBlockLLMClient) ChatCompletionWithUsage(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, TokenUsage, error) {
+	txt, err := m.ChatCompletion(ctx, model, systemPrompt, userPrompt, temperature)
+	return txt, TokenUsage{PromptTokens: 80, CompletionTokens: 160, TotalTokens: 240}, err
+}
+
+func (m *mockVolBatchTechBlockLLMClient) ChatCompletionStream(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
+	txt, err := m.ChatCompletion(ctx, model, systemPrompt, userPrompt, temperature)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan StreamChunk, 2)
+	ch <- StreamChunk{Delta: txt}
+	ch <- StreamChunk{Done: true, Usage: &TokenUsage{PromptTokens: 80, CompletionTokens: 160, TotalTokens: 240}}
+	close(ch)
+	return ch, nil
+}
+
+func TestVolumeBatch_ChapterTwoTechnicalBlocked_Halts(t *testing.T) {
+	proj := &domain.Project{
+		ID:             "p-batch-tech-halt",
+		Title:          "技术阻断批产停线",
+		TargetPlatform: "番茄脑洞",
+		Framework: &domain.ProjectFramework{
+			VolumeArcs: []domain.VolumeArc{
+				{
+					VolumeIndex:  1,
+					Title:        "第一卷 初入仙门",
+					StartChapter: 1,
+					EndChapter:   3,
+				},
+			},
+		},
+	}
+	mockStore := newMockVolBatchStore(proj)
+	client := &mockVolBatchTechBlockLLMClient{
+		techBlockChapter: 2, // Chapter 2 will trigger settler technical blockage
+	}
+	workshop := setupTestVolumeWorkshop(client, mockStore)
+	batch := NewVolumeBatch(workshop, mockStore)
+
+	var events []VolumeEvent
+	req := VolumeProduceRequest{
+		ProjectID:       "p-batch-tech-halt",
+		VolumeIndex:     1,
+		WordsTarget:     2000,
+		MaxRewriteLoops: 1,
+		OnProgress: func(ev VolumeEvent) {
+			events = append(events, ev)
+		},
+	}
+
+	res, err := batch.ProduceVolume(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceVolume should not return error on HALTED, got: %v", err)
+	}
+
+	if !res.Stopped {
+		t.Fatalf("expected Stopped == true on TechnicalBlocked NeedsHuman, got false")
+	}
+	if res.StopReason != "HALTED" {
+		t.Errorf("expected StopReason == HALTED, got %s", res.StopReason)
+	}
+	if res.StoppedAtChapter != 2 {
+		t.Errorf("expected StoppedAtChapter == 2, got %d", res.StoppedAtChapter)
+	}
+
+	// Result should only contain 2 chapters processed
+	if len(res.Chapters) != 2 {
+		t.Fatalf("expected 2 chapters in result (ch1 and ch2), got %d", len(res.Chapters))
+	}
+	if !res.Chapters[0].Committed {
+		t.Errorf("expected chapter 1 to be committed")
+	}
+	if res.Chapters[1].Committed {
+		t.Errorf("expected chapter 2 to NOT be committed")
+	}
+
+	// Store should only have 1 chapter committed (chapter 1)
+	if len(mockStore.chapters) != 1 {
+		t.Errorf("expected only 1 chapter committed in store, got %d", len(mockStore.chapters))
+	}
+	if len(mockStore.chapters) > 0 && mockStore.chapters[0].ChapterIndex != 1 {
+		t.Errorf("expected stored chapter to be chapter 1, got %d", mockStore.chapters[0].ChapterIndex)
+	}
+
+	// Verify VOLUME_STOPPED event was emitted for chapter 2
+	hasStoppedEvent := false
+	for _, ev := range events {
+		if ev.Phase == "VOLUME_STOPPED" && ev.ChapterIndex == 2 && ev.NeedsHuman {
+			hasStoppedEvent = true
+			break
+		}
+	}
+	if !hasStoppedEvent {
+		t.Errorf("expected VOLUME_STOPPED event with ChapterIndex 2 and NeedsHuman=true")
+	}
+}
