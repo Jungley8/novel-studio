@@ -51,6 +51,7 @@ type CanonHorizon struct {
 	NarrativeTone       string                  `json:"narrative_tone,omitempty"`
 	StyleVaultAnchor    string                  `json:"style_vault_anchor,omitempty"`
 	SelectedPlanText    string                  `json:"selected_plan_text,omitempty"`
+	ConsumedIntent      *domain.ChapterIntent   `json:"consumed_intent,omitempty"`
 	EchoWarnings        []string                `json:"echo_warnings,omitempty"`
 }
 

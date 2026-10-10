@@ -175,6 +175,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		rewriteLoops      int
 		rhythmWarning     string
 		planInjectWarning string
+		intentWarning     string
 	)
 
 	if req.ResumeCheckpoint {
@@ -267,22 +268,41 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		}
 	}
 
+	if intent, iErr := w.store.GetChapterIntent(ctx, req.ProjectID, req.ChapterIndex); iErr == nil && intent != nil {
+		horizon.ConsumedIntent = intent
+		emit(WorkshopEvent{Phase: PhaseHorizon, Message: fmt.Sprintf("已装载第 %d 章意图卡（状态 %s）", req.ChapterIndex, intent.Status)})
+		if intent.Status == domain.IntentStatusStale {
+			intentWarning = "【意图卡警告】本章意图卡处于 STALE（上游卷纲已变更），建议重推意图卡后再生产"
+		}
+	}
+
 	emit(WorkshopEvent{Phase: PhaseHorizon, Message: "正史视界组装完成 (3章密封正史与开放伏笔已就绪)"})
 
 	// 1.5 Establish High-Tension Chapter Conflict
-	if strings.TrimSpace(req.CoreConflict) == "" || (strings.HasPrefix(strings.TrimSpace(req.CoreConflict), "第 ") && strings.Contains(req.CoreConflict, "剧情冲突与关键转折")) {
-		emit(WorkshopEvent{Phase: PhaseHorizon, Message: "正在结合前史脉络与分卷大纲，智能推演本章黄金剧情冲突..."})
-		suggested, sUsage, sErr := w.orch.SuggestChapterConflict(ctx, req.ReasoningModel, horizon)
-		if sErr == nil && strings.TrimSpace(suggested) != "" {
-			req.CoreConflict = strings.TrimSpace(suggested)
-			addUsage(sUsage)
+	trimmedConflict := strings.TrimSpace(req.CoreConflict)
+	isTemplateConflict := trimmedConflict == "" || (strings.HasPrefix(trimmedConflict, "第 ") && strings.Contains(trimmedConflict, "剧情冲突与关键转折"))
+	if isTemplateConflict {
+		if horizon.ConsumedIntent != nil && strings.TrimSpace(horizon.ConsumedIntent.Conflict) != "" {
+			req.CoreConflict = strings.TrimSpace(horizon.ConsumedIntent.Conflict)
 			emit(WorkshopEvent{
 				Phase:        PhaseHorizon,
-				Message:      fmt.Sprintf("本章剧情冲突已确立：%s", req.CoreConflict),
+				Message:      fmt.Sprintf("本章冲突取自意图卡：%s", req.CoreConflict),
 				CoreConflict: req.CoreConflict,
 			})
-		} else if strings.TrimSpace(req.CoreConflict) == "" {
-			req.CoreConflict = fmt.Sprintf("第 %d 章核心矛盾爆发与命运转折", req.ChapterIndex)
+		} else {
+			emit(WorkshopEvent{Phase: PhaseHorizon, Message: "正在结合前史脉络与分卷大纲，智能推演本章黄金剧情冲突..."})
+			suggested, sUsage, sErr := w.orch.SuggestChapterConflict(ctx, req.ReasoningModel, horizon)
+			if sErr == nil && strings.TrimSpace(suggested) != "" {
+				req.CoreConflict = strings.TrimSpace(suggested)
+				addUsage(sUsage)
+				emit(WorkshopEvent{
+					Phase:        PhaseHorizon,
+					Message:      fmt.Sprintf("本章剧情冲突已确立：%s", req.CoreConflict),
+					CoreConflict: req.CoreConflict,
+				})
+			} else if strings.TrimSpace(req.CoreConflict) == "" {
+				req.CoreConflict = fmt.Sprintf("第 %d 章核心矛盾爆发与命运转折", req.ChapterIndex)
+			}
 		}
 	}
 
@@ -568,6 +588,9 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	if auditReport != nil && planInjectWarning != "" {
 		auditReport.Issues = append(auditReport.Issues, planInjectWarning)
 	}
+	if auditReport != nil && intentWarning != "" {
+		auditReport.Issues = append(auditReport.Issues, intentWarning)
+	}
 
 	// 5. Targeted Rewrite Loop if revision needed
 	currentDraft := draftText
@@ -738,6 +761,18 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		}
 		if !hasWarn {
 			auditReport.Issues = append(auditReport.Issues, planInjectWarning)
+		}
+	}
+	if auditReport != nil && intentWarning != "" {
+		hasWarn := false
+		for _, iss := range auditReport.Issues {
+			if iss == intentWarning {
+				hasWarn = true
+				break
+			}
+		}
+		if !hasWarn {
+			auditReport.Issues = append(auditReport.Issues, intentWarning)
 		}
 	}
 
