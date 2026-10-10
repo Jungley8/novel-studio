@@ -214,4 +214,11 @@ export const api = {
   // Studio
   listStudioLibrary: () => apiFetch('/api/studio/library'),
   studioChat: (data) => apiFetch('/api/studio/chat', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Forecast (剧情树)
+  listForecasts: (projectId) => apiFetch(`/api/projects/${projectId}/forecast`),
+  createForecast: (projectId, data) => apiFetch(`/api/projects/${projectId}/forecast`, { method: 'POST', body: JSON.stringify(data) }),
+  getForecast: (projectId, fid) => apiFetch(`/api/projects/${projectId}/forecast/${fid}`),
+  selectForecast: (projectId, fid, data) => apiFetch(`/api/projects/${projectId}/forecast/${fid}/select`, { method: 'POST', body: JSON.stringify(typeof data === 'string' ? { branch_id: data } : data) }),
+  getActivePlan: (projectId) => apiFetch(`/api/projects/${projectId}/forecast/active-plan`),
 };
