@@ -49,6 +49,8 @@ type CanonHorizon struct {
 	CodexRelations      []domain.EntityRelation `json:"codex_relations,omitempty"`
 	CodexContextText    string                  `json:"codex_context_text,omitempty"`
 	NarrativeTone       string                  `json:"narrative_tone,omitempty"`
+	StyleVaultAnchor    string                  `json:"style_vault_anchor,omitempty"`
+	EchoWarnings        []string                `json:"echo_warnings,omitempty"`
 }
 
 // CanonChronicle acts as the deep context assembler and horizon keeper.
@@ -235,6 +237,7 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 		}
 	}
 
+	// TailAnchor 已降级为衔接语气锚（辅锚），主锚为 StyleVaultAnchor（全书恒定文风契约）。
 	var tailAnchor string
 	if len(recent) > 0 {
 		lastCh := recent[len(recent)-1]
@@ -560,6 +563,44 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 		}
 	}
 
+	var styleVaultAnchor string
+	if vs, ok := c.store.(StyleVaultStore); ok {
+		vault, err := EnsureSeededVault(ctx, vs, projectID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("ensure seeded style vault failed: %w", err)
+		}
+		if vault != nil {
+			styleVaultAnchor = BuildStyleAnchor(vault)
+		}
+	}
+
+	var echoRecentTexts []string
+	if len(older) > 0 {
+		echoSlice := older
+		if len(echoSlice) > 20 {
+			echoSlice = echoSlice[len(echoSlice)-20:]
+		}
+		for _, ch := range echoSlice {
+			echoRecentTexts = append(echoRecentTexts, ch.Content)
+		}
+	}
+
+	var draftText string
+	for _, ch := range chapters {
+		if ch.ChapterIndex == targetChapter {
+			draftText = ch.Content
+			break
+		}
+	}
+	if draftText == "" {
+		if cp, cpErr := c.store.GetCheckpoint(ctx, projectID, targetChapter); cpErr == nil && cp != nil {
+			draftText = cp.DraftText
+		}
+	}
+
+	echoWarnings := DetectEchoPhrases(echoRecentTexts, draftText)
+	// TODO(FOLLOWUP-echo-feed): EchoWarnings will be piped to review court / quality gate issues in a follow-up task.
+
 	return &CanonHorizon{
 		Project:             project,
 		TargetChapter:       targetChapter,
@@ -577,6 +618,8 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 		ActiveCodexEntries:  activeCodex,
 		CodexRelations:      codexRels,
 		CodexContextText:    strings.TrimSpace(codexSb.String()),
+		StyleVaultAnchor:    styleVaultAnchor,
+		EchoWarnings:        echoWarnings,
 	}, trace, nil
 }
 
