@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"errors"
+	"sort"
 	"strings"
 	"testing"
 
@@ -970,5 +972,456 @@ func TestChapterWorkshop_RhythmIntegration(t *testing.T) {
 	}
 	if len(cp.Beats) != 3 {
 		t.Errorf("expected checkpoint beats to match final beats count (3), got %d", len(cp.Beats))
+	}
+}
+
+type mockSummaryWorkshopStore struct {
+	*mockChronicleStore
+	cp               *domain.ChapterCheckpoint
+	chapterSummaries map[int]*domain.ChapterSummary
+	volumeRetros     map[int]*domain.VolumeRetrospective
+	saveSummaryErr   error
+	saveRetroErr     error
+	listSummaryErr   error
+}
+
+func newMockSummaryWorkshopStore(proj *domain.Project) *mockSummaryWorkshopStore {
+	return &mockSummaryWorkshopStore{
+		mockChronicleStore: &mockChronicleStore{
+			project:      proj,
+			chapters:     []*domain.Chapter{},
+			hooks:        []*domain.PlotHook{},
+			codexEntries: []*domain.CodexEntry{},
+		},
+		chapterSummaries: make(map[int]*domain.ChapterSummary),
+		volumeRetros:     make(map[int]*domain.VolumeRetrospective),
+	}
+}
+
+func (m *mockSummaryWorkshopStore) SaveCheckpoint(ctx context.Context, checkpoint *domain.ChapterCheckpoint) error {
+	m.cp = checkpoint
+	return nil
+}
+
+func (m *mockSummaryWorkshopStore) GetCheckpoint(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, error) {
+	return m.cp, nil
+}
+
+func (m *mockSummaryWorkshopStore) ClearCheckpoint(ctx context.Context, projectID string, chapterIndex int) error {
+	m.cp = nil
+	return nil
+}
+
+func (m *mockSummaryWorkshopStore) SaveChapterSummary(ctx context.Context, cs *domain.ChapterSummary) error {
+	if m.saveSummaryErr != nil {
+		return m.saveSummaryErr
+	}
+	cp := *cs
+	m.chapterSummaries[cs.ChapterIndex] = &cp
+	return nil
+}
+
+func (m *mockSummaryWorkshopStore) GetChapterSummary(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterSummary, error) {
+	if s, ok := m.chapterSummaries[chapterIndex]; ok {
+		cp := *s
+		return &cp, nil
+	}
+	return nil, nil
+}
+
+func (m *mockSummaryWorkshopStore) ListChapterSummaries(ctx context.Context, projectID string, from, to int) ([]*domain.ChapterSummary, error) {
+	if m.listSummaryErr != nil {
+		return nil, m.listSummaryErr
+	}
+	var res []*domain.ChapterSummary
+	for idx, s := range m.chapterSummaries {
+		if (from <= 0 || idx >= from) && (to <= 0 || idx <= to) {
+			cp := *s
+			res = append(res, &cp)
+		}
+	}
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].ChapterIndex < res[j].ChapterIndex
+	})
+	return res, nil
+}
+
+func (m *mockSummaryWorkshopStore) SaveVolumeRetrospective(ctx context.Context, retro *domain.VolumeRetrospective) error {
+	if m.saveRetroErr != nil {
+		return m.saveRetroErr
+	}
+	cp := *retro
+	m.volumeRetros[retro.VolumeIndex] = &cp
+	return nil
+}
+
+func (m *mockSummaryWorkshopStore) GetVolumeRetrospective(ctx context.Context, projectID string, volumeIndex int) (*domain.VolumeRetrospective, error) {
+	if r, ok := m.volumeRetros[volumeIndex]; ok {
+		cp := *r
+		return &cp, nil
+	}
+	return nil, nil
+}
+
+type fakeSummaryWorkshopLLMClient struct {
+	beatsJSON       string
+	renderDraft     string
+	reviewJSON      string
+	settleJSON      string
+	summaryJSON     string
+	summaryErr      error
+	volumeRetroJSON string
+	volumeRetroErr  error
+	summaryCalled   bool
+	retroCalled     bool
+}
+
+func (f *fakeSummaryWorkshopLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	if strings.Contains(systemPrompt, "长期记忆") || strings.Contains(systemPrompt, "章节剧情摘要") {
+		f.summaryCalled = true
+		if f.summaryErr != nil {
+			return "", f.summaryErr
+		}
+		if f.summaryJSON != "" {
+			return f.summaryJSON, nil
+		}
+		return "```json\n" + `{
+			"characters": "林凡",
+			"conflict": "迎击强敌夜袭",
+			"result": "引动护山大阵反杀敌寇",
+			"suspense": "幕后黑手尚未现身",
+			"summary": "林凡在洞府前遭遇反派夜袭，果断引动护山大阵反杀镇压敌手，缴获战利品储物袋，然幕后黑手尚未现身。"
+		}` + "\n```", nil
+	}
+	if strings.Contains(systemPrompt, "分卷剧情复盘") || strings.Contains(systemPrompt, "剧情回顾") || strings.Contains(systemPrompt, "宏观剧情架构师") {
+		f.retroCalled = true
+		if f.volumeRetroErr != nil {
+			return "", f.volumeRetroErr
+		}
+		if f.volumeRetroJSON != "" {
+			return f.volumeRetroJSON, nil
+		}
+		return "```json\n" + `{
+			"happened": "林凡初入仙门连破死局，于宗门大比夺魁并反杀执法堂叛逆",
+			"remaining": "成功晋升内门并获古经认可，但得罪了宗门隐世太上长老",
+			"unresolved": "太上长老暗中勾结魔道，乱星海魔灾爆发的预兆已然浮现",
+			"text": "【发生】林凡初入仙门连破死局，于宗门大比夺魁并反杀执法堂叛逆\\n【留下】成功晋升内门并获古经认可，但得罪了宗门隐世太上长老\\n【未回收】太上长老暗中勾结魔道，乱星海魔灾爆发的预兆已然浮现"
+		}` + "\n```", nil
+	}
+	if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
+		if f.settleJSON != "" {
+			return f.settleJSON, nil
+		}
+		return `{"inventory_delta":"","power_delta":"","character_mutations":[],"evidence":[]}`, nil
+	}
+	if strings.Contains(systemPrompt, "总审编") || strings.Contains(systemPrompt, "总编审") || strings.Contains(systemPrompt, "QualityGate") {
+		if f.reviewJSON != "" {
+			return f.reviewJSON, nil
+		}
+		return "```json\n" + `{
+			"verdict": "ACCEPTED",
+			"score": 92,
+			"issues": [],
+			"suggestions": "合格"
+		}` + "\n```", nil
+	}
+	if strings.Contains(systemPrompt, "总设计师") || strings.Contains(systemPrompt, "剧情节拍") || strings.Contains(systemPrompt, "Beats") {
+		if f.beatsJSON != "" {
+			return f.beatsJSON, nil
+		}
+		return `{
+			"beats": [
+				{"phase": "蓄力压迫", "tension": 6, "action": "反派带队堵截主角洞府", "expectation_broken": "反派预料主角会求饶"},
+				{"phase": "绝地反转", "tension": 9, "action": "主角引动护山大阵反扣杀", "expectation_broken": "反派全部被镇压"}
+			],
+			"state_mutation": {
+				"inventory_delta": "",
+				"power_delta": ""
+			}
+		}`, nil
+	}
+	if f.renderDraft != "" {
+		return f.renderDraft, nil
+	}
+	return "夜幕低垂。三名黑衣修士逼近洞府门前。林凡指尖轻扣石壁。阵纹骤亮，雷光咆哮如龙！缴获战利品。", nil
+}
+
+func (f *fakeSummaryWorkshopLLMClient) ChatCompletionWithUsage(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, TokenUsage, error) {
+	txt, err := f.ChatCompletion(ctx, model, systemPrompt, userPrompt, temperature)
+	return txt, TokenUsage{PromptTokens: 60, CompletionTokens: 80, TotalTokens: 140}, err
+}
+
+func (f *fakeSummaryWorkshopLLMClient) ChatCompletionStream(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
+	txt, err := f.ChatCompletion(ctx, model, systemPrompt, userPrompt, temperature)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan StreamChunk, 2)
+	ch <- StreamChunk{Delta: txt}
+	ch <- StreamChunk{Done: true, Usage: &TokenUsage{PromptTokens: 60, CompletionTokens: 80, TotalTokens: 140}}
+	close(ch)
+	return ch, nil
+}
+
+// 1. 测试要求：fake 下摘要落库章号正确
+func TestChapterWorkshop_Summary_SaveChapterSummaryCorrectChapterIndex(t *testing.T) {
+	proj := &domain.Project{
+		ID:             "p-summary-idx",
+		Title:          "万域封神",
+		TargetPlatform: "番茄脑洞",
+	}
+	mockStore := newMockSummaryWorkshopStore(proj)
+	fakeClient := &fakeSummaryWorkshopLLMClient{}
+
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-summary-idx",
+		ChapterIndex:    5,
+		CoreConflict:    "洞府决战",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if !res.Committed {
+		t.Fatalf("expected chapter to be committed")
+	}
+	if !fakeClient.summaryCalled {
+		t.Fatalf("expected SummarizeChapter to be invoked via fakeClient")
+	}
+
+	// 断言落库章号正确
+	savedSummary, ok := mockStore.chapterSummaries[5]
+	if !ok || savedSummary == nil {
+		t.Fatalf("expected summary to be saved for chapter 5, got nil")
+	}
+	if savedSummary.ChapterIndex != 5 {
+		t.Errorf("expected ChapterIndex == 5, got %d", savedSummary.ChapterIndex)
+	}
+	if savedSummary.ProjectID != "p-summary-idx" {
+		t.Errorf("expected ProjectID == 'p-summary-idx', got %s", savedSummary.ProjectID)
+	}
+	if !strings.Contains(savedSummary.Text, "林凡") || !strings.Contains(savedSummary.Text, "反派") {
+		t.Errorf("unexpected summary text: %s", savedSummary.Text)
+	}
+}
+
+// 2. 测试要求：构造卷终章触发回顾
+func TestChapterWorkshop_Summary_VolumeRetrospectiveOnVolumeEnd(t *testing.T) {
+	proj := &domain.Project{
+		ID:             "p-vol-end",
+		Title:          "仙凡道途",
+		TargetPlatform: "起点仙侠",
+		Framework: &domain.ProjectFramework{
+			VolumeArcs: []domain.VolumeArc{
+				{
+					VolumeIndex:       1,
+					Title:             "第一卷 仙门风云",
+					CoreGoal:          "拜入宗门立足",
+					Climax:            "大比夺魁斩叛逆",
+					EstimatedChapters: 2, // 卷1起止为 1~2，终章为第2章
+				},
+				{
+					VolumeIndex:       2,
+					Title:             "第二卷 乱星海域",
+					CoreGoal:          "渡海求药",
+					Climax:            "镇杀乱星妖王",
+					EstimatedChapters: 3, // 卷2起止为 3~5，终章为第5章
+				},
+			},
+		},
+	}
+	mockStore := newMockSummaryWorkshopStore(proj)
+	fakeClient := &fakeSummaryWorkshopLLMClient{}
+
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	// 第 1 章（非卷终章）：提交成功后不应触发卷回顾
+	req1 := WorkshopProduceRequest{
+		ProjectID:       "p-vol-end",
+		ChapterIndex:    1,
+		CoreConflict:    "入宗试炼",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+	res1, err := workshop.ProduceChapter(context.Background(), req1)
+	if err != nil {
+		t.Fatalf("ProduceChapter chapter 1 failed: %v", err)
+	}
+	if !res1.Committed {
+		t.Fatalf("expected chapter 1 to be committed")
+	}
+	if mockStore.chapterSummaries[1] == nil {
+		t.Fatalf("expected chapter 1 summary to be saved")
+	}
+	if fakeClient.retroCalled {
+		t.Errorf("expected volume retrospective NOT to be called for chapter 1 (not EndChapter)")
+	}
+	if len(mockStore.volumeRetros) != 0 {
+		t.Errorf("expected 0 volume retrospectives for chapter 1, got %d", len(mockStore.volumeRetros))
+	}
+
+	// 第 2 章（卷1终章）：提交成功后应触发本卷回顾
+	req2 := WorkshopProduceRequest{
+		ProjectID:       "p-vol-end",
+		ChapterIndex:    2,
+		CoreConflict:    "宗门大比夺魁",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+	res2, err := workshop.ProduceChapter(context.Background(), req2)
+	if err != nil {
+		t.Fatalf("ProduceChapter chapter 2 failed: %v", err)
+	}
+	if !res2.Committed {
+		t.Fatalf("expected chapter 2 to be committed")
+	}
+	if mockStore.chapterSummaries[2] == nil {
+		t.Fatalf("expected chapter 2 summary to be saved")
+	}
+	if !fakeClient.retroCalled {
+		t.Fatalf("expected volume retrospective to be called for chapter 2 (EndChapter)")
+	}
+
+	retro, ok := mockStore.volumeRetros[1]
+	if !ok || retro == nil {
+		t.Fatalf("expected volume retrospective for volume 1 to be saved")
+	}
+	if retro.VolumeIndex != 1 {
+		t.Errorf("expected VolumeIndex == 1, got %d", retro.VolumeIndex)
+	}
+	if retro.FromChapter != 1 || retro.ToChapter != 2 {
+		t.Errorf("expected FromChapter=1, ToChapter=2, got %d~%d", retro.FromChapter, retro.ToChapter)
+	}
+	if !strings.Contains(retro.Text, "发生") || !strings.Contains(retro.Text, "留下") || !strings.Contains(retro.Text, "未回收") {
+		t.Errorf("expected retro text to contain 发生/留下/未回收, got: %s", retro.Text)
+	}
+}
+
+// 3. 测试要求：摘要 LLM 失败时提交仍成功且有告警
+func TestChapterWorkshop_Summary_LLMFailureDoesNotBlockCommitWithWarning(t *testing.T) {
+	proj := &domain.Project{
+		ID:             "p-summary-fail",
+		Title:          "天道纪元",
+		TargetPlatform: "番茄脑洞",
+	}
+	mockStore := newMockSummaryWorkshopStore(proj)
+	fakeClient := &fakeSummaryWorkshopLLMClient{
+		summaryErr: errors.New("simulated LLM rate limit on chapter summary"),
+	}
+
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-summary-fail",
+		ChapterIndex:    1,
+		CoreConflict:    "绝地求生",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected ProduceChapter not to fail when summary fails, got err: %v", err)
+	}
+
+	// 1. 提交仍然成功
+	if !res.Committed {
+		t.Fatalf("expected chapter to be committed despite summary LLM failure, got Committed=false")
+	}
+	if len(mockStore.chapters) != 1 {
+		t.Errorf("expected 1 chapter committed in store, got %d", len(mockStore.chapters))
+	}
+
+	// 2. 技术阻塞状态未受影响
+	if res.TechnicalBlocked {
+		t.Errorf("expected TechnicalBlocked == false, got true")
+	}
+
+	// 3. 摘要未落库
+	if mockStore.chapterSummaries[1] != nil {
+		t.Errorf("expected no chapter summary saved on failure, got %v", mockStore.chapterSummaries[1])
+	}
+
+	// 4. 产生【摘要警告】
+	hasSummaryWarning := false
+	for _, issue := range res.Audit.Issues {
+		if strings.Contains(issue, "【摘要警告】") {
+			hasSummaryWarning = true
+			break
+		}
+	}
+	if !hasSummaryWarning {
+		t.Errorf("expected Audit.Issues to contain '【摘要警告】', got: %v", res.Audit.Issues)
+	}
+
+	// 5. 断点正常清除，没有残留或被错误保存
+	if mockStore.cp != nil {
+		t.Errorf("expected checkpoint to be cleared after commit, got: %+v", mockStore.cp)
+	}
+}
+
+// 4. 陷阱校验：摘要 save 失败不准碰 checkpoint，且不阻断归档
+func TestChapterWorkshop_Summary_SaveSummaryFailureDoesNotTouchCheckpoint(t *testing.T) {
+	proj := &domain.Project{
+		ID:             "p-summary-save-fail",
+		Title:          "万域封神",
+		TargetPlatform: "番茄脑洞",
+	}
+	mockStore := newMockSummaryWorkshopStore(proj)
+	mockStore.saveSummaryErr = errors.New("simulated disk I/O error on SaveChapterSummary")
+	fakeClient := &fakeSummaryWorkshopLLMClient{}
+
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-summary-save-fail",
+		ChapterIndex:    1,
+		CoreConflict:    "洞府遇袭",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected ProduceChapter not to fail on SaveChapterSummary error, got: %v", err)
+	}
+
+	if !res.Committed {
+		t.Fatalf("expected chapter to be committed despite SaveChapterSummary error")
+	}
+
+	// 摘要 save 失败不准碰 checkpoint，commit 后断点必须正常清除
+	if mockStore.cp != nil {
+		t.Errorf("expected checkpoint to be cleared after commit, got non-nil checkpoint: %+v", mockStore.cp)
+	}
+
+	// 必须记录摘要警告
+	hasWarning := false
+	for _, issue := range res.Audit.Issues {
+		if strings.Contains(issue, "【摘要警告】") {
+			hasWarning = true
+			break
+		}
+	}
+	if !hasWarning {
+		t.Errorf("expected Audit.Issues to contain '【摘要警告】', got: %v", res.Audit.Issues)
 	}
 }

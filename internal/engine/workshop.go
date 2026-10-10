@@ -625,6 +625,35 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		}
 	}
 
+	// 5.6 Summarize chapter if not technically blocked.
+	// 摘要失败永不阻塞归档（注释写明理由：摘要可由正文重建，与状态真相不同级）。
+	if !technicalBlocked {
+		cs, csUsage, csErr := SummarizeChapter(ctx, w.orch.client, req.ReasoningModel, horizon.Project, req.ChapterIndex, currentDraft, settledMutation)
+		if csErr != nil {
+			if auditReport != nil {
+				auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】生成章节摘要失败: %v", csErr))
+			}
+		} else {
+			addUsage(csUsage)
+			if saver, ok := w.store.(interface {
+				SaveChapterSummary(ctx context.Context, cs *domain.ChapterSummary) error
+			}); ok {
+				if cs.ProjectID == "" {
+					cs.ProjectID = req.ProjectID
+				}
+				if err := saver.SaveChapterSummary(ctx, &cs); err != nil {
+					if auditReport != nil {
+						auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】保存章节摘要失败: %v", err))
+					}
+				}
+			} else {
+				if auditReport != nil {
+					auditReport.Issues = append(auditReport.Issues, "【摘要警告】存储层未实现 SaveChapterSummary 接口")
+				}
+			}
+		}
+	}
+
 	// Collect unmatched character mutation names against Codex entries
 	unmatchedNames := w.findUnmatchedCharacterNames(ctx, req.ProjectID, settledMutation.CharacterMutations)
 	if len(unmatchedNames) > 0 {
@@ -745,6 +774,82 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			Phase:   PhaseCommitted,
 			Message: fmt.Sprintf("第 %d 章已成功原子结算并归档入库！", req.ChapterIndex),
 		})
+
+		// Volume retrospective on volume arc completion.
+		// 无 Framework 或算不出卷边界时跳过（不报错）。
+		activeProj := result.UpdatedProject
+		if activeProj == nil {
+			activeProj = horizon.Project
+		}
+		if activeProj != nil && activeProj.Framework != nil && len(activeProj.Framework.VolumeArcs) > 0 {
+			spans, arcMap := deriveVolumeSpans(activeProj.Framework.VolumeArcs)
+			volIdx := domain.ResolveVolume(req.ChapterIndex, spans)
+			if volIdx != -1 {
+				var currentSpan *domain.VolumeSpan
+				for i := range spans {
+					if spans[i].VolumeIndex == volIdx {
+						currentSpan = &spans[i]
+						break
+					}
+				}
+				if currentSpan != nil && req.ChapterIndex == currentSpan.EndChapter {
+					arc := arcMap[volIdx]
+					if arc != nil {
+						if vrStore, ok := w.store.(interface {
+							ListChapterSummaries(ctx context.Context, projectID string, from, to int) ([]*domain.ChapterSummary, error)
+							SaveVolumeRetrospective(ctx context.Context, retro *domain.VolumeRetrospective) error
+						}); ok {
+							projID := req.ProjectID
+							if activeProj.ID != "" {
+								projID = activeProj.ID
+							}
+							summaries, lErr := vrStore.ListChapterSummaries(ctx, projID, currentSpan.StartChapter, currentSpan.EndChapter)
+							if lErr != nil {
+								if auditReport != nil {
+									auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】获取分卷章节摘要失败: %v", lErr))
+								}
+							} else {
+								var chSummaries []ChapterSummary
+								for _, s := range summaries {
+									if s != nil {
+										chSummaries = append(chSummaries, *s)
+									}
+								}
+								if len(chSummaries) == 0 {
+									if auditReport != nil {
+										auditReport.Issues = append(auditReport.Issues, "【摘要警告】未找到本卷任何章节摘要，跳过分卷回顾")
+									}
+								} else {
+									vr, vrUsage, vrErr := BuildVolumeRetrospective(ctx, w.orch.client, req.ReasoningModel, activeProj, *arc, chSummaries)
+									if vrErr != nil {
+										if auditReport != nil {
+											auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】生成分卷回顾失败: %v", vrErr))
+										}
+									} else {
+										addUsage(vrUsage)
+										estimatedCostUSD = (float64(totalUsage.PromptTokens)*0.00014 + float64(totalUsage.CompletionTokens)*0.00028) / 1000.0
+										result.TotalUsage = totalUsage
+										result.EstimatedCostUSD = estimatedCostUSD
+										if vr.ProjectID == "" {
+											vr.ProjectID = projID
+										}
+										if sErr := vrStore.SaveVolumeRetrospective(ctx, &vr); sErr != nil {
+											if auditReport != nil {
+												auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】保存分卷回顾失败: %v", sErr))
+											}
+										}
+									}
+								}
+							}
+						} else {
+							if auditReport != nil {
+								auditReport.Issues = append(auditReport.Issues, "【摘要警告】存储层未实现分卷回顾持久化接口")
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 
 	emit(WorkshopEvent{
