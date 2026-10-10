@@ -408,16 +408,19 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		result.HarmonizeReport = &rpt
 	}
 
-	// 6. Optional Atomic Commitment with Self-Healing QualityGate Fallback
+	// 6. Optional Atomic Commitment (Strict Fail-Closed QualityGate)
 	shouldCommit := false
 	if req.AutoCommit {
 		if auditReport.Verdict == domain.ReviewVerdictAccepted {
 			shouldCommit = true
-		} else if auditReport.Score >= 70 {
-			// 柔性接纳自愈兜底：已达到最大重写轮次且评分达到及格线 (>= 70分)，自动放行并转为 ACCEPTED 归档入库
-			auditReport.Verdict = domain.ReviewVerdictAccepted
-			auditReport.Issues = append(auditReport.Issues, "【全自动模式柔性接纳】已达最大重写轮次且评分达到及格容忍线(>=70分)，系统自动放行定稿入库")
-			shouldCommit = true
+		} else {
+			// TODO(P1): domain.AuditReport 引入 NeedsHuman 结构化字段后在此处赋值标记
+			auditReport.Issues = append(auditReport.Issues, "【ESCALATED】已达最大重写轮次仍未通过，已停线待人工，拒绝自动入库")
+			emit(WorkshopEvent{
+				Phase:       PhaseComplete,
+				Message:     fmt.Sprintf("停线待人工: 章节质检未通过 (评级 %s | 得分 %d)，已达最大重写轮次，拒绝自动入库", auditReport.Verdict, auditReport.Score),
+				TotalTokens: totalUsage.TotalTokens,
+			})
 		}
 	}
 
