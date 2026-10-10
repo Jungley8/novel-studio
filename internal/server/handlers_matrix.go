@@ -234,6 +234,14 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 			errorResponse(w, http.StatusBadRequest, "invalid framework JSON: "+err.Error())
 			return
 		}
+
+		// 保存前快照旧卷定义
+		var oldArcs []domain.VolumeArc
+		if p.Framework != nil && len(p.Framework.VolumeArcs) > 0 {
+			oldArcs = make([]domain.VolumeArc, len(p.Framework.VolumeArcs))
+			copy(oldArcs, p.Framework.VolumeArcs)
+		}
+
 		p.Framework = &fw
 		if len(fw.WorldAxioms) > 0 {
 			var sb strings.Builder
@@ -246,6 +254,40 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 			errorResponse(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+
+		// 卷变更联动：保存前读出旧 framework，保存后对两边先跑 engine.BackfillVolumeArcs 归一化，
+		// 逐卷比较 (StartChapter, EndChapter)；凡发生变化的卷，调 store.MarkIntentsStale(projectID, volumeIndex)。
+		// 架构依赖说明：server 包已导入 engine 与 store，调用 engine.BackfillVolumeArcs 不会形成循环依赖（engine 未导入 server）。
+		normOld := engine.BackfillVolumeArcs(oldArcs)
+		normNew := engine.BackfillVolumeArcs(fw.VolumeArcs)
+
+		type chapterRange struct {
+			start int
+			end   int
+		}
+		oldMap := make(map[int]chapterRange)
+		for _, arc := range normOld {
+			oldMap[arc.VolumeIndex] = chapterRange{start: arc.StartChapter, end: arc.EndChapter}
+		}
+		newMap := make(map[int]chapterRange)
+		for _, arc := range normNew {
+			newMap[arc.VolumeIndex] = chapterRange{start: arc.StartChapter, end: arc.EndChapter}
+		}
+
+		checked := make(map[int]bool)
+		for volIdx, oldR := range oldMap {
+			checked[volIdx] = true
+			newR, exists := newMap[volIdx]
+			if !exists || oldR != newR {
+				_, _ = s.store.MarkIntentsStale(ctx, projectID, volIdx)
+			}
+		}
+		for volIdx := range newMap {
+			if !checked[volIdx] {
+				_, _ = s.store.MarkIntentsStale(ctx, projectID, volIdx)
+			}
+		}
+
 		jsonResponse(w, http.StatusOK, p.Framework)
 	default:
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")

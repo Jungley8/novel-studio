@@ -23,6 +23,13 @@ type Store interface {
 	ListChapters(ctx context.Context, projectID string) ([]*domain.Chapter, error)
 	DeleteChapter(ctx context.Context, projectID string, chapterIndex int) error
 
+	// Chapter Intents (章节意图卡)
+	SaveChapterIntent(ctx context.Context, intent *domain.ChapterIntent) error
+	GetChapterIntent(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterIntent, error)    // 不存在返回 (nil, nil)
+	ListChapterIntents(ctx context.Context, projectID string, volumeIndex int) ([]*domain.ChapterIntent, error) // volumeIndex<=0 全体；按 chapter_index 升序
+	DeleteChapterIntent(ctx context.Context, projectID string, chapterIndex int) error
+	MarkIntentsStale(ctx context.Context, projectID string, volumeIndex int) (int64, error) // 仅 LOCKED→STALE，返回变更行数
+
 	// Plot Hooks (伏笔因果账本)
 	SavePlotHook(ctx context.Context, hook *domain.PlotHook) error
 	ListPlotHooks(ctx context.Context, projectID string) ([]*domain.PlotHook, error)
