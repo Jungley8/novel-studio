@@ -15,17 +15,18 @@ type ProviderConfig struct {
 }
 
 type Config struct {
-	ServerPort       int             `json:"server_port"`
-	DataDir          string          `json:"data_dir"`
-	APIBase          string          `json:"api_base"`
-	APIKey           string          `json:"api_key"`
-	ReasoningModel   string          `json:"reasoning_model"`
-	WriterModel      string          `json:"writer_model"`
-	ReviewerModel    string          `json:"reviewer_model,omitempty"`
-	ReviewerProvider *ProviderConfig `json:"reviewer_provider,omitempty"`
-	ReasonerProvider *ProviderConfig `json:"reasoner_provider,omitempty"`
-	WriterProvider   *ProviderConfig `json:"writer_provider,omitempty"`
-	AutoOpenBrowser  bool            `json:"auto_open_browser"`
+	ServerPort          int             `json:"server_port"`
+	DataDir             string          `json:"data_dir"`
+	APIBase             string          `json:"api_base"`
+	APIKey              string          `json:"api_key"`
+	ReasoningModel      string          `json:"reasoning_model"`
+	WriterModel         string          `json:"writer_model"`
+	ReviewerModel       string          `json:"reviewer_model,omitempty"`
+	ReviewerProvider    *ProviderConfig `json:"reviewer_provider,omitempty"`
+	ReasonerProvider    *ProviderConfig `json:"reasoner_provider,omitempty"`
+	WriterProvider      *ProviderConfig `json:"writer_provider,omitempty"`
+	AutoOpenBrowser     bool            `json:"auto_open_browser"`
+	ContextBudgetTokens int             `json:"context_budget_tokens,omitempty"`
 }
 
 func DefaultConfig() *Config {
@@ -34,15 +35,23 @@ func DefaultConfig() *Config {
 		home = "."
 	}
 	return &Config{
-		ServerPort:      28980,
-		DataDir:         filepath.Join(home, ".novel-studio"),
-		APIBase:         "https://api.deepseek.com/v1",
-		APIKey:          "",
-		ReasoningModel:  "deepseek-reasoner",
-		WriterModel:     "deepseek-chat",
-		ReviewerModel:   "deepseek-reasoner",
-		AutoOpenBrowser: true,
+		ServerPort:          28980,
+		DataDir:             filepath.Join(home, ".novel-studio"),
+		APIBase:             "https://api.deepseek.com/v1",
+		APIKey:              "",
+		ReasoningModel:      "deepseek-reasoner",
+		WriterModel:         "deepseek-chat",
+		ReviewerModel:       "deepseek-reasoner",
+		AutoOpenBrowser:     true,
+		ContextBudgetTokens: 12000,
 	}
+}
+
+func (c *Config) Validate() error {
+	if c.ContextBudgetTokens <= 0 {
+		return fmt.Errorf("context_budget_tokens must be positive, got %d", c.ContextBudgetTokens)
+	}
+	return nil
 }
 
 func Load(path string) (*Config, error) {
@@ -56,6 +65,9 @@ func Load(path string) (*Config, error) {
 	}
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
+	}
+	if cfg.ContextBudgetTokens <= 0 {
+		cfg.ContextBudgetTokens = 12000
 	}
 	return cfg, nil
 }
