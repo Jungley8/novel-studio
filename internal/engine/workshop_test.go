@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -1423,5 +1424,232 @@ func TestChapterWorkshop_Summary_SaveSummaryFailureDoesNotTouchCheckpoint(t *tes
 	}
 	if !hasWarning {
 		t.Errorf("expected Audit.Issues to contain '【摘要警告】', got: %v", res.Audit.Issues)
+	}
+}
+
+// mockEchoListErrorStore wraps mockSummaryWorkshopStore to simulate ListChapters error during block 5.55.
+type mockEchoListErrorStore struct {
+	*mockSummaryWorkshopStore
+	failAfterCalls int
+	calls          int
+}
+
+func (m *mockEchoListErrorStore) ListChapters(ctx context.Context, projectID string) ([]*domain.Chapter, error) {
+	m.calls++
+	if m.failAfterCalls > 0 && m.calls > m.failAfterCalls {
+		return nil, errors.New("simulated database I/O error on ListChapters")
+	}
+	return m.mockSummaryWorkshopStore.ListChapters(ctx, projectID)
+}
+
+func makeEchoTestFakeClient(echoDraft string) *fakeSummaryWorkshopLLMClient {
+	return &fakeSummaryWorkshopLLMClient{
+		beatsJSON: "```json\n" + `{
+			"beats": [
+				{"phase": "蓄力压迫", "tension": 6, "action": "反派带队堵截洞府", "expectation_broken": "反派预料求饶"},
+				{"phase": "绝地反转", "tension": 9, "action": "引动护山大阵反杀", "expectation_broken": "反派被镇压"}
+			],
+			"state_mutation": {"inventory_delta": "", "power_delta": ""}
+		}` + "\n```",
+		settleJSON: "```json\n" + `{"inventory_delta":"","power_delta":"","character_mutations":[],"evidence":[]}` + "\n```",
+		reviewJSON: "```json\n" + `{
+			"verdict": "ACCEPTED",
+			"score": 92,
+			"issues": [],
+			"suggestions": "文风契合"
+		}` + "\n```",
+		summaryJSON: "```json\n" + `{
+			"characters": "林凡",
+			"conflict": "迎击夜袭",
+			"result": "胜",
+			"suspense": "",
+			"summary": "林凡反杀敌手"
+		}` + "\n```",
+		renderDraft: echoDraft,
+	}
+}
+
+// TestChapterWorkshop_CrossChapterEcho_GE3ChaptersTriggersWarning verifies that when >=3 chapters in
+// recent 20 contain the same 4-gram and draft contains it, 【跨章重复警告】 is appended to Issues.
+func TestChapterWorkshop_CrossChapterEcho_GE3ChaptersTriggersWarning(t *testing.T) {
+	const echoPhrase = "剑拔弩张"
+	const projectID = "p-echo-ge3"
+
+	proj := &domain.Project{
+		ID:             projectID,
+		Title:          "万域封神",
+		TargetPlatform: "番茄脑洞",
+	}
+	mockStore := newMockSummaryWorkshopStore(proj)
+
+	// Populate 20 preceding chapters: 17 neutral, 3 with echoPhrase
+	for i := 1; i <= 20; i++ {
+		content := "夜幕低垂，冷风呼啸，林凡盘膝闭目吐纳天地灵气。"
+		if i >= 18 { // chapters 18, 19, 20 (3 chapters contain echoPhrase)
+			content = "四周杀机毕露，气氛剑拔弩张，体内灵力奔涌澎湃。"
+		}
+		mockStore.chapters = append(mockStore.chapters, &domain.Chapter{
+			ID:           fmt.Sprintf("ch_%s_%d", projectID, i),
+			ProjectID:    projectID,
+			ChapterIndex: i,
+			Title:        fmt.Sprintf("第 %d 章", i),
+			Content:      content,
+		})
+	}
+
+	draft := "夜色渐深，杀机逼近。门前气氛剑拔弩张，林凡指尖轻扣石壁，大阵雷光轰然暴起！"
+	fakeClient := makeEchoTestFakeClient(draft)
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       projectID,
+		ChapterIndex:    21,
+		CoreConflict:    "洞府遇袭决死破局",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if !res.Committed {
+		t.Errorf("expected chapter to be committed (echo warning is non-blocking)")
+	}
+	if res.TechnicalBlocked {
+		t.Errorf("expected TechnicalBlocked == false")
+	}
+	if res.Audit == nil {
+		t.Fatalf("expected non-nil Audit report")
+	}
+
+	expectedWarning := fmt.Sprintf("【跨章重复警告】短语「%s」在近 20 章中反复出现，建议换写。", echoPhrase)
+	hasEchoWarning := false
+	for _, issue := range res.Audit.Issues {
+		if strings.Contains(issue, expectedWarning) {
+			hasEchoWarning = true
+			break
+		}
+	}
+	if !hasEchoWarning {
+		t.Errorf("expected Audit.Issues to contain %q, got: %v", expectedWarning, res.Audit.Issues)
+	}
+}
+
+// TestChapterWorkshop_CrossChapterEcho_Only2ChaptersDoesNotWarn verifies that when only 2 chapters in
+// recent 20 contain the 4-gram, no echo warning is issued.
+func TestChapterWorkshop_CrossChapterEcho_Only2ChaptersDoesNotWarn(t *testing.T) {
+	const echoPhrase = "剑拔弩张"
+	const projectID = "p-echo-only2"
+
+	proj := &domain.Project{
+		ID:             projectID,
+		Title:          "万域封神",
+		TargetPlatform: "番茄脑洞",
+	}
+	mockStore := newMockSummaryWorkshopStore(proj)
+
+	// Populate 20 preceding chapters: 18 neutral, 2 with echoPhrase
+	for i := 1; i <= 20; i++ {
+		content := "夜幕低垂，冷风呼啸，林凡盘膝闭目吐纳天地灵气。"
+		if i >= 19 { // chapters 19, 20 (only 2 chapters contain echoPhrase)
+			content = "四周杀机毕露，气氛剑拔弩张，体内灵力奔涌澎湃。"
+		}
+		mockStore.chapters = append(mockStore.chapters, &domain.Chapter{
+			ID:           fmt.Sprintf("ch_%s_%d", projectID, i),
+			ProjectID:    projectID,
+			ChapterIndex: i,
+			Title:        fmt.Sprintf("第 %d 章", i),
+			Content:      content,
+		})
+	}
+
+	draft := "夜色渐深，杀机逼近。门前气氛剑拔弩张，林凡指尖轻扣石壁，大阵雷光轰然暴起！"
+	fakeClient := makeEchoTestFakeClient(draft)
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       projectID,
+		ChapterIndex:    21,
+		CoreConflict:    "洞府遇袭决死破局",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if res.Audit == nil {
+		t.Fatalf("expected non-nil Audit report")
+	}
+
+	for _, issue := range res.Audit.Issues {
+		if strings.Contains(issue, "【跨章重复警告】") {
+			t.Errorf("expected no 【跨章重复警告】 when only 2 chapters hit, got: %s", issue)
+		}
+	}
+}
+
+// TestChapterWorkshop_CrossChapterEcho_ListChaptersErrorAppendsWarning verifies that when ListChapters
+// fails, 【回声警告】检测失败 is appended to Issues without blocking chapter commit.
+func TestChapterWorkshop_CrossChapterEcho_ListChaptersErrorAppendsWarning(t *testing.T) {
+	const projectID = "p-echo-listerr"
+
+	proj := &domain.Project{
+		ID:             projectID,
+		Title:          "万域封神",
+		TargetPlatform: "番茄脑洞",
+	}
+	baseStore := newMockSummaryWorkshopStore(proj)
+	mockStore := &mockEchoListErrorStore{
+		mockSummaryWorkshopStore: baseStore,
+		failAfterCalls:           2,
+	}
+
+	draft := "夜色渐深，杀机逼近。林凡指尖轻扣石壁，大阵雷光轰然暴起！"
+	fakeClient := makeEchoTestFakeClient(draft)
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       projectID,
+		ChapterIndex:    1,
+		CoreConflict:    "洞府遇袭决死破局",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected ProduceChapter not to fail on ListChapters error, got: %v", err)
+	}
+
+	if !res.Committed {
+		t.Errorf("expected chapter to be committed (echo warning is non-blocking)")
+	}
+	if res.Audit == nil {
+		t.Fatalf("expected non-nil Audit report")
+	}
+
+	hasListWarning := false
+	for _, issue := range res.Audit.Issues {
+		if strings.Contains(issue, "【回声警告】检测失败") {
+			hasListWarning = true
+			break
+		}
+	}
+	if !hasListWarning {
+		t.Errorf("expected Audit.Issues to contain '【回声警告】检测失败', got: %v", res.Audit.Issues)
 	}
 }
