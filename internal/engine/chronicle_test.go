@@ -18,6 +18,7 @@ type mockChronicleStore struct {
 	hooks          []*domain.PlotHook
 	codexEntries   []*domain.CodexEntry
 	codexRelations []domain.EntityRelation
+	retros         map[int]*domain.VolumeRetrospective
 }
 
 func (m *mockChronicleStore) GetProject(ctx context.Context, id string) (*domain.Project, error) {
@@ -149,6 +150,14 @@ func (m *mockChronicleStore) GetMatrixOverview(ctx context.Context, projectID st
 	return nil, nil
 }
 func (m *mockChronicleStore) Close() error { return nil }
+func (m *mockChronicleStore) GetVolumeRetrospective(ctx context.Context, projectID string, volumeIndex int) (*domain.VolumeRetrospective, error) {
+	if m.retros != nil {
+		if r, ok := m.retros[volumeIndex]; ok {
+			return r, nil
+		}
+	}
+	return nil, nil
+}
 
 func TestCanonChronicle_AssembleHorizon(t *testing.T) {
 	mockStore := &mockChronicleStore{
@@ -1075,5 +1084,295 @@ func TestCanonChronicle_ContextBudget_CodexDetailsTruncation(t *testing.T) {
 	}
 	if !foundInCompressible {
 		t.Errorf("expected codex/e_mowang to be in CompressibleIDs, got: %v", trace.CompressibleIDs)
+	}
+}
+
+// Test ①: 书在第 3 卷、有第 1、2 卷回顾 → HistoricalCallbacks 文本含【往卷全局记忆 且有两条；trace.CompressibleIDs 含 history/retro_vol_1、history/retro_vol_2
+func TestCanonChronicle_VolumeRetrospective_NormalInjection(t *testing.T) {
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p_retro_normal",
+			Title:          "万道争锋",
+			TargetPlatform: "起点仙侠",
+			WorldRules:     "仙道无常",
+			Framework: &domain.ProjectFramework{
+				VolumeArcs: []domain.VolumeArc{
+					{VolumeIndex: 1, Title: "第一卷：踏道", StartChapter: 1, EndChapter: 50, CoreGoal: "筑基", Climax: "斩妖"},
+					{VolumeIndex: 2, Title: "第二卷：扬名", StartChapter: 51, EndChapter: 100, CoreGoal: "结丹", Climax: "夺魁"},
+					{VolumeIndex: 3, Title: "第三卷：破界", StartChapter: 101, EndChapter: 150, CoreGoal: "化神", Climax: "飞升"},
+				},
+			},
+		},
+		chapters: []*domain.Chapter{
+			{ChapterIndex: 102, Title: "第102章", Content: "第三卷正文102"},
+			{ChapterIndex: 103, Title: "第103章", Content: "第三卷正文103"},
+			{ChapterIndex: 104, Title: "第104章", Content: "第三卷正文104"},
+		},
+		retros: map[int]*domain.VolumeRetrospective{
+			1: {
+				ProjectID:   "p_retro_normal",
+				VolumeIndex: 1,
+				FromChapter: 1,
+				ToChapter:   50,
+				Text:        "第一卷宏观回顾：主角于微末中筑基成功，奠定无上道基。",
+			},
+			2: {
+				ProjectID:   "p_retro_normal",
+				VolumeIndex: 2,
+				FromChapter: 51,
+				ToChapter:   100,
+				Text:        "第二卷宏观回顾：主角宗门大比夺得魁首，结成九转金丹。",
+			},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	horizon, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_retro_normal", 105)
+	if err != nil {
+		t.Fatalf("AssembleHorizonTraced failed: %v", err)
+	}
+
+	if !strings.Contains(horizon.HistoricalCallbacks, "【往卷全局记忆") {
+		t.Errorf("expected HistoricalCallbacks to contain '【往卷全局记忆', got:\n%s", horizon.HistoricalCallbacks)
+	}
+	if !strings.Contains(horizon.HistoricalCallbacks, "第一卷宏观回顾") {
+		t.Errorf("expected HistoricalCallbacks to contain retro vol 1 text")
+	}
+	if !strings.Contains(horizon.HistoricalCallbacks, "第二卷宏观回顾") {
+		t.Errorf("expected HistoricalCallbacks to contain retro vol 2 text")
+	}
+	if strings.Count(horizon.HistoricalCallbacks, "【往卷回顾·第") != 2 {
+		t.Errorf("expected exactly 2 retro descriptions in HistoricalCallbacks, got count %d",
+			strings.Count(horizon.HistoricalCallbacks, "【往卷回顾·第"))
+	}
+
+	hasRetro1 := false
+	hasRetro2 := false
+	for _, id := range trace.CompressibleIDs {
+		if id == "history/retro_vol_1" {
+			hasRetro1 = true
+		}
+		if id == "history/retro_vol_2" {
+			hasRetro2 = true
+		}
+	}
+	if !hasRetro1 || !hasRetro2 {
+		t.Errorf("expected trace.CompressibleIDs to contain history/retro_vol_1 and history/retro_vol_2, got: %v", trace.CompressibleIDs)
+	}
+}
+
+// Test ②: 只给第 3 卷（当前卷）回顾 → 不注入（只取往卷）
+func TestCanonChronicle_VolumeRetrospective_CurrentVolumeNotIncluded(t *testing.T) {
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p_retro_cur",
+			Title:          "万道争锋",
+			TargetPlatform: "起点仙侠",
+			WorldRules:     "仙道无常",
+			Framework: &domain.ProjectFramework{
+				VolumeArcs: []domain.VolumeArc{
+					{VolumeIndex: 1, Title: "第一卷：踏道", StartChapter: 1, EndChapter: 50},
+					{VolumeIndex: 2, Title: "第二卷：扬名", StartChapter: 51, EndChapter: 100},
+					{VolumeIndex: 3, Title: "第三卷：破界", StartChapter: 101, EndChapter: 150},
+				},
+			},
+		},
+		chapters: []*domain.Chapter{
+			{ChapterIndex: 104, Title: "第104章", Content: "第三卷正文"},
+		},
+		retros: map[int]*domain.VolumeRetrospective{
+			3: {
+				ProjectID:   "p_retro_cur",
+				VolumeIndex: 3,
+				FromChapter: 101,
+				ToChapter:   150,
+				Text:        "第三卷当前回顾：此卷尚在推进，不应注入。",
+			},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	horizon, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_retro_cur", 105)
+	if err != nil {
+		t.Fatalf("AssembleHorizonTraced failed: %v", err)
+	}
+
+	if strings.Contains(horizon.HistoricalCallbacks, "【往卷全局记忆") {
+		t.Errorf("expected HistoricalCallbacks not to contain '【往卷全局记忆', got:\n%s", horizon.HistoricalCallbacks)
+	}
+	if strings.Contains(horizon.HistoricalCallbacks, "第三卷当前回顾") {
+		t.Errorf("expected current volume retro not to be injected into HistoricalCallbacks")
+	}
+
+	for _, id := range trace.CompressibleIDs {
+		if strings.HasPrefix(id, "history/retro_vol_") {
+			t.Errorf("expected no retro items in CompressibleIDs, found: %s", id)
+		}
+	}
+	for _, id := range trace.DroppedIDs {
+		if strings.HasPrefix(id, "history/retro_vol_") {
+			t.Errorf("expected no retro items in DroppedIDs, found: %s", id)
+		}
+	}
+}
+
+// Test ③: 预算极紧（把 budget 调小到只剩 protected）→ retro 被确定性丢弃，trace.DroppedIDs 含之，文本不含；两次运行结果一致
+func TestCanonChronicle_VolumeRetrospective_TightBudgetDeterministicDrop(t *testing.T) {
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p_retro_tight",
+			Title:          "万道争锋",
+			TargetPlatform: "起点仙侠",
+			WorldRules:     "仙道无常",
+			Framework: &domain.ProjectFramework{
+				VolumeArcs: []domain.VolumeArc{
+					{VolumeIndex: 1, Title: "第一卷：踏道", StartChapter: 1, EndChapter: 50},
+					{VolumeIndex: 2, Title: "第二卷：扬名", StartChapter: 51, EndChapter: 100},
+					{VolumeIndex: 3, Title: "第三卷：破界", StartChapter: 101, EndChapter: 150},
+				},
+			},
+		},
+		chapters: []*domain.Chapter{
+			{ChapterIndex: 104, Title: "第104章", Content: "第三卷正文"},
+		},
+		retros: map[int]*domain.VolumeRetrospective{
+			1: {
+				ProjectID:   "p_retro_tight",
+				VolumeIndex: 1,
+				FromChapter: 1,
+				ToChapter:   50,
+				Text:        "第一卷宏观回顾：主角筑基。",
+			},
+			2: {
+				ProjectID:   "p_retro_tight",
+				VolumeIndex: 2,
+				FromChapter: 51,
+				ToChapter:   100,
+				Text:        "第二卷宏观回顾：主角结丹。",
+			},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	// Query with minimal budget 1 to probe exact protected tokens from fail-closed error
+	chronicle.SetBudgetTokens(1)
+	_, traceProbe, errProbe := chronicle.AssembleHorizonTraced(context.Background(), "p_retro_tight", 105)
+	if errProbe == nil || traceProbe == nil {
+		t.Fatalf("expected overflow error to probe protected tokens, got err=%v", errProbe)
+	}
+	protectedTokens := traceProbe.EstimatedTokens
+	if protectedTokens <= 0 {
+		t.Fatalf("expected positive protected tokens, got %d", protectedTokens)
+	}
+
+	// Set budget to exactly protectedTokens so protected items fit, remainingBudget = 0
+	chronicle.SetBudgetTokens(protectedTokens)
+
+	// Run 1
+	horizon1, trace1, err1 := chronicle.AssembleHorizonTraced(context.Background(), "p_retro_tight", 105)
+	if err1 != nil {
+		t.Fatalf("Run 1 failed: %v", err1)
+	}
+
+	// Run 2
+	horizon2, trace2, err2 := chronicle.AssembleHorizonTraced(context.Background(), "p_retro_tight", 105)
+	if err2 != nil {
+		t.Fatalf("Run 2 failed: %v", err2)
+	}
+
+	// Both retros must be in DroppedIDs
+	hasDropped1 := false
+	hasDropped2 := false
+	for _, id := range trace1.DroppedIDs {
+		if id == "history/retro_vol_1" {
+			hasDropped1 = true
+		}
+		if id == "history/retro_vol_2" {
+			hasDropped2 = true
+		}
+	}
+	if !hasDropped1 || !hasDropped2 {
+		t.Errorf("expected both retro items in trace1.DroppedIDs, got: %v", trace1.DroppedIDs)
+	}
+
+	// Text must NOT contain retro content
+	if strings.Contains(horizon1.HistoricalCallbacks, "【往卷全局记忆") {
+		t.Errorf("expected HistoricalCallbacks not to contain '【往卷全局记忆' under tight budget, got:\n%s", horizon1.HistoricalCallbacks)
+	}
+
+	// Determinism check: identical results on consecutive runs
+	if !reflect.DeepEqual(trace1.DroppedIDs, trace2.DroppedIDs) {
+		t.Errorf("non-deterministic DroppedIDs: run1=%v run2=%v", trace1.DroppedIDs, trace2.DroppedIDs)
+	}
+	if !reflect.DeepEqual(trace1.CompressibleIDs, trace2.CompressibleIDs) {
+		t.Errorf("non-deterministic CompressibleIDs: run1=%v run2=%v", trace1.CompressibleIDs, trace2.CompressibleIDs)
+	}
+	if trace1.EstimatedTokens != trace2.EstimatedTokens {
+		t.Errorf("non-deterministic EstimatedTokens: run1=%d run2=%d", trace1.EstimatedTokens, trace2.EstimatedTokens)
+	}
+	if horizon1.HistoricalCallbacks != horizon2.HistoricalCallbacks {
+		t.Errorf("non-deterministic HistoricalCallbacks output")
+	}
+}
+
+// Test ④: currentVolume == nil（超界章）→ 不 panic、无注入、行为照旧
+func TestCanonChronicle_VolumeRetrospective_NilCurrentVolume(t *testing.T) {
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p_retro_nilvol",
+			Title:          "万道争锋",
+			TargetPlatform: "起点仙侠",
+			WorldRules:     "仙道无常",
+			Framework: &domain.ProjectFramework{
+				VolumeArcs: []domain.VolumeArc{
+					{VolumeIndex: 1, Title: "第一卷：踏道", StartChapter: 1, EndChapter: 50},
+					{VolumeIndex: 2, Title: "第二卷：扬名", StartChapter: 51, EndChapter: 100},
+				},
+			},
+		},
+		chapters: []*domain.Chapter{
+			{ChapterIndex: 100, Title: "第100章", Content: "第二卷终章正文"},
+		},
+		retros: map[int]*domain.VolumeRetrospective{
+			1: {
+				ProjectID:   "p_retro_nilvol",
+				VolumeIndex: 1,
+				FromChapter: 1,
+				ToChapter:   50,
+				Text:        "第一卷宏观回顾",
+			},
+			2: {
+				ProjectID:   "p_retro_nilvol",
+				VolumeIndex: 2,
+				FromChapter: 51,
+				ToChapter:   100,
+				Text:        "第二卷宏观回顾",
+			},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	// Chapter 150 is out of bounds (volumes only cover up to 100) -> currentVolume == nil
+	horizon, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_retro_nilvol", 150)
+	if err != nil {
+		t.Fatalf("AssembleHorizonTraced failed: %v", err)
+	}
+	if horizon.CurrentVolume != nil {
+		t.Fatalf("expected CurrentVolume to be nil for chapter 150, got %v", horizon.CurrentVolume)
+	}
+
+	if strings.Contains(horizon.HistoricalCallbacks, "【往卷全局记忆") {
+		t.Errorf("expected no retro injection when CurrentVolume is nil, got:\n%s", horizon.HistoricalCallbacks)
+	}
+
+	for _, id := range trace.CompressibleIDs {
+		if strings.HasPrefix(id, "history/retro_vol_") {
+			t.Errorf("expected no retro items in CompressibleIDs, found: %s", id)
+		}
+	}
+	for _, id := range trace.DroppedIDs {
+		if strings.HasPrefix(id, "history/retro_vol_") {
+			t.Errorf("expected no retro items in DroppedIDs, found: %s", id)
+		}
 	}
 }

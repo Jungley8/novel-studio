@@ -53,6 +53,11 @@ type CanonHorizon struct {
 	EchoWarnings        []string                `json:"echo_warnings,omitempty"`
 }
 
+// VolumeRetrospectiveStore defines the query interface for volume retrospectives.
+type VolumeRetrospectiveStore interface {
+	GetVolumeRetrospective(ctx context.Context, projectID string, volumeIndex int) (*domain.VolumeRetrospective, error)
+}
+
 // CanonChronicle acts as the deep context assembler and horizon keeper.
 type CanonChronicle struct {
 	store        store.Store
@@ -171,6 +176,21 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 			if strings.Contains(protagonist.NameAndLevel(), tier.Realm) || (protagonist.Realm != "" && strings.Contains(protagonist.Realm, tier.Realm)) {
 				activeTier = &tier
 				break
+			}
+		}
+	}
+
+	var retroList []*domain.VolumeRetrospective
+	if currentVolume != nil {
+		if rStore, ok := c.store.(VolumeRetrospectiveStore); ok {
+			// 加载卷号小于 currentVolume.VolumeIndex 的最后 2 卷（从 currentVolume.VolumeIndex-1 往下取，最多 2 个）
+			// 回顾是可选记忆层，缺卷数据是正常态，nil 或 error 均跳过，不报错中断
+			for v := currentVolume.VolumeIndex - 1; v >= 1 && v >= currentVolume.VolumeIndex-2; v-- {
+				vr, err := rStore.GetVolumeRetrospective(ctx, projectID, v)
+				if err != nil || vr == nil {
+					continue
+				}
+				retroList = append(retroList, vr)
 			}
 		}
 	}
@@ -460,9 +480,28 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 		}
 	}
 
+	var retroCandidates []compressibleCandidate
+	for _, vr := range retroList {
+		desc := fmt.Sprintf("【往卷回顾·第%d卷（第%d-%d章）】%s",
+			vr.VolumeIndex, vr.FromChapter, vr.ToChapter, strings.TrimSpace(vr.Text))
+		dist := targetChapter - vr.ToChapter
+		if dist < 0 {
+			dist = -dist
+		}
+		retroCandidates = append(retroCandidates, compressibleCandidate{
+			id:       fmt.Sprintf("history/retro_vol_%d", vr.VolumeIndex),
+			category: "retro",
+			desc:     desc,
+			tokens:   domain.EstimateTokens(desc),
+			isUrgent: false,
+			distance: dist,
+		})
+	}
+
 	var allCompressible []compressibleCandidate
 	allCompressible = append(allCompressible, callbackCandidates...)
 	allCompressible = append(allCompressible, codexCandidates...)
+	allCompressible = append(allCompressible, retroCandidates...)
 
 	// Deterministic sorting: urgent items first, then closer distance to target chapter, then item ID tie-breaker
 	sort.SliceStable(allCompressible, func(i, j int) bool {
@@ -512,6 +551,21 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 		if omittedCallbackCount > 0 {
 			cbSb.WriteString(fmt.Sprintf("\n\n（另有 %d 处较远期伏笔持续发酵中，已精简现场摘录以保障模型核心注意力）", omittedCallbackCount))
 		}
+	}
+
+	var retainedRetroDescs []string
+	for _, it := range retroCandidates {
+		if retainedMap[it.id] {
+			retainedRetroDescs = append(retainedRetroDescs, it.desc)
+		}
+	}
+
+	if len(retainedRetroDescs) > 0 {
+		if cbSb.Len() > 0 {
+			cbSb.WriteString("\n\n")
+		}
+		cbSb.WriteString("【往卷全局记忆 (Volume Retrospectives)】\n")
+		cbSb.WriteString(strings.Join(retainedRetroDescs, "\n\n"))
 	}
 
 	// Synthesize Codex text and relations from retained items
