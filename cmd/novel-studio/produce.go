@@ -34,6 +34,7 @@ func runProduceCLI(argv []string, defaultDataDir string) int {
 	chapterIdxFlag := fs.Int("chapter", 0, "章节序号 (默认自动递增下一章)")
 	conflictFlag := fs.String("conflict", "核心对峙与打破常规预期", "本章核心冲突事实")
 	autoCommitFlag := fs.Bool("commit", true, "通过主编终审后自动提交归档至数据库")
+	volumeIdxFlag := fs.Int("volume", 0, "分卷序号 (>0 时执行整卷批量生产)")
 	_ = fs.Parse(argv)
 
 	dataDir := *dataDirFlag
@@ -71,6 +72,39 @@ func runProduceCLI(argv []string, defaultDataDir string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "✗ 获取作品 [%s] 失败: %v\n", projectID, err)
 		return 1
+	}
+
+	if *volumeIdxFlag > 0 {
+		llmClient := engine.NewHTTPLLMClient(cfg.APIBase, cfg.APIKey)
+		router := engine.NewLLMRouter(llmClient)
+		router.UpdateFromConfig(cfg)
+
+		orch := engine.NewOrchestrator(router)
+		chronicle := engine.NewCanonChronicle(s)
+		qualityGate := engine.NewQualityGate(router, nil)
+		workshop := engine.NewChapterWorkshop(orch, chronicle, qualityGate, s)
+
+		batch := engine.NewVolumeBatch(workshop, s)
+		req := engine.VolumeProduceRequest{
+			ProjectID:       projectID,
+			VolumeIndex:     *volumeIdxFlag,
+			ChapterFrom:     *chapterIdxFlag,
+			WordsTarget:     2000,
+			MaxRewriteLoops: 3,
+			OnProgress: func(ev engine.VolumeEvent) {
+				if ev.Phase == "CHAPTER_DONE" {
+					fmt.Printf("第 %d 章 → %s/%d/%v\n", ev.ChapterIndex, ev.Verdict, ev.Score, ev.Committed)
+				}
+			},
+		}
+
+		res, err := batch.ProduceVolume(ctx, req)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "✗ 卷批产执行失败: %v\n", err)
+			return 1
+		}
+
+		return printVolumeProduceSummary(os.Stdout, os.Stderr, res)
 	}
 
 	// Resolve Chapter Index
@@ -168,5 +202,31 @@ func printProduceSummary(stdout, stderr io.Writer, res *engine.WorkshopProduceRe
 		fmt.Fprintf(stdout, "%s\n", res.Content)
 	}
 
+	return 0
+}
+
+func printVolumeProduceSummary(stdout, stderr io.Writer, res *engine.VolumeProduceResult) int {
+	if res == nil {
+		return 1
+	}
+
+	fmt.Fprintln(stdout, "\n==================== 卷批产汇总 ====================")
+	fmt.Fprintf(stdout, "  • 生产章数: %d 章 (第 %d-%d 章)\n", len(res.Chapters), res.StartChapter, res.EndChapter)
+	if res.Stopped {
+		fmt.Fprintf(stderr, "  • 停线章: 第 %d 章 (原因: %s)\n", res.StoppedAtChapter, res.StopReason)
+	} else {
+		fmt.Fprintf(stdout, "  • 停线章: 无 (全卷正常完成)\n")
+	}
+	fmt.Fprintf(stdout, "  • Token: %d tokens (Prompt: %d, Completion: %d)\n",
+		res.TotalUsage.TotalTokens, res.TotalUsage.PromptTokens, res.TotalUsage.CompletionTokens)
+	fmt.Fprintf(stdout, "  • 成本: $%.4f USD\n", res.EstimatedCostUSD)
+	fmt.Fprintln(stdout, "====================================================")
+
+	if res.StopReason == "HALTED" {
+		return 2
+	}
+	if res.StopReason == "ERROR" || res.Stopped {
+		return 1
+	}
 	return 0
 }
