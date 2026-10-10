@@ -363,6 +363,9 @@ func TestChapterWorkshop_AutoCommit_FailClosedHaltWhenRevisionNeeded(t *testing.
 	if res.RewriteLoops != 1 {
 		t.Errorf("expected RewriteLoops 1, got %d", res.RewriteLoops)
 	}
+	if res.Audit.NeedsHuman != true {
+		t.Errorf("expected res.Audit.NeedsHuman == true on fail-closed halt, got %v", res.Audit.NeedsHuman)
+	}
 
 	// 3. Assert machine-readable escalation marker is appended to Issues
 	const expectedMarker = "【ESCALATED】已达最大重写轮次仍未通过，已停线待人工，拒绝自动入库"
@@ -464,6 +467,9 @@ func TestChapterWorkshop_AutoCommit_AcceptedPassThrough(t *testing.T) {
 	// 2. Assert verdict is ACCEPTED
 	if res.Audit.Verdict != domain.ReviewVerdictAccepted {
 		t.Errorf("expected verdict ACCEPTED, got %s", res.Audit.Verdict)
+	}
+	if res.Audit.NeedsHuman != false {
+		t.Errorf("expected res.Audit.NeedsHuman == false on accepted pass-through, got %v", res.Audit.NeedsHuman)
 	}
 
 	// 3. Assert checkpoint is cleared after successful commit
