@@ -34,6 +34,8 @@ type Scene struct {
 	ID              string        `json:"id"`
 	ChapterID       string        `json:"chapter_id"`
 	ProjectID       string        `json:"project_id"`
+	ChapterIntentID string        `json:"chapter_intent_id,omitempty"`
+	BeatIndex       int           `json:"beat_index,omitempty"`
 	SceneIndex      int           `json:"scene_index"`
 	Title           string        `json:"title"`
 	LocationEntryID string        `json:"location_entry_id,omitempty"`
