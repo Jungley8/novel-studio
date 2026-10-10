@@ -57,10 +57,11 @@
         <Sparkles class="w-4 h-4 text-brand-amber shrink-0 mt-0.5" />
         <div class="space-y-0.5 leading-relaxed">
           <div class="font-semibold text-brand-amber text-[11px]">
-            Studio 原生跨项目对话智囊已就绪
+            {{ !activeContextProjectId ? '已注入全库作品概览上下文（跨项目脑暴）' : 'Studio 原生跨项目对话智囊已就绪' }}
           </div>
           <div class="text-[11px] text-ink-300">
-            支持无项目全局灵感探索与单书 Horizon 上下文挂载，原生接入 <code>POST /api/studio/chat</code> 服务。
+            <span v-if="!activeContextProjectId">系统已自动注入全库所有作品的题材、立意、归档进度与开放伏笔概览，支持跨项目全局灵感碰撞。</span>
+            <span v-else>已挂载《{{ currentContextProjectTitle }}》单书 Horizon 上下文，原生接入 <code>POST /api/studio/chat</code> 服务。</span>
           </div>
         </div>
       </div>

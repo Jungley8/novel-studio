@@ -340,8 +340,12 @@ function convertToGenesis(idea) {
     navigator.clipboard.writeText(`${idea.title}\n${idea.pitch}`).catch(() => {});
   }
 
-  // 3. 复用现有新建项目/创世弹窗调用方式
-  // TODO: 等待 NewProjectModal 开放 prefill 参数注入，调不通先复用现有调用方式并触发弹窗
+  // 3. 预填灵感数据并唤起创世弹窗
+  state.newProjectPrefill = {
+    title: idea.title,
+    concept: idea.pitch || '',
+    platform: idea.platform || '',
+  };
   state.showNewProjectModal = true;
 
   notify(

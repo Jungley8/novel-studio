@@ -129,6 +129,7 @@ export const state = reactive({
 
   // Modals & Panels Visibility
   showNewProjectModal: false,
+  newProjectPrefill: null,
   showPromptInspectorModal: false,
   showWorkshopChatDrawer: false,
   showSceneModal: false,

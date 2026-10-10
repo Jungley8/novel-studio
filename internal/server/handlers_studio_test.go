@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Jungley8/novel-studio/internal/config"
@@ -17,7 +20,26 @@ import (
 )
 
 func setupTestServerWithMockLLM(t *testing.T) (*server.Server, store.Store, *httptest.Server) {
+	return setupTestServerWithCapturingMockLLM(t, nil)
+}
+
+func setupTestServerWithCapturingMockLLM(t *testing.T, captureFn func(sysPrompt string)) (*server.Server, store.Store, *httptest.Server) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
+		if captureFn != nil {
+			for _, m := range reqBody.Messages {
+				if m.Role == "system" {
+					captureFn(m.Content)
+				}
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		resp := map[string]any{
 			"choices": []map[string]any{
@@ -366,5 +388,152 @@ func TestStudio_MethodNotAllowedAndValidation(t *testing.T) {
 	srv.ServeHTTP(wEmpty, reqEmpty)
 	if wEmpty.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for empty message, got %d", wEmpty.Code)
+	}
+}
+
+func TestStudioChat_GeneralBrainstorm_OverviewEmptyLibrary(t *testing.T) {
+	var capturedSysPrompt string
+	var mu sync.Mutex
+	srv, _, mockServer := setupTestServerWithCapturingMockLLM(t, func(sysPrompt string) {
+		mu.Lock()
+		capturedSysPrompt = sysPrompt
+		mu.Unlock()
+	})
+	defer mockServer.Close()
+
+	payload := map[string]string{
+		"mode":    "scene_brainstorm",
+		"message": "空库全局脑暴测试",
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/studio/chat", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(capturedSysPrompt, "全库作品概览") {
+		t.Errorf("expected captured system prompt to contain '全库作品概览', got: %s", capturedSysPrompt)
+	}
+	if !strings.Contains(capturedSysPrompt, "全库暂无作品") {
+		t.Errorf("expected captured system prompt to contain '全库暂无作品', got: %s", capturedSysPrompt)
+	}
+}
+
+func TestStudioChat_GeneralBrainstorm_OverviewMultiProject(t *testing.T) {
+	var capturedSysPrompt string
+	var mu sync.Mutex
+	srv, s, mockServer := setupTestServerWithCapturingMockLLM(t, func(sysPrompt string) {
+		mu.Lock()
+		capturedSysPrompt = sysPrompt
+		mu.Unlock()
+	})
+	defer mockServer.Close()
+	ctx := context.Background()
+
+	// 1. 项目 1：带 ThemePremise，2 章，1 个 OPEN 钩，1 个 RESOLVED 钩
+	p1 := &domain.Project{
+		ID:             "proj-chat-p1",
+		Title:          "万古仙途",
+		TargetPlatform: "起点仙侠",
+		Framework: &domain.ProjectFramework{
+			ThemePremise: "凡人逆修弑神，天道实为寄生真魔",
+		},
+	}
+	_ = s.SaveProject(ctx, p1)
+	for i := 1; i <= 2; i++ {
+		_ = s.SaveChapter(ctx, &domain.Chapter{
+			ID:           fmt.Sprintf("ch-p1-%d", i),
+			ProjectID:    p1.ID,
+			ChapterIndex: i,
+			Title:        fmt.Sprintf("第%d章", i),
+			Content:      "正文...",
+		})
+	}
+	_ = s.SavePlotHook(ctx, &domain.PlotHook{
+		ID:        "hook-p1-1",
+		ProjectID: p1.ID,
+		Title:     "古印秘密",
+		Status:    domain.HookStatusOpen,
+	})
+	_ = s.SavePlotHook(ctx, &domain.PlotHook{
+		ID:        "hook-p1-2",
+		ProjectID: p1.ID,
+		Title:     "结仇长老",
+		Status:    domain.HookStatusResolved,
+	})
+
+	// 2. 项目 2：带 ThemePremise，3 章，2 个 OPEN 钩
+	p2 := &domain.Project{
+		ID:             "proj-chat-p2",
+		Title:          "星界求生",
+		TargetPlatform: "番茄脑洞",
+		Framework: &domain.ProjectFramework{
+			ThemePremise: "高维异种入侵，开局觉醒推演外挂",
+		},
+	}
+	_ = s.SaveProject(ctx, p2)
+	for i := 1; i <= 3; i++ {
+		_ = s.SaveChapter(ctx, &domain.Chapter{
+			ID:           fmt.Sprintf("ch-p2-%d", i),
+			ProjectID:    p2.ID,
+			ChapterIndex: i,
+			Title:        fmt.Sprintf("第%d章", i),
+			Content:      "正文...",
+		})
+	}
+	_ = s.SavePlotHook(ctx, &domain.PlotHook{
+		ID:        "hook-p2-1",
+		ProjectID: p2.ID,
+		Title:     "深渊母虫",
+		Status:    domain.HookStatusOpen,
+	})
+	_ = s.SavePlotHook(ctx, &domain.PlotHook{
+		ID:        "hook-p2-2",
+		ProjectID: p2.ID,
+		Title:     "叛军内奸",
+		Status:    domain.HookStatusOpen,
+	})
+
+	// 3. 发送无 project_id 请求
+	payload := map[string]string{
+		"mode":    "scene_brainstorm",
+		"message": "两个作品风格差异大，如何设计跨界联动点子？",
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/studio/chat", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if !strings.Contains(capturedSysPrompt, "全库作品概览") {
+		t.Errorf("expected captured system prompt to contain '全库作品概览', got: %s", capturedSysPrompt)
+	}
+	if !strings.Contains(capturedSysPrompt, "万古仙途") {
+		t.Errorf("expected captured system prompt to contain '万古仙途', got: %s", capturedSysPrompt)
+	}
+	if !strings.Contains(capturedSysPrompt, "星界求生") {
+		t.Errorf("expected captured system prompt to contain '星界求生', got: %s", capturedSysPrompt)
+	}
+	if !strings.Contains(capturedSysPrompt, "凡人逆修弑神") {
+		t.Errorf("expected captured system prompt to contain p1 ThemePremise, got: %s", capturedSysPrompt)
+	}
+	if !strings.Contains(capturedSysPrompt, "高维异种入侵") {
+		t.Errorf("expected captured system prompt to contain p2 ThemePremise, got: %s", capturedSysPrompt)
+	}
+	if strings.Contains(capturedSysPrompt, "全库暂无作品") {
+		t.Errorf("captured system prompt should not contain '全库暂无作品' when projects exist")
 	}
 }
