@@ -535,6 +535,77 @@
           </button>
         </div>
       </div>
+
+      <!-- 创作参考坞 (吸底卡片，支持一键抽屉式展开) -->
+      <div class="shrink-0 border-t border-atelier-750 bg-atelier-950/80 backdrop-blur-sm flex flex-col transition-all duration-200">
+        <!-- 胶囊标题栏 / 折叠开关 -->
+        <div 
+          @click="showReferenceDock = !showReferenceDock" 
+          class="p-2.5 flex items-center justify-between text-xs text-ink-300 hover:text-ink-100 transition cursor-pointer select-none group">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="w-2 h-2 rounded-full bg-brand-amber shrink-0 animate-pulse"></span>
+            <span class="font-serif font-bold text-ink-100 text-[11px] shrink-0">创作参考</span>
+            <span class="text-[10px] text-ink-400 truncate font-mono">
+              {{ state.currentProject?.protagonist?.name_and_level || '凡人' }} · {{ lastChapterTail ? '上章末尾' : '开局首章' }}
+            </span>
+          </div>
+          <div class="flex items-center gap-1 text-[10px] text-ink-400 group-hover:text-brand-amber shrink-0">
+            <span>{{ showReferenceDock ? '收起' : '展开' }}</span>
+            <ChevronUp v-if="!showReferenceDock" class="w-3.5 h-3.5" />
+            <ChevronDown v-else class="w-3.5 h-3.5" />
+          </div>
+        </div>
+
+        <!-- 展开内容区 (最大高度 240px，带平滑滚动) -->
+        <div v-show="showReferenceDock" class="p-3 pt-0 max-h-60 overflow-y-auto space-y-2.5 border-t border-atelier-800/60">
+          <!-- 主角状态 -->
+          <div class="p-2.5 bg-atelier-900/80 border border-atelier-750/80 rounded-lg space-y-1 text-xs">
+            <div class="flex items-center justify-between text-[11px]">
+              <span class="font-bold text-brand-emerald flex items-center gap-1.5">
+                <Cpu class="w-3.5 h-3.5" />
+                <span>主角现状</span>
+              </span>
+              <strong class="text-ink-100 font-semibold truncate max-w-[140px]">{{ state.currentProject?.protagonist?.name_and_level || '凡人' }}</strong>
+            </div>
+            <div class="text-[10px] text-ink-300">
+              随身底牌：<span class="text-ink-200">{{ state.currentProject?.protagonist?.inventory || '无' }}</span>
+            </div>
+          </div>
+
+          <!-- 上章结尾 -->
+          <div v-if="state.chapters.length > 0" class="p-2.5 bg-atelier-900/80 border border-atelier-750/80 rounded-lg space-y-1 text-xs">
+            <span class="font-bold text-brand-amber flex items-center gap-1.5 text-[11px]">
+              <Anchor class="w-3.5 h-3.5" />
+              <span>上章结尾</span>
+            </span>
+            <p class="text-[10px] text-ink-300 font-serif leading-relaxed italic line-clamp-3">
+              “{{ lastChapterTail }}”
+            </p>
+          </div>
+
+          <!-- 涉及人物 -->
+          <div class="p-2.5 bg-atelier-900/80 border border-atelier-750/80 rounded-lg space-y-1.5 text-xs">
+            <div class="flex items-center justify-between text-[11px]">
+              <span class="font-bold text-brand-cyan flex items-center gap-1.5">
+                <BookOpen class="w-3.5 h-3.5" />
+                <span>登场人物</span>
+              </span>
+              <span class="text-[10px] font-mono text-ink-500">{{ state.codexEntries.length }} 词条</span>
+            </div>
+            <div v-if="state.codexEntries.length > 0" class="flex flex-wrap gap-1">
+              <span 
+                v-for="e in state.codexEntries.slice(0, 8)" 
+                :key="e.id"
+                class="text-[9px] px-1.5 py-0.5 rounded bg-atelier-850 border border-atelier-700/80 text-ink-200">
+                {{ e.name }}
+              </span>
+            </div>
+            <div v-else class="text-[10px] text-ink-500 italic">
+              暂无人物设定
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 中栏：文学手稿画布 (弹性自适应排版空间) -->
@@ -707,16 +778,6 @@
             :class="state.reviewResult.score >= 80 ? 'bg-brand-emerald/15 text-brand-emerald border-brand-emerald/30' : 'bg-brand-rose/15 text-brand-rose border-brand-rose/30'">
             {{ state.reviewResult.score }}分
           </span>
-
-          <!-- 重新展开参考快捷按钮 (当右侧折叠时呈现) -->
-          <button 
-            v-if="!state.showHorizonPanel && !state.isZenMode"
-            @click="state.showHorizonPanel = true"
-            class="px-2 py-1 rounded bg-atelier-850 hover:bg-atelier-800 border border-atelier-750 text-xs text-brand-cyan flex items-center gap-1 transition cursor-pointer"
-            title="展开右侧参考">
-            <PanelRight class="w-3.5 h-3.5" />
-            <span class="text-[11px] font-medium hidden sm:inline">参考</span>
-          </button>
         </div>
       </div>
 
@@ -911,65 +972,6 @@
       </div>
     </div>
 
-    <!-- 右栏：创作参考 (宽 280px，支持一键折叠) -->
-    <div 
-      v-show="state.showHorizonPanel && !state.isZenMode" 
-      class="w-72 border-l border-atelier-750 bg-atelier-900/30 flex flex-col min-h-0 shrink-0 overflow-y-auto p-3.5 space-y-3.5 transition-all duration-200 select-none">
-      
-      <div>
-        <span class="text-[10px] font-mono uppercase tracking-wider text-ink-400 block mb-0.5">
-          创作参考
-        </span>
-        <h4 class="text-xs font-bold text-ink-200 font-serif">主角状态与上章文风</h4>
-      </div>
-
-      <!-- 主角状态 -->
-      <div class="p-3 bg-atelier-950/70 border border-atelier-750 rounded-lg space-y-1.5 text-xs">
-        <span class="font-bold text-brand-emerald flex items-center gap-1.5">
-          <Cpu class="w-3.5 h-3.5" />
-          <span>主角现状</span>
-        </span>
-        <div class="text-[11px] text-ink-300">
-          境界：<strong class="text-ink-100 font-semibold">{{ state.currentProject?.protagonist?.name_and_level || '凡人' }}</strong>
-        </div>
-        <div class="text-[11px] text-ink-300">
-          随身物品：<strong class="text-ink-100">{{ state.currentProject?.protagonist?.inventory || '无' }}</strong>
-        </div>
-      </div>
-
-      <!-- 上章结尾 -->
-      <div v-if="state.chapters.length > 0" class="p-3 bg-atelier-950/70 border border-atelier-750 rounded-lg space-y-1.5 text-xs">
-        <span class="font-bold text-brand-amber flex items-center gap-1.5">
-          <Anchor class="w-3.5 h-3.5" />
-          <span>上章结尾</span>
-        </span>
-        <p class="text-[11px] text-ink-300 font-serif leading-relaxed italic line-clamp-4">
-          “{{ lastChapterTail }}”
-        </p>
-      </div>
-
-      <!-- 涉及人物 -->
-      <div class="p-3 bg-atelier-950/70 border border-atelier-750 rounded-lg space-y-2 text-xs">
-        <div class="flex items-center justify-between">
-          <span class="font-bold text-brand-cyan flex items-center gap-1.5">
-            <BookOpen class="w-3.5 h-3.5" />
-            <span>涉及人物</span>
-          </span>
-          <span class="text-[10px] font-mono text-ink-400">{{ state.codexEntries.length }} 词条</span>
-        </div>
-        <div v-if="state.codexEntries.length > 0" class="flex flex-wrap gap-1">
-          <span 
-            v-for="e in state.codexEntries.slice(0, 8)" 
-            :key="e.id"
-            class="text-[10px] px-2 py-0.5 rounded bg-atelier-850 border border-atelier-700/80 text-ink-200">
-            {{ e.name }}
-          </span>
-        </div>
-        <div v-else class="text-[11px] text-ink-500 italic">
-          暂无人物，可在设定集中添加。
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -1000,7 +1002,6 @@ import {
   RotateCcw,
   HeartHandshake,
   PanelLeft,
-  PanelRight,
   Plus,
   Settings,
   Save,
@@ -1008,8 +1009,12 @@ import {
   AlertCircle,
   AlertTriangle,
   Zap,
-  X
+  X,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-vue-next';
+
+const showReferenceDock = ref(false);
 
 const workflowSteps = [
   { id: 1, shortLabel: '构思', desc: '确定核心冲突与关键事件' },

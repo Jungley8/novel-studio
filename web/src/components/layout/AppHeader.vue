@@ -24,15 +24,8 @@
           @click="state.showWorkflowPanel = !state.showWorkflowPanel"
           :class="state.showWorkflowPanel ? 'bg-atelier-750 text-brand-amber' : 'text-ink-400 hover:text-ink-200'"
           class="p-1.5 rounded transition cursor-pointer"
-          title="展开或折叠左侧工序">
+          title="展开或折叠左侧工序与参考">
           <PanelLeft class="w-3.5 h-3.5" />
-        </button>
-        <button 
-          @click="state.showHorizonPanel = !state.showHorizonPanel"
-          :class="state.showHorizonPanel ? 'bg-atelier-750 text-brand-cyan' : 'text-ink-400 hover:text-ink-200'"
-          class="p-1.5 rounded transition cursor-pointer"
-          title="展开或折叠右侧参考">
-          <PanelRight class="w-3.5 h-3.5" />
         </button>
         <button 
           @click="state.isZenMode = true"
