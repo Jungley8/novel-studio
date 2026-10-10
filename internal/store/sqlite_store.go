@@ -1342,6 +1342,26 @@ func (e *NonLatestChapterError) Unwrap() error {
 
 var rollbackStateMutation = domain.RollbackStateMutation
 
+func (s *SQLiteStore) getStateSnapshotTx(ctx context.Context, tx *sql.Tx, projectID string, chapterIndex int) (*domain.ChapterStateSnapshot, error) {
+	query := `
+	SELECT id, project_id, chapter_index, protagonist_json, hooks_json, created_at
+	FROM chapter_state_snapshots
+	WHERE project_id = ? AND chapter_index = ?;
+	`
+	row := tx.QueryRowContext(ctx, query, projectID, chapterIndex)
+
+	var snap domain.ChapterStateSnapshot
+	if err := row.Scan(
+		&snap.ID, &snap.ProjectID, &snap.ChapterIndex, &snap.ProtagonistJSON, &snap.HooksJSON, &snap.CreatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get chapter state snapshot in tx: %w", err)
+	}
+	return &snap, nil
+}
+
 func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, *domain.Project, error) {
 	if projectID == "" {
 		return nil, nil, errors.New("projectID cannot be empty")
@@ -1477,67 +1497,174 @@ func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, cha
 		return nil, nil, fmt.Errorf("save checkpoint in tx: %w", err)
 	}
 
-	// 4. Delete the chapter from chapters table
+	// 4. Check state snapshot if chapterIndex >= 2 (Fail-Closed: 缺失快照时拒绝回撤，禁止逆运算降级)
+	var snap *domain.ChapterStateSnapshot
+	if chapterIndex >= 2 {
+		var snapErr error
+		snap, snapErr = s.getStateSnapshotTx(ctx, tx, projectID, chapterIndex-1)
+		if snapErr != nil {
+			return nil, nil, fmt.Errorf("query chapter state snapshot in tx: %w", snapErr)
+		}
+		if snap == nil {
+			// 理由：逆运算有解析歧义，静默降级不可接受，必须严格 Fail-Closed
+			return nil, nil, fmt.Errorf("cannot uncommit chapter %d: state snapshot for chapter %d is missing (pre-history chapter); manual state correction required", chapterIndex, chapterIndex-1)
+		}
+	}
+
+	// 5. Delete the chapter from chapters table
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chapters WHERE project_id = ? AND chapter_index = ?`, projectID, chapterIndex); err != nil {
 		return nil, nil, fmt.Errorf("delete chapter in tx: %w", err)
 	}
 
-	// 5. Rollback protagonist mutations
-	protagonist, _ := s.getProtagonistTx(ctx, tx, projectID)
-	if protagonist != nil {
-		if _, err := rollbackStateMutation(protagonist, c.StateMutation); err != nil {
-			return nil, nil, fmt.Errorf("rollback protagonist mutation: %w", err)
-		}
-		protagonist.UpdatedAt = time.Now()
-		var levelJSON, itemsJSON string
-		if protagonist.StructuredLevel != nil {
-			if lb, lerr := json.Marshal(protagonist.StructuredLevel); lerr == nil {
-				levelJSON = string(lb)
+	// 6. Restore world state and plot hooks
+	if chapterIndex >= 2 {
+		// chapterIndex >= 2 且快照存在：由第 N-1 章快照精确还原主角状态与伏笔状态
+		if snap.ProtagonistJSON != "" && snap.ProtagonistJSON != "{}" && snap.ProtagonistJSON != "null" {
+			var snapProt domain.CodexEntry
+			if err := json.Unmarshal([]byte(snap.ProtagonistJSON), &snapProt); err != nil {
+				return nil, nil, fmt.Errorf("unmarshal protagonist snapshot: %w", err)
 			}
-		}
-		if len(protagonist.StructuredItems) > 0 {
-			if ib, ierr := json.Marshal(protagonist.StructuredItems); ierr == nil {
-				itemsJSON = string(ib)
-			}
-		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE codex_entries SET realm = ?, inventory = ?, structured_level_json = ?, structured_items_json = ?, updated_at = ? WHERE id = ?`,
-			protagonist.Realm, protagonist.Inventory, levelJSON, itemsJSON, protagonist.UpdatedAt, protagonist.ID,
-		); err != nil {
-			return nil, nil, fmt.Errorf("update protagonist codex entry: %w", err)
-		}
-	}
-
-	// 6. Revert resolved plot hooks if any were resolved in this chapter
-	if c.Review != nil && len(c.Review.ResolvedHookIDs) > 0 {
-		for _, hid := range c.Review.ResolvedHookIDs {
-			hid = strings.TrimSpace(hid)
-			if hid != "" {
-				if _, err := tx.ExecContext(ctx,
-					`UPDATE plot_hooks SET status = 'OPEN' WHERE project_id = ? AND (id = ? OR title = ?)`,
-					projectID, hid, hid,
+			if snapProt.ID != "" {
+				var levelJSON, itemsJSON string
+				if snapProt.StructuredLevel != nil {
+					if lb, lerr := json.Marshal(snapProt.StructuredLevel); lerr == nil {
+						levelJSON = string(lb)
+					}
+				}
+				if len(snapProt.StructuredItems) > 0 {
+					if ib, ierr := json.Marshal(snapProt.StructuredItems); ierr == nil {
+						itemsJSON = string(ib)
+					}
+				}
+				category := string(snapProt.Category)
+				if category == "" {
+					category = string(domain.CategoryCharacter)
+				}
+				trackingMode := string(snapProt.TrackingMode)
+				if trackingMode == "" {
+					trackingMode = string(domain.TrackingModeAutoMention)
+				}
+				if _, err := tx.ExecContext(ctx, `
+					UPDATE codex_entries SET
+						category = ?,
+						name = ?,
+						color_tag = ?,
+						summary = ?,
+						details_markdown = ?,
+						tracking_mode = ?,
+						archetype = ?,
+						voice_tone = ?,
+						core_motivation = ?,
+						current_disposition = ?,
+						realm = ?,
+						inventory = ?,
+						health_status = ?,
+						structured_level_json = ?,
+						structured_items_json = ?,
+						alignment = ?,
+						threat_level = ?,
+						updated_at = ?
+					WHERE id = ?
+				`,
+					category,
+					snapProt.Name,
+					snapProt.ColorTag,
+					snapProt.Summary,
+					snapProt.DetailsMarkdown,
+					trackingMode,
+					snapProt.Archetype,
+					snapProt.VoiceTone,
+					snapProt.CoreMotivation,
+					snapProt.CurrentDisposition,
+					snapProt.Realm,
+					snapProt.Inventory,
+					snapProt.HealthStatus,
+					levelJSON,
+					itemsJSON,
+					snapProt.Alignment,
+					snapProt.ThreatLevel,
+					time.Now(),
+					snapProt.ID,
 				); err != nil {
-					return nil, nil, fmt.Errorf("revert resolved hook in tx: %w", err)
+					return nil, nil, fmt.Errorf("restore protagonist codex entry in tx: %w", err)
 				}
 			}
 		}
-	}
 
-	// 6b. Recalculate FERMENTING vs OPEN hooks for this project based on remaining committed chapters
-	var maxRemaining int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(chapter_index), 0) FROM chapters WHERE project_id = ?`, projectID).Scan(&maxRemaining); err != nil {
-		return nil, nil, fmt.Errorf("query max remaining chapter: %w", err)
-	}
+		if snap.HooksJSON != "" && snap.HooksJSON != "null" {
+			var snapHooks []*domain.PlotHook
+			if err := json.Unmarshal([]byte(snap.HooksJSON), &snapHooks); err != nil {
+				return nil, nil, fmt.Errorf("unmarshal plot hooks snapshot: %w", err)
+			}
+			for _, h := range snapHooks {
+				if h != nil && strings.TrimSpace(h.ID) != "" {
+					if _, err := tx.ExecContext(ctx,
+						`UPDATE plot_hooks SET status = ? WHERE project_id = ? AND id = ?`,
+						string(h.Status), projectID, strings.TrimSpace(h.ID),
+					); err != nil {
+						return nil, nil, fmt.Errorf("restore plot hook in tx: %w", err)
+					}
+				}
+			}
+		}
+	} else {
+		// chapterIndex == 1:
+		// 第 1 章的前态是创世空态，逆运算在此边界与成因等价，无语义风险，保留逆运算回滚路径。
+		// 伏笔部分：第 1 章时快照(0)不存在，保留现有的"已回收→OPEN"还原 + FERMENTING 重算（maxRemaining=0 时 FERMENTING 会全归 OPEN，现逻辑正确）。
+		protagonist, _ := s.getProtagonistTx(ctx, tx, projectID)
+		if protagonist != nil {
+			if _, err := rollbackStateMutation(protagonist, c.StateMutation); err != nil {
+				return nil, nil, fmt.Errorf("rollback protagonist mutation: %w", err)
+			}
+			protagonist.UpdatedAt = time.Now()
+			var levelJSON, itemsJSON string
+			if protagonist.StructuredLevel != nil {
+				if lb, lerr := json.Marshal(protagonist.StructuredLevel); lerr == nil {
+					levelJSON = string(lb)
+				}
+			}
+			if len(protagonist.StructuredItems) > 0 {
+				if ib, ierr := json.Marshal(protagonist.StructuredItems); ierr == nil {
+					itemsJSON = string(ib)
+				}
+			}
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE codex_entries SET realm = ?, inventory = ?, structured_level_json = ?, structured_items_json = ?, updated_at = ? WHERE id = ?`,
+				protagonist.Realm, protagonist.Inventory, levelJSON, itemsJSON, protagonist.UpdatedAt, protagonist.ID,
+			); err != nil {
+				return nil, nil, fmt.Errorf("update protagonist codex entry: %w", err)
+			}
+		}
 
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE plot_hooks 
-		SET status = CASE 
-			WHEN target_chapter <= ? THEN 'FERMENTING' 
-			ELSE 'OPEN' 
-		END 
-		WHERE project_id = ? AND status IN ('OPEN', 'FERMENTING')
-	`, maxRemaining, projectID); err != nil {
-		return nil, nil, fmt.Errorf("recalculate plot hooks in tx: %w", err)
+		if c.Review != nil && len(c.Review.ResolvedHookIDs) > 0 {
+			for _, hid := range c.Review.ResolvedHookIDs {
+				hid = strings.TrimSpace(hid)
+				if hid != "" {
+					if _, err := tx.ExecContext(ctx,
+						`UPDATE plot_hooks SET status = 'OPEN' WHERE project_id = ? AND (id = ? OR title = ?)`,
+						projectID, hid, hid,
+					); err != nil {
+						return nil, nil, fmt.Errorf("revert resolved hook in tx: %w", err)
+					}
+				}
+			}
+		}
+
+		var maxRemaining int
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(chapter_index), 0) FROM chapters WHERE project_id = ?`, projectID).Scan(&maxRemaining); err != nil {
+			return nil, nil, fmt.Errorf("query max remaining chapter: %w", err)
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE plot_hooks 
+			SET status = CASE 
+				WHEN target_chapter <= ? THEN 'FERMENTING' 
+				ELSE 'OPEN' 
+			END 
+			WHERE project_id = ? AND status IN ('OPEN', 'FERMENTING')
+		`, maxRemaining, projectID); err != nil {
+			return nil, nil, fmt.Errorf("recalculate plot hooks in tx: %w", err)
+		}
 	}
 
 	// 7. Delete any codex progressions triggered from this chapter
