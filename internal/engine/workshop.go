@@ -625,6 +625,37 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		}
 	}
 
+	// 5.55 Cross-chapter echo detection (non-blocking audit issues)
+	allChapters, listErr := w.store.ListChapters(ctx, req.ProjectID)
+	if listErr != nil {
+		if auditReport != nil {
+			auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【回声警告】检测失败: %v", listErr))
+		}
+	} else {
+		var pastChapters []*domain.Chapter
+		for _, ch := range allChapters {
+			if ch != nil && ch.ChapterIndex < req.ChapterIndex {
+				pastChapters = append(pastChapters, ch)
+			}
+		}
+		sort.Slice(pastChapters, func(i, j int) bool {
+			return pastChapters[i].ChapterIndex < pastChapters[j].ChapterIndex
+		})
+		if len(pastChapters) > 20 {
+			pastChapters = pastChapters[len(pastChapters)-20:]
+		}
+		recentTexts := make([]string, 0, len(pastChapters))
+		for _, ch := range pastChapters {
+			recentTexts = append(recentTexts, ch.Content)
+		}
+		echoPhrases := DetectEchoPhrases(recentTexts, currentDraft)
+		if auditReport != nil {
+			for _, ph := range echoPhrases {
+				auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【跨章重复警告】短语「%s」在近 20 章中反复出现，建议换写。", ph))
+			}
+		}
+	}
+
 	// 5.6 Summarize chapter if not technically blocked.
 	// 摘要失败永不阻塞归档（注释写明理由：摘要可由正文重建，与状态真相不同级）。
 	if !technicalBlocked {
