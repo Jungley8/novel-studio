@@ -132,7 +132,8 @@ import {
   Plus,
   ChevronDown,
   Download,
-  BookDown
+  BookDown,
+  GitBranch
 } from 'lucide-vue-next';
 
 const navGroups = computed(() => [
@@ -158,6 +159,7 @@ const navGroups = computed(() => [
       { id: 'workbench', label: '写正文', desc: '构思、起草与打磨每章手稿', icon: PenTool, badge: state.chapters.length ? `第${state.chapters.length + 1}章` : '第1章' },
       { id: 'statemachine', label: '人物状态', desc: '主角境界、战力与物品变动', icon: Cpu },
       { id: 'hooks', label: '伏笔簿', desc: '记录剧情暗线与回收进度', icon: Anchor, badge: state.hooks.filter(h => h.status !== 'RESOLVED').length ? `${state.hooks.filter(h => h.status !== 'RESOLVED').length}线` : '' },
+      { id: 'forecast', label: '剧情树', desc: '剧情前瞻分支推演与计划路线', icon: GitBranch },
     ]
   },
   {
