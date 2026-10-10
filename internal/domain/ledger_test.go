@@ -3,6 +3,7 @@ package domain
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestApplyStateMutation(t *testing.T) {
@@ -168,5 +169,88 @@ func TestApplyStateMutation_MathematicalQuantity(t *testing.T) {
 	}
 	if strings.Contains(entry.Inventory, "洗髓丹") {
 		t.Errorf("expected 洗髓丹 to be removed from inventory string, got: %s", entry.Inventory)
+	}
+}
+
+func TestRollbackStateMutation_PowerDeltaGuard(t *testing.T) {
+	entry := &CodexEntry{
+		Name:      "韩立",
+		Realm:     "筑基初期",
+		Inventory: "青竹蜂云剑, 养魂木",
+		Archetype: "PROTAGONIST",
+		StructuredLevel: &PowerLevel{
+			Realm: "筑基初期",
+			History: []LevelTransition{
+				{
+					FromRealm: "练气十三层",
+					ToRealm:   "筑基初期",
+					Reason:    "服下筑基丹突破",
+					Timestamp: time.Now(),
+				},
+			},
+		},
+		StructuredItems: []InventoryItem{
+			{Name: "青竹蜂云剑", Quantity: 1},
+			{Name: "养魂木", Quantity: 1},
+		},
+	}
+
+	// 1. PowerDelta is empty: inventory rolled back, but realm and history remain completely untouched
+	mutationEmptyPower := StateMutation{
+		InventoryDelta: "+降尘丹",
+		PowerDelta:     "",
+	}
+
+	audit, err := RollbackStateMutation(entry, mutationEmptyPower)
+	if err != nil {
+		t.Fatalf("RollbackStateMutation failed: %v", err)
+	}
+
+	if entry.Realm != "筑基初期" {
+		t.Errorf("expected Realm to remain 筑基初期 when PowerDelta is empty, got %s", entry.Realm)
+	}
+	if entry.StructuredLevel == nil || len(entry.StructuredLevel.History) != 1 {
+		t.Fatalf("expected StructuredLevel.History length to remain 1, got %v", entry.StructuredLevel)
+	}
+	if entry.StructuredLevel.Realm != "筑基初期" {
+		t.Errorf("expected StructuredLevel.Realm to remain 筑基初期, got %s", entry.StructuredLevel.Realm)
+	}
+	if entry.StructuredLevel.History[0].FromRealm != "练气十三层" || entry.StructuredLevel.History[0].ToRealm != "筑基初期" {
+		t.Errorf("unexpected history entry: %+v", entry.StructuredLevel.History[0])
+	}
+	for _, a := range audit {
+		if strings.Contains(a, "境界回滚") {
+			t.Errorf("unexpected power rollback audit log when PowerDelta is empty: %s", a)
+		}
+	}
+
+	// 2. Control case: PowerDelta is non-empty -> realm and history popped normally
+	mutationWithPower := StateMutation{
+		PowerDelta: "突破筑基初期",
+	}
+
+	auditPower, err := RollbackStateMutation(entry, mutationWithPower)
+	if err != nil {
+		t.Fatalf("RollbackStateMutation with power failed: %v", err)
+	}
+
+	if entry.Realm != "练气十三层" {
+		t.Errorf("expected Realm to revert to 练气十三层, got %s", entry.Realm)
+	}
+	if entry.StructuredLevel == nil || len(entry.StructuredLevel.History) != 0 {
+		t.Fatalf("expected StructuredLevel.History to be empty after rollback, got %v", entry.StructuredLevel)
+	}
+	if entry.StructuredLevel.Realm != "练气十三层" {
+		t.Errorf("expected StructuredLevel.Realm to revert to 练气十三层, got %s", entry.StructuredLevel.Realm)
+	}
+	foundPowerAudit := false
+	for _, a := range auditPower {
+		if strings.Contains(a, "境界回滚") {
+			foundPowerAudit = true
+			break
+		}
+	}
+	if !foundPowerAudit {
+		t.Errorf("expected power rollback audit log, got %v", auditPower)
 	}
 }
