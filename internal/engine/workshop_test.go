@@ -910,3 +910,65 @@ func TestChapterWorkshop_Settler_MissingEvidenceBlocked(t *testing.T) {
 		t.Errorf("expected checkpoint phase %s, got %s", domain.CheckpointPhaseDrafted, cp.Phase)
 	}
 }
+
+func TestChapterWorkshop_RhythmIntegration(t *testing.T) {
+	beatsResp := `{
+		"beats": [
+			{"phase": "铺垫蓄势", "tension": 4, "action": "打坐调息，感应天地灵气"},
+			{"phase": "波澜微起", "tension": 5, "action": "院外传来急促叩门声"},
+			{"phase": "悬念收尾", "tension": 5, "action": "信封上赫然印着血色剑纹", "hook_type": "MYSTERY"}
+		],
+		"state_mutation": {
+			"inventory_delta": "+血色信笺",
+			"power_delta": ""
+		}
+	}`
+
+	mockClient := &mockWorkshopLLMClient{
+		beatsJSON:   beatsResp,
+		renderDraft: "夜凉如水。林凡盘膝而坐，忽然叩门声急响。他拾起信笺，血色剑纹刺目惊心。",
+		reviewJSON:  `{"verdict":"ACCEPTED","score":90,"issues":[],"suggestions":""}`,
+	}
+
+	orch := NewOrchestrator(mockClient)
+	qGate := NewQualityGate(mockClient, nil)
+
+	baseStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p-rhythm-int",
+			Title:          "通天之路",
+			TargetPlatform: "番茄脑洞",
+		},
+		chapters: []*domain.Chapter{},
+	}
+	mockStore := &mockCheckpointWorkshopStore{mockChronicleStore: baseStore}
+
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-rhythm-int",
+		ChapterIndex:    1,
+		CoreConflict:    "神秘来信",
+		AutoCommit:      false,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if len(res.Beats) != 3 {
+		t.Errorf("expected 3 beats derived according to chapter type, got %d", len(res.Beats))
+	}
+
+	// Verify checkpoint saved final beats
+	cp, cpErr := mockStore.GetCheckpoint(context.Background(), "p-rhythm-int", 1)
+	if cpErr != nil || cp == nil {
+		t.Fatalf("expected checkpoint saved, got nil: %v", cpErr)
+	}
+	if len(cp.Beats) != 3 {
+		t.Errorf("expected checkpoint beats to match final beats count (3), got %d", len(cp.Beats))
+	}
+}

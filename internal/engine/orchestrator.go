@@ -54,6 +54,20 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 	horizon *CanonHorizon,
 	coreConflict string,
 ) (*DeriveBeatsOutput, error) {
+	return o.DeriveBeatsForChapterType(ctx, reasoningModel, horizon, coreConflict, domain.ChapterTypeEscalation)
+}
+
+func (o *Orchestrator) DeriveBeatsForChapterType(
+	ctx context.Context,
+	reasoningModel string,
+	horizon *CanonHorizon,
+	coreConflict string,
+	ct domain.ChapterType,
+) (*DeriveBeatsOutput, error) {
+	if ct == "" {
+		ct = domain.ChapterTypeEscalation
+	}
+
 	if strings.TrimSpace(coreConflict) == "" && horizon != nil && horizon.Project != nil {
 		if suggested, _, err := o.SuggestChapterConflict(ctx, reasoningModel, horizon); err == nil && strings.TrimSpace(suggested) != "" {
 			coreConflict = strings.TrimSpace(suggested)
@@ -62,19 +76,65 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 		}
 	}
 
-	systemPrompt := `你是一名网络小说架构与读者心理学总设计师。你严禁输出抒情散文。
-你的任务是根据给定的主角实体状态、世界公理与核心冲突，推演下一章严密的 4 个剧情节拍 (Beats)。
+	var typeGuidance string
+	var phaseGuidance string
+	var hookRule string
+	switch ct {
+	case domain.ChapterTypeClimax:
+		typeGuidance = `【本章节奏定位：CLIMAX 爆发章】
+- 拍数要求：推演 4 到 6 个紧凑激烈的剧情节拍 (Beats)。
+- 张力指令：全章维持高张力持续爆发（张力 8-10），核心冲突迎来最强对抗、生死反转或高潮爆发。
+- 章末留钩：最后一拍必须挂强钩子（hook_type 必填 CLIFFHANGER | REVERSAL | MYSTERY | POWER_UP 之一）。`
+		phaseGuidance = "危机激化 | 生死搏杀 | 绝地反扑 | 巅峰爆发 | 命运转折 | 章末留钩"
+		hookRule = "最后一拍必须填写强钩子类型（CLIFFHANGER | REVERSAL | MYSTERY | POWER_UP，前序节拍留空）"
+	case domain.ChapterTypeAftermath:
+		typeGuidance = `【本章节奏定位：AFTERMATH 余波章】
+- 拍数要求：推演 3 到 4 个剧情节拍 (Beats)。
+- 张力指令：高潮后的降温收束与情绪沉淀（张力 2-5），聚焦战后清点、抚平创伤与格局重塑。
+- 章末收束：允许末拍无钩子收束（hook_type 可留空，平稳收尾）。`
+		phaseGuidance = "战后清点 | 抚平创伤 | 格局重构 | 沉淀修整"
+		hookRule = "最后一拍允许无钩子收束（hook_type 留空或选填）"
+	case domain.ChapterTypeSetup:
+		typeGuidance = `【本章节奏定位：SETUP 铺垫章】
+- 拍数要求：推演 3 到 4 个剧情节拍 (Beats)。
+- 张力指令：低中张力暗流涌动（张力 2-5），重在展示信息差、暗线埋设与下一轮危机酝酿。
+- 章末收束：允许末拍无钩子收束或留有悬念微钩（hook_type 可留空或填写）。`
+		phaseGuidance = "暗流涌动 | 试探盘查 | 伏笔埋设 | 局势隐变"
+		hookRule = "最后一拍可留空或填写悬念微钩类型"
+	case domain.ChapterTypeInterlude:
+		typeGuidance = `【本章节奏定位：INTERLUDE 转场章】
+- 拍数要求：推演 3 到 4 个剧情节拍 (Beats)。
+- 张力指令：舒缓平稳过渡（张力 1-4），重在旅途行进、日常调剂、世界观展示或修整盘点。
+- 章末收束：允许末拍无钩子收束（hook_type 留空，张弛有度）。`
+		phaseGuidance = "旅途行进 | 坊市见闻 | 心境调剂 | 势力更迭"
+		hookRule = "最后一拍留空，平缓过渡"
+	case domain.ChapterTypeEscalation:
+		fallthrough
+	default:
+		typeGuidance = `【本章节奏定位：ESCALATION 蓄力章】
+- 拍数要求：严密的 4 个剧情节拍 (Beats)。
+- 张力指令：张力爬坡递增（由 4-5 逐步爬升至 7-8），危机步步紧逼，矛盾层层升级。
+- 章末收束：最后一拍建议挂钩强化期待（hook_type 填写 CLIFFHANGER | REVERSAL | MYSTERY | POWER_UP 之一）。`
+		phaseGuidance = "蓄力压迫 | 试探下套 | 矛盾激化 | 章末留钩"
+		hookRule = "最后一拍必填或建议填写钩子类型（CLIFFHANGER | REVERSAL | MYSTERY | POWER_UP，前3拍留空）"
+	}
+
+	systemPrompt := fmt.Sprintf(`你是一名网络小说架构与读者心理学总设计师。你严禁输出抒情散文。
+你的任务是根据给定的主角实体状态、世界公理与核心冲突，结合本章节奏定位推演剧情节拍 (Beats)。
+
+%s
+
 必须以纯 JSON 格式返回，包含：
 {
   "beats": [
     {
-      "phase": "蓄力压迫 | 试探下套 | 绝地反转 | 章末留钩",
+      "phase": "%s",
       "tension": 1到10的整数,
       "action": "具体的物理动作事实",
       "expectation_broken": "谁的心理预期被打破了",
       "reader_emotion": "期望读者此刻的情绪（如：紧张压抑、好奇期待、大呼解气、心疼揪心）",
       "info_gap": "信息差（角色知/读者不知，或读者知/角色不知）",
-      "hook_type": "最后一拍必填钩子类型（CLIFFHANGER | REVERSAL | MYSTERY | POWER_UP，前3拍留空）"
+      "hook_type": "%s"
     }
   ],
   "state_mutation": {
@@ -88,10 +148,10 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
       }
     ]
   }
-}`
+}`, typeGuidance, phaseGuidance, hookRule)
 
 	hooksSummary := "无"
-	if len(horizon.AllActiveHooks) > 0 {
+	if horizon != nil && len(horizon.AllActiveHooks) > 0 {
 		var hList []string
 		for _, h := range horizon.AllActiveHooks {
 			prefix := ""
@@ -109,40 +169,74 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 	}
 
 	rollingCanon := "(开篇第一章，无前序历史)"
-	if strings.TrimSpace(horizon.RollingCanonText) != "" {
+	if horizon != nil && strings.TrimSpace(horizon.RollingCanonText) != "" {
 		rollingCanon = horizon.RollingCanonText
 	}
 
 	callbacksText := ""
-	if strings.TrimSpace(horizon.HistoricalCallbacks) != "" {
+	if horizon != nil && strings.TrimSpace(horizon.HistoricalCallbacks) != "" {
 		callbacksText = "\n\n" + horizon.HistoricalCallbacks
 	}
 
 	var volumeContext string
-	if horizon.CurrentVolume != nil {
+	if horizon != nil && horizon.CurrentVolume != nil {
 		volumeContext = fmt.Sprintf("\n【当前分卷主线任务】\n第 %d 卷：《%s》\n- 卷核心主线目标：%s\n- 卷终极大高潮：%s\n本章必须严格服务于本卷主线因果推进。\n",
 			horizon.CurrentVolume.VolumeIndex, horizon.CurrentVolume.Title,
 			horizon.CurrentVolume.CoreGoal, horizon.CurrentVolume.Climax)
 	}
 
 	var powerContext string
-	if horizon.ActivePowerTier != nil {
+	if horizon != nil && horizon.ActivePowerTier != nil {
 		powerContext = fmt.Sprintf("\n【当前战力境界法则】\n- 境界：%s (%s)\n- 升级瓶颈：%s\n- 天道代价：%s\n",
 			horizon.ActivePowerTier.Realm, horizon.ActivePowerTier.Description,
 			horizon.ActivePowerTier.Bottleneck, horizon.ActivePowerTier.Drawback)
 	}
 
 	codexContext := ""
-	if strings.TrimSpace(horizon.CodexContextText) != "" {
+	if horizon != nil && strings.TrimSpace(horizon.CodexContextText) != "" {
 		codexContext = "\n\n" + horizon.CodexContextText
 	}
 
-	project := horizon.Project
+	var rhythmForesight string
+	if horizon != nil && horizon.CurrentVolume != nil {
+		var recentTypes []domain.ChapterType
+		for _, ch := range horizon.RecentChapters {
+			if ch != nil && len(ch.Beats) > 0 {
+				recentTypes = append(recentTypes, domain.ClassifyChapterType(ch.Beats))
+			}
+		}
+		rhythmPlan := domain.PlanVolumeRhythm(horizon.CurrentVolume, recentTypes, 8)
+		if len(rhythmPlan) > 0 {
+			var planStrs []string
+			for i, t := range rhythmPlan {
+				planStrs = append(planStrs, fmt.Sprintf("+%d章:%s(%s)", i+1, t, t.ChineseName()))
+			}
+			rhythmForesight = fmt.Sprintf("\n【卷内节奏前瞻 (未来%d章规划)】\n%s\n本章规划定位：%s (%s)\n",
+				len(rhythmPlan), strings.Join(planStrs, " -> "), ct, ct.ChineseName())
+		}
+	}
+
+	projectTitle := ""
+	targetPlatform := ""
+	targetChapter := 1
+	worldRules := ""
+	var protEntry *domain.CodexEntry
+	if horizon != nil {
+		targetChapter = horizon.TargetChapter
+		worldRules = horizon.WorldRules
+		protEntry = horizon.ProtagonistEntry
+		if horizon.Project != nil {
+			projectTitle = horizon.Project.Title
+			targetPlatform = horizon.Project.TargetPlatform
+		}
+	}
+
 	userPrompt := fmt.Sprintf(`【作品信息】
 书名：《%s》
 目标平台：%s
 当前章节序号：第 %d 章
-
+%s
+%s
 【世界公理与不可违背法则】
 %s%s%s
 
@@ -161,9 +255,11 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 %s
 
 请推演输出严格合法的 JSON。`,
-		project.Title, project.TargetPlatform, horizon.TargetChapter,
-		horizon.WorldRules, volumeContext, powerContext,
-		protNameLevel(horizon.ProtagonistEntry), protInventory(horizon.ProtagonistEntry), protGoal(horizon.ProtagonistEntry), codexContext,
+		projectTitle, targetPlatform, targetChapter,
+		typeGuidance,
+		rhythmForesight,
+		worldRules, volumeContext, powerContext,
+		protNameLevel(protEntry), protInventory(protEntry), protGoal(protEntry), codexContext,
 		rollingCanon, callbacksText,
 		hooksSummary,
 		coreConflict,
