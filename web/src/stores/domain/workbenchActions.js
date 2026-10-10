@@ -50,7 +50,13 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
 
     async startNextChapter() {
       if (!state.currentProject) return;
+      if (state.pipelineState?.halted) {
+        notify('本章已停线', '本章停线，需人工定稿后才能继续', 'warning');
+        return;
+      }
       state.pipelineState.justCommitted = false;
+      state.pipelineState.halted = false;
+      state.pipelineState.haltInfo = null;
       state.editingChapterIndex = null;
       state.workbench.content = '';
       state.workbench.coreConflict = '';
@@ -58,6 +64,18 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
       state.activeStep = 1;
       const nextIdx = state.chapters.length + 1;
       await this.suggestChapterConflict(nextIdx);
+      await this.runAutonomousPipeline();
+    },
+
+    loadHaltDraftForManualEdit() {
+      const idx = state.pipelineState?.haltInfo?.chapterIndex || state.editingChapterIndex || (state.chapters?.length ? state.chapters.length + 1 : 1);
+      state.editingChapterIndex = idx;
+      state.activeStep = 5;
+      state.activeTab = 'workbench';
+      notify('已载入返工稿', `第 ${idx} 章手稿与体检建议已就绪，请在精修面板人工审阅定稿`, 'info', 3000);
+    },
+
+    async retryAutonomousPipeline() {
       await this.runAutonomousPipeline();
     },
 
@@ -77,6 +95,8 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
       state.pipelineState.tokens = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
       state.pipelineState.lastFinished = false;
       state.pipelineState.justCommitted = false;
+      state.pipelineState.halted = false;
+      state.pipelineState.haltInfo = null;
 
       const nextIndex = state.editingChapterIndex || (state.chapters.length + 1);
       let conflict = state.workbench.coreConflict?.trim() || '';
@@ -220,6 +240,8 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
           state.pipelineState.message = `第 ${completedResult.chapter_index} 章已完成并保存至章节目录！`;
           state.pipelineState.justCommitted = true;
           state.pipelineState.lastCommittedChapter = completedResult.chapter_index;
+          state.pipelineState.halted = false;
+          state.pipelineState.haltInfo = null;
           notify(`第 ${completedResult.chapter_index} 章已完成`, '本章手稿已成功定稿存入目录', 'success', 4500, {
             isTask: true,
             taskType: 'autonomous_pipeline',
@@ -238,27 +260,62 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
           state.reviewResult = null;
           state.activeStep = 1;
         } else {
-          // 质检不达标（REVISION_NEEDED / REJECTED）或未触发入库
           const audit = completedResult?.audit || state.reviewResult;
           const verdict = audit?.verdict || '待返工';
           const score = audit?.score ?? 0;
-          state.pipelineState.message = `第 ${nextIndex} 章体检结果为 ${verdict} (${score}分)，已保留在工作台供修改`;
-          notify(
-            '体检未达标',
-            `得分: ${score}分，手稿已保留在工作台，可直接精修`,
-            'warning',
-            5000,
-            {
-              isTask: true,
-              taskType: 'autonomous_pipeline',
-              primaryAction: {
-                label: '前往精修',
-                targetTab: 'workbench',
-                chapterIndex: nextIndex,
-                step: 5,
-              },
-            }
-          );
+          const isNeedsHuman = audit?.needs_human === true || (audit?.needs_human === undefined && Boolean(state.pipelineState.message && state.pipelineState.message.includes('停线待人工')));
+
+          if (isNeedsHuman) {
+            // 停线待人工处理：后端 AuditReport.NeedsHuman=true 或 PhaseComplete 事件含“停线待人工”
+            const rewriteLoops = completedResult?.rewrite_loops ?? (state.rewriteLoopCount || 0);
+            state.pipelineState.message = `第 ${nextIndex} 章已停线待人工（终审 ${verdict} · ${score}分 · 返工 ${rewriteLoops}轮）`;
+            state.pipelineState.halted = true;
+            state.pipelineState.haltInfo = {
+              chapterIndex: nextIndex,
+              verdict: verdict,
+              score: score,
+              rewriteLoops: rewriteLoops,
+              issues: Array.isArray(audit?.issues) ? audit.issues.slice(0, 3) : [],
+            };
+
+            notify(
+              `第 ${nextIndex} 章已停线待人工`,
+              `终审 ${verdict} · ${score}分 · 返工 ${rewriteLoops}轮，已停线待人工介入`,
+              'error',
+              7000,
+              {
+                isTask: true,
+                taskType: 'autonomous_pipeline',
+                primaryAction: {
+                  label: '载入返工稿进手工精修',
+                  targetTab: 'workbench',
+                  chapterIndex: nextIndex,
+                  step: 5,
+                },
+              }
+            );
+          } else {
+            // 普通质检未入库（用户选择手动模式或尚未触发强制升级停线）
+            state.pipelineState.halted = false;
+            state.pipelineState.haltInfo = null;
+            state.pipelineState.message = `第 ${nextIndex} 章体检结果为 ${verdict} (${score}分)，已保留在工作台供修改`;
+            notify(
+              '体检未达标',
+              `得分: ${score}分，手稿已保留在工作台，可直接精修`,
+              'warning',
+              5000,
+              {
+                isTask: true,
+                taskType: 'autonomous_pipeline',
+                primaryAction: {
+                  label: '前往精修',
+                  targetTab: 'workbench',
+                  chapterIndex: nextIndex,
+                  step: 5,
+                },
+              }
+            );
+          }
 
           // 保持在当前章节工坊编辑状态，严禁清除 editingChapterIndex 或关闭工坊
           state.editingChapterIndex = nextIndex;
