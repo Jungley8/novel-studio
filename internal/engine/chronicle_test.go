@@ -611,16 +611,20 @@ func TestCanonChronicle_VolumeResolution_GapMiss(t *testing.T) {
 func TestDeriveVolumeSpans(t *testing.T) {
 	arcs := []domain.VolumeArc{
 		{
-			VolumeIndex:       0, // 自动推断为 1
-			Title:             "首卷",
-			EstimatedChapters: 0, // 默认回退 40
-			CoreGoal:          "开局立足",
+			VolumeIndex:  1,
+			Title:        "首卷",
+			StartChapter: 1,
+			EndChapter:   40,
+			Status:       domain.VolumeStatusDraft,
+			CoreGoal:     "开局立足",
 		},
 		{
-			VolumeIndex:       2,
-			Title:             "次卷",
-			EstimatedChapters: 25,
-			CoreGoal:          "进阶宗门",
+			VolumeIndex:  2,
+			Title:        "次卷",
+			StartChapter: 41,
+			EndChapter:   65,
+			Status:       domain.VolumeStatusLocked,
+			CoreGoal:     "进阶宗门",
 		},
 	}
 
@@ -644,5 +648,148 @@ func TestDeriveVolumeSpans(t *testing.T) {
 	}
 	if arcMap[2] == nil || arcMap[2].Title != "次卷" || arcMap[2].CoreGoal != "进阶宗门" {
 		t.Errorf("arcMap[2] corrupted: %+v", arcMap[2])
+	}
+}
+
+func TestBackfillVolumeArcs(t *testing.T) {
+	// 1. 混合测试：有显式范围、有<=0需回填、有非法Start>End
+	input := []domain.VolumeArc{
+		{
+			VolumeIndex:  0, // 应自动推导为 1
+			Title:        "第一卷",
+			StartChapter: 1,
+			EndChapter:   10,
+			// Status 为空，应默认为 DRAFT
+		},
+		{
+			VolumeIndex:       2,
+			Title:             "第二卷",
+			StartChapter:      0, // 需回填
+			EndChapter:        0,
+			EstimatedChapters: 15,
+			Status:            domain.VolumeStatusLocked,
+		},
+		{
+			VolumeIndex:       3,
+			Title:             "第三卷",
+			StartChapter:      50, // 非法：Start > End，应触发 Fail-Closed 回退推导
+			EndChapter:        30,
+			EstimatedChapters: 20,
+		},
+	}
+
+	res := BackfillVolumeArcs(input)
+	if len(res) != 3 {
+		t.Fatalf("expected 3 arcs, got %d", len(res))
+	}
+
+	// Arc 0: 显式保留
+	if res[0].VolumeIndex != 1 || res[0].StartChapter != 1 || res[0].EndChapter != 10 || res[0].Status != domain.VolumeStatusDraft {
+		t.Errorf("arc 0 mismatch: %+v", res[0])
+	}
+
+	// Arc 1: 回填 [11, 25]，Status 保留 LOCKED
+	if res[1].VolumeIndex != 2 || res[1].StartChapter != 11 || res[1].EndChapter != 25 || res[1].Status != domain.VolumeStatusLocked {
+		t.Errorf("arc 1 mismatch: %+v", res[1])
+	}
+
+	// Arc 2: 非法起止章回退回填 [26, 45]
+	if res[2].VolumeIndex != 3 || res[2].StartChapter != 26 || res[2].EndChapter != 45 || res[2].Status != domain.VolumeStatusDraft {
+		t.Errorf("arc 2 mismatch: %+v", res[2])
+	}
+}
+
+func TestBackfillVolumeArcs_LegacyEquivalence(t *testing.T) {
+	// 铁律校验：同一 VolumeArcs 下旧累加 vs 新回填+定位逐章 1..N 全等
+	legacyArcs := []domain.VolumeArc{
+		{
+			VolumeIndex:       1,
+			Title:             "第一卷 潜龙",
+			EstimatedChapters: 12,
+			CoreGoal:          "宗门筑基",
+		},
+		{
+			VolumeIndex:       2,
+			Title:             "第二卷 跃渊",
+			EstimatedChapters: 0, // <= 0 延续旧规则默认 40
+			CoreGoal:          "争夺秘境",
+		},
+		{
+			VolumeIndex:       0, // 自动推断为 3
+			Title:             "第三卷 飞天",
+			EstimatedChapters: 25,
+			CoreGoal:          "大道圆满",
+		},
+	}
+
+	// 1. 旧累加逻辑构建基准 spans
+	legacySpans := make([]domain.VolumeSpan, 0, len(legacyArcs))
+	acc := 0
+	for i, arc := range legacyArcs {
+		est := arc.EstimatedChapters
+		if est <= 0 {
+			est = 40
+		}
+		vIdx := arc.VolumeIndex
+		if vIdx == 0 {
+			vIdx = i + 1
+		}
+		legacySpans = append(legacySpans, domain.VolumeSpan{
+			VolumeIndex:  vIdx,
+			StartChapter: acc + 1,
+			EndChapter:   acc + est,
+		})
+		acc += est
+	}
+	totalChapters := acc // 12 + 40 + 25 = 77
+
+	// 2. 新回填算法回填
+	backfilled := BackfillVolumeArcs(legacyArcs)
+
+	if backfilled[0].StartChapter != 1 || backfilled[0].EndChapter != 12 {
+		t.Errorf("arc 0 range mismatch: [%d, %d]", backfilled[0].StartChapter, backfilled[0].EndChapter)
+	}
+	if backfilled[1].StartChapter != 13 || backfilled[1].EndChapter != 52 {
+		t.Errorf("arc 1 range mismatch: [%d, %d]", backfilled[1].StartChapter, backfilled[1].EndChapter)
+	}
+	if backfilled[2].VolumeIndex != 3 || backfilled[2].StartChapter != 53 || backfilled[2].EndChapter != 77 {
+		t.Errorf("arc 2 range mismatch: volIdx=%d [%d, %d]", backfilled[2].VolumeIndex, backfilled[2].StartChapter, backfilled[2].EndChapter)
+	}
+
+	// 3. 逐章 1..N+5 验证 AssembleHorizon 定位完全全等
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID: "p_equiv",
+			Framework: &domain.ProjectFramework{
+				VolumeArcs: legacyArcs, // 全零 start/end 输入，检验 AssembleHorizon 回填与定位
+			},
+		},
+	}
+	chronicle := NewCanonChronicle(mockStore)
+
+	for ch := 1; ch <= totalChapters+5; ch++ {
+		legacyVolIdx := domain.ResolveVolume(ch, legacySpans)
+
+		horizon, err := chronicle.AssembleHorizon(context.Background(), "p_equiv", ch)
+		if err != nil {
+			t.Fatalf("AssembleHorizon failed for chapter %d: %v", ch, err)
+		}
+
+		var newVolIdx int = -1
+		if horizon.CurrentVolume != nil {
+			newVolIdx = horizon.CurrentVolume.VolumeIndex
+		}
+
+		if legacyVolIdx != newVolIdx {
+			t.Fatalf("chapter %d equivalence broken: legacy resolved volume %d, new resolved %d",
+				ch, legacyVolIdx, newVolIdx)
+		}
+
+		// 超界时注记校验
+		if legacyVolIdx == -1 {
+			if !strings.Contains(horizon.GlobalSummary, "超出已规划") {
+				t.Fatalf("chapter %d miss expected '超出已规划' note in GlobalSummary", ch)
+			}
+		}
 	}
 }

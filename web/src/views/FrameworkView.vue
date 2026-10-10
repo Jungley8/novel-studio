@@ -335,6 +335,49 @@
               </div>
             </div>
 
+            <!-- 起止章范围与状态锁 -->
+            <div class="flex items-center justify-between gap-2 p-1.5 bg-atelier-900/60 border border-atelier-800 rounded text-[11px]">
+              <div class="flex items-center gap-1 text-ink-300 font-mono">
+                <span class="text-ink-400">起止章：</span>
+                <input 
+                  v-model.number="vol.start_chapter" 
+                  type="number" 
+                  min="1"
+                  :disabled="vol.status === 'LOCKED'"
+                  placeholder="1"
+                  class="w-12 bg-atelier-950 border border-atelier-750 rounded px-1.5 py-0.5 text-center text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60 disabled:opacity-50 disabled:cursor-not-allowed">
+                <span class="text-ink-500">~</span>
+                <input 
+                  v-model.number="vol.end_chapter" 
+                  type="number" 
+                  min="1"
+                  :disabled="vol.status === 'LOCKED'"
+                  placeholder="40"
+                  class="w-12 bg-atelier-950 border border-atelier-750 rounded px-1.5 py-0.5 text-center text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60 disabled:opacity-50 disabled:cursor-not-allowed">
+                <span class="text-ink-400">章</span>
+              </div>
+
+              <div class="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  @click="vol.status = (vol.status === 'LOCKED' ? 'DRAFT' : 'LOCKED')"
+                  class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono transition cursor-pointer border"
+                  :class="vol.status === 'LOCKED' ? 'bg-amber-500/15 text-brand-amber border-brand-amber/40 font-bold' : 'bg-atelier-950 text-ink-400 border-atelier-750 hover:text-ink-200'"
+                  :title="vol.status === 'LOCKED' ? '已锁定起止章，点击解锁' : '未锁定，点击锁定起止章'">
+                  <Lock v-if="vol.status === 'LOCKED'" class="w-3 h-3 text-brand-amber" />
+                  <Unlock v-else class="w-3 h-3 text-ink-400" />
+                  <span>{{ vol.status === 'LOCKED' ? '已锁定' : '未锁定' }}</span>
+                </button>
+                <select 
+                  v-model="vol.status" 
+                  class="bg-atelier-950 border border-atelier-750 rounded px-1 py-0.5 text-[10px] text-ink-300 font-mono focus:outline-none focus:border-brand-amber/60">
+                  <option value="DRAFT">草稿</option>
+                  <option value="LOCKED">锁定</option>
+                  <option value="DONE">完卷</option>
+                </select>
+              </div>
+            </div>
+
             <div>
               <label class="text-[10px] text-ink-400">本卷核心立意：</label>
               <input 
@@ -438,7 +481,9 @@ import {
   Swords, 
   Plus,
   Sliders,
-  Loader2
+  Loader2,
+  Lock,
+  Unlock
 } from 'lucide-vue-next';
 
 function normalizeFramework() {
@@ -458,13 +503,24 @@ function normalizeFramework() {
   }
   // 分卷规划规范
   if (Array.isArray(fw.volume_arcs)) {
+    let acc = 0;
     fw.volume_arcs.forEach((v, i) => {
       if (!v.volume_index && v.volume) v.volume_index = v.volume;
       if (!v.volume_index) v.volume_index = i + 1;
+      if (!v.status) v.status = 'DRAFT';
       if (!v.climax && v.climax_event) v.climax = v.climax_event;
-      if (!v.estimated_chapters && v.end_chapter && v.start_chapter) {
-        v.estimated_chapters = v.end_chapter - v.start_chapter + 1;
+      if (!v.estimated_chapters) {
+        if (v.end_chapter && v.start_chapter && v.end_chapter >= v.start_chapter) {
+          v.estimated_chapters = v.end_chapter - v.start_chapter + 1;
+        } else {
+          v.estimated_chapters = 30;
+        }
       }
+      if (!v.start_chapter || !v.end_chapter || v.start_chapter > v.end_chapter) {
+        v.start_chapter = acc + 1;
+        v.end_chapter = acc + (v.estimated_chapters || 30);
+      }
+      acc = v.end_chapter;
     });
   }
 }
@@ -519,12 +575,19 @@ function removeFrameworkTier(idx) {
 function addFrameworkVolume() {
   if (!state.currentProject?.framework) return;
   state.currentProject.framework.volume_arcs = state.currentProject.framework.volume_arcs || [];
-  const nextVol = state.currentProject.framework.volume_arcs.length + 1;
-  state.currentProject.framework.volume_arcs.push({
+  const arcs = state.currentProject.framework.volume_arcs;
+  const nextVol = arcs.length + 1;
+  const lastVol = arcs.length > 0 ? arcs[arcs.length - 1] : null;
+  const startCh = lastVol && lastVol.end_chapter ? lastVol.end_chapter + 1 : 1;
+  const est = 30;
+  arcs.push({
     volume_index: nextVol,
     title: `第 ${nextVol} 卷`,
     theme: '',
-    estimated_chapters: 30,
+    start_chapter: startCh,
+    end_chapter: startCh + est - 1,
+    status: 'DRAFT',
+    estimated_chapters: est,
     core_goal: '',
     climax: '',
   });

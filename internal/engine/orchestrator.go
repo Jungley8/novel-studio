@@ -777,7 +777,7 @@ func (o *Orchestrator) BootstrapFramework(
 2. 战力阶梯 (Power Ladder)：设计 6-9 个严密境界或实力层级，包含阶位序号(tier: 1..N)、破坏力表征、突破门槛与代价副作用（拒绝廉价数值堆砌）。
 3. 核心势力 (Factions)：设计 3-4 个主要势力宗门或组织财阀，明确其立场、核心主张、独门手段与威胁级别。
 4. 关键人物谱系 (Key Characters)：设计 3-5 位与主角命运交织的关键角色（引路导师、宿敌死仇、亦正亦邪同盟、远古残魂）。
-5. 分卷宏观大纲 (Volume Arcs)：设计前 3-4 卷的大纲，每卷包含：卷序号(volume_index: 1..N)、卷名、卷主题、核心主线目标、终极大高潮情节、预估章数与核心回收伏笔。
+5. 分卷宏观大纲 (Volume Arcs)：设计前 3-4 卷的大纲，每卷包含：卷序号(volume_index: 1..N)、卷名、卷主题、核心主线目标、终极大高潮情节、显式起止章(start_chapter, end_chapter)、状态(status: "DRAFT")、预估章数与核心回收伏笔。
 6. 开局种子伏笔 (Seed Hooks)：设计 3-5 个开局前 3 章埋下的长线伏笔（包含目标回收章节 10-60 章）。
 
 输出格式：必须且仅输出标准合法的纯 JSON 格式：
@@ -817,6 +817,9 @@ func (o *Orchestrator) BootstrapFramework(
       "theme": "卷主题",
       "core_goal": "本卷必须达成的核心目标",
       "climax": "本卷终极大高潮情节",
+      "start_chapter": 1,
+      "end_chapter": 40,
+      "status": "DRAFT",
       "estimated_chapters": 40,
       "key_payoffs": ["本卷回收的伏笔1"]
     }
@@ -862,13 +865,47 @@ func (o *Orchestrator) BootstrapFramework(
 			fw.PowerLadder[i].Tier = i + 1
 		}
 	}
-	for i := range fw.VolumeArcs {
-		if fw.VolumeArcs[i].VolumeIndex == 0 {
-			fw.VolumeArcs[i].VolumeIndex = i + 1
-		}
-	}
+	fw.VolumeArcs = BackfillVolumeArcs(fw.VolumeArcs)
 
 	return &fw, usage, nil
+}
+
+// BackfillVolumeArcs normalizes VolumeIndex (defaults to i+1 if 0), Status (defaults to DRAFT),
+// and backfills StartChapter/EndChapter when <= 0 using EstimatedChapters (<=0 defaults to 40).
+// If explicit non-zero values are present, it validates StartChapter <= EndChapter;
+// if invalid (StartChapter > EndChapter), it fails-closed by falling back to sequential derivation.
+// The arithmetic is chapter-for-chapter identical to legacy deriveVolumeSpans accumulation.
+func BackfillVolumeArcs(arcs []domain.VolumeArc) []domain.VolumeArc {
+	if len(arcs) == 0 {
+		return arcs
+	}
+	res := make([]domain.VolumeArc, len(arcs))
+	copy(res, arcs)
+
+	accChapters := 0
+	for i := range res {
+		arc := &res[i]
+		if arc.VolumeIndex == 0 {
+			arc.VolumeIndex = i + 1
+		}
+		if arc.Status == "" {
+			arc.Status = domain.VolumeStatusDraft
+		}
+
+		est := arc.EstimatedChapters
+		if est <= 0 {
+			est = 40
+		}
+
+		if arc.StartChapter > 0 && arc.EndChapter > 0 && arc.StartChapter <= arc.EndChapter {
+			accChapters = arc.EndChapter
+		} else {
+			arc.StartChapter = accChapters + 1
+			arc.EndChapter = accChapters + est
+			accChapters += est
+		}
+	}
+	return res
 }
 
 // CodexGenerateRequest encapsulates inputs for generating or expanding a codex entry.

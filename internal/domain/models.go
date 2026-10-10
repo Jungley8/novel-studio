@@ -76,13 +76,23 @@ type CharacterProfile struct {
 	FateArc string `json:"fate_arc"` // 宿命终局
 }
 
+// Volume lifecycle status constants.
+const (
+	VolumeStatusDraft  = "DRAFT"
+	VolumeStatusLocked = "LOCKED"
+	VolumeStatusDone   = "DONE"
+)
+
 // VolumeArc represents a high-level book volume / arc questline outline.
 type VolumeArc struct {
 	VolumeIndex       int      `json:"volume_index"`
 	Title             string   `json:"title"`
 	Theme             string   `json:"theme"`
-	CoreGoal          string   `json:"core_goal"`          // 卷核心主线任务
-	Climax            string   `json:"climax"`             // 卷终极大高潮
+	CoreGoal          string   `json:"core_goal"` // 卷核心主线任务
+	Climax            string   `json:"climax"`    // 卷终极大高潮
+	StartChapter      int      `json:"start_chapter,omitempty"`
+	EndChapter        int      `json:"end_chapter,omitempty"`
+	Status            string   `json:"status,omitempty"`
 	EstimatedChapters int      `json:"estimated_chapters"` // 预估章数
 	KeyPayoffs        []string `json:"key_payoffs"`        // 本卷回收的伏笔
 }
