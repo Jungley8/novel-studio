@@ -27,7 +27,7 @@ type CanonHorizon struct {
 	RecentChapters      []*domain.Chapter       `json:"recent_chapters"`
 	UrgentHooks         []*domain.PlotHook      `json:"urgent_hooks"`
 	AllActiveHooks      []*domain.PlotHook      `json:"all_active_hooks"`
-	ProtagonistState    domain.Protagonist      `json:"protagonist_state"`
+	ProtagonistEntry    *domain.CodexEntry      `json:"protagonist_entry,omitempty"`
 	WorldRules          string                  `json:"world_rules"`
 	ActiveCodexEntries  []*domain.CodexEntry    `json:"active_codex_entries,omitempty"`
 	CodexRelations      []domain.EntityRelation `json:"codex_relations,omitempty"`
@@ -76,6 +76,16 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 		}
 	}
 
+	protagonist, _ := c.store.GetProtagonistEntry(ctx, projectID)
+	if protagonist == nil {
+		protagonist = &domain.CodexEntry{
+			ProjectID: projectID,
+			Category:  domain.CategoryCharacter,
+			Name:      "主角",
+			Archetype: "PROTAGONIST",
+		}
+	}
+
 	// Layer 1: Global Summary
 	globalSummary := fmt.Sprintf("书名：《%s》 | 目标平台：%s | 全书当前进度：已归档 %d 章，正向第 %d 章推进。\n核心世界法则：%s",
 		project.Title, project.TargetPlatform, len(preceding), targetChapter, project.WorldRules)
@@ -106,7 +116,7 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 
 		for i := range project.Framework.PowerLadder {
 			tier := project.Framework.PowerLadder[i]
-			if strings.Contains(project.Protagonist.NameAndLevel, tier.Realm) {
+			if strings.Contains(protagonist.NameAndLevel(), tier.Realm) || (protagonist.Realm != "" && strings.Contains(protagonist.Realm, tier.Realm)) {
 				activeTier = &tier
 				break
 			}
@@ -371,7 +381,7 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 		RecentChapters:      recent,
 		UrgentHooks:         urgentHooks,
 		AllActiveHooks:      activeHooks,
-		ProtagonistState:    project.Protagonist,
+		ProtagonistEntry:    protagonist,
 		WorldRules:          project.WorldRules,
 		ActiveCodexEntries:  activeCodex,
 		CodexRelations:      codexRels,

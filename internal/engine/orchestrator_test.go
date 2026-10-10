@@ -53,9 +53,6 @@ func TestOrchestrator_DeriveBeats(t *testing.T) {
 	p := &domain.Project{
 		Title:          "剑道独尊",
 		TargetPlatform: "番茄脑洞",
-		Protagonist: domain.Protagonist{
-			NameAndLevel: "陆青 (练气五层)",
-		},
 	}
 
 	out, err := orch.DeriveBeats(context.Background(), "deepseek-reasoner", p, 1, "同门挑衅", nil)
@@ -86,14 +83,16 @@ func TestOrchestrator_SuggestChapterConflict(t *testing.T) {
 		Title:          "万古剑尊",
 		TargetPlatform: "番茄脑洞",
 		WorldRules:     "天道有缺，弱肉强食",
-		Protagonist: domain.Protagonist{
-			NameAndLevel: "叶枫 (练气三层)",
-			CoreGoal:     "查明家族血洗真相",
-		},
 	}
 	horizon := &engine.CanonHorizon{
 		Project:       p,
 		TargetChapter: 1,
+		ProtagonistEntry: &domain.CodexEntry{
+			Name:           "叶枫",
+			Realm:          "练气三层",
+			CoreMotivation: "查明家族血洗真相",
+			Archetype:      "PROTAGONIST",
+		},
 	}
 
 	conflict, usage, err := orch.SuggestChapterConflict(context.Background(), "deepseek-reasoner", horizon)
@@ -170,7 +169,7 @@ func TestOrchestrator_ReviewDraft(t *testing.T) {
 	orch := engine.NewOrchestrator(mock)
 
 	p := &domain.Project{Title: "斗破苍穹"}
-	rev, usage, err := orch.ReviewDraft(context.Background(), "deepseek-reasoner", p, 1, nil, "草稿正文...")
+	rev, usage, err := orch.ReviewDraft(context.Background(), "deepseek-reasoner", p, nil, 1, nil, "草稿正文...")
 	if err != nil {
 		t.Fatalf("ReviewDraft failed: %v", err)
 	}
@@ -366,6 +365,40 @@ func TestOrchestrator_ExtractCodexRelations(t *testing.T) {
 	}
 }
 
+func TestOrchestrator_ExtractCodexRelations_FromProtagonistProfile(t *testing.T) {
+	mockJSON := `[
+		{
+			"source_name": "林惊羽",
+			"target_name": "残骨铁印",
+			"relation_type": "POSSESSES",
+			"description": "主角的核心本命法宝"
+		}
+	]`
+
+	mock := &mockLLMClient{response: mockJSON}
+	orch := engine.NewOrchestrator(mock)
+
+	p := &domain.Project{
+		ID: "proj-pro",
+	}
+	// 包含主角与灵宝条目
+	entries := []*domain.CodexEntry{
+		{ID: "codex_proj-pro_pro", Name: "林惊羽", Realm: "筑基初期", Category: domain.CategoryCharacter, Archetype: "PROTAGONIST", Summary: "复仇并重立宗门"},
+		{ID: "e2", Name: "残骨铁印", Category: domain.CategoryItem},
+	}
+
+	rels, _, err := orch.ExtractCodexRelations(context.Background(), "deepseek-reasoner", p, entries, "林惊羽运转筑基真元，唤醒残骨铁印。")
+	if err != nil {
+		t.Fatalf("ExtractCodexRelations failed: %v", err)
+	}
+	if len(rels) != 1 {
+		t.Fatalf("expected 1 relation, got %d", len(rels))
+	}
+	if rels[0].SourceEntryID != "codex_proj-pro_pro" || rels[0].TargetEntryID != "e2" {
+		t.Errorf("expected codex_proj-pro_pro -> e2, got %s -> %s", rels[0].SourceEntryID, rels[0].TargetEntryID)
+	}
+}
+
 func TestOrchestrator_GenerateMatrixScenes(t *testing.T) {
 	mockJSON := `[
 		{
@@ -429,21 +462,23 @@ func TestOrchestrator_AnalyzeProtagonistState(t *testing.T) {
 
 	p := &domain.Project{
 		ID: "proj-1",
-		Protagonist: domain.Protagonist{
-			NameAndLevel: "楚风 (练气五层)",
-			Inventory:    "青铜残片x1",
-		},
+	}
+	prot := &domain.CodexEntry{
+		Name:      "楚风",
+		Realm:     "练气五层",
+		Inventory: "青铜残片x1",
+		Archetype: "PROTAGONIST",
 	}
 	chapters := []*domain.Chapter{
 		{ChapterIndex: 1, Title: "第一章", Content: "楚风融合精血，突破练气六层。"},
 	}
 
-	updated, _, err := orch.AnalyzeProtagonistState(context.Background(), "deepseek-reasoner", p, chapters)
+	updated, _, err := orch.AnalyzeProtagonistState(context.Background(), "deepseek-reasoner", p, prot, chapters)
 	if err != nil {
 		t.Fatalf("AnalyzeProtagonistState failed: %v", err)
 	}
-	if updated.NameAndLevel != "楚风 (练气六层)" {
-		t.Errorf("expected level 练气六层, got %s", updated.NameAndLevel)
+	if updated.NameAndLevel() != "楚风 (练气六层)" {
+		t.Errorf("expected level 练气六层, got %s", updated.NameAndLevel())
 	}
 	if updated.StructuredLevel == nil || len(updated.StructuredLevel.History) != 1 {
 		t.Fatalf("expected 1 history breakthrough event")

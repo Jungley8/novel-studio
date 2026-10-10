@@ -80,10 +80,6 @@ func TestServer_ConfigAndProjects(t *testing.T) {
 	projPayload := domain.Project{
 		Title:          "万古神帝",
 		TargetPlatform: "起点仙侠",
-		Protagonist: domain.Protagonist{
-			NameAndLevel: "张若尘 (黄极境)",
-			Inventory:    "沉渊古剑",
-		},
 	}
 	body, _ := json.Marshal(projPayload)
 	req = httptest.NewRequest(http.MethodPost, "/api/projects", bytes.NewReader(body))
@@ -98,6 +94,21 @@ func TestServer_ConfigAndProjects(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &created)
 	if created.Title != "万古神帝" {
 		t.Errorf("expected Title 万古神帝, got %s", created.Title)
+	}
+
+	// 2b. POST /api/projects/{id}/statemachine to set initial protagonist
+	protPayload := domain.CodexEntry{
+		Name:      "张若尘",
+		Realm:     "黄极境",
+		Inventory: "沉渊古剑",
+		Archetype: "PROTAGONIST",
+	}
+	body, _ = json.Marshal(protPayload)
+	req = httptest.NewRequest(http.MethodPost, "/api/projects/"+created.ID+"/statemachine", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for protagonist setup, got %d: %s", w.Code, w.Body.String())
 	}
 
 	// 3. POST /api/projects/{id}/chapters (Atomic Commit Chapter with State Mutation)
@@ -120,15 +131,16 @@ func TestServer_ConfigAndProjects(t *testing.T) {
 	}
 
 	var commitResp struct {
-		Chapter domain.Chapter `json:"chapter"`
-		Project domain.Project `json:"project"`
+		Chapter     domain.Chapter     `json:"chapter"`
+		Project     domain.Project     `json:"project"`
+		Protagonist *domain.CodexEntry `json:"protagonist"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &commitResp)
-	if commitResp.Project.Protagonist.Inventory != "沉渊古剑, 时空晶石" {
-		t.Errorf("unexpected mutated inventory: %s", commitResp.Project.Protagonist.Inventory)
+	if commitResp.Protagonist == nil || commitResp.Protagonist.Inventory != "沉渊古剑, 时空晶石" {
+		t.Errorf("unexpected mutated inventory: %+v", commitResp.Protagonist)
 	}
-	if len(commitResp.Project.Protagonist.StructuredItems) != 2 || commitResp.Project.Protagonist.StructuredItems[1].Quantity != 1 {
-		t.Errorf("unexpected structured items: %+v", commitResp.Project.Protagonist.StructuredItems)
+	if len(commitResp.Protagonist.StructuredItems) != 2 || commitResp.Protagonist.StructuredItems[1].Quantity != 1 {
+		t.Errorf("unexpected structured items: %+v", commitResp.Protagonist.StructuredItems)
 	}
 
 	// 4. POST /api/linter/analyze
@@ -218,8 +230,18 @@ func TestServer_ConfigAndProjects(t *testing.T) {
 	}
 	var codexList []domain.CodexEntry
 	_ = json.Unmarshal(w.Body.Bytes(), &codexList)
-	if len(codexList) != 1 || codexList[0].Name != "楚枫" {
-		t.Fatalf("expected 1 codex entry named 楚枫, got %+v", codexList)
+	if len(codexList) != 2 {
+		t.Fatalf("expected 2 codex entries (protagonist + cast), got %+v", codexList)
+	}
+	var foundChuFeng bool
+	for _, e := range codexList {
+		if e.Name == "楚枫" {
+			foundChuFeng = true
+			break
+		}
+	}
+	if !foundChuFeng {
+		t.Fatalf("expected codex entry named 楚枫, got %+v", codexList)
 	}
 
 	// 11. POST /api/projects/:id/codex/scan
@@ -235,7 +257,14 @@ func TestServer_ConfigAndProjects(t *testing.T) {
 		MatchedEntries []domain.CodexEntry `json:"matched_entries"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &scanResult)
-	if len(scanResult.MatchedEntries) != 1 || scanResult.MatchedEntries[0].Name != "楚枫" {
+	foundChuFengScan := false
+	for _, m := range scanResult.MatchedEntries {
+		if m.Name == "楚枫" {
+			foundChuFengScan = true
+			break
+		}
+	}
+	if !foundChuFengScan {
 		t.Fatalf("expected scan to match 楚枫 via alias 白衣修罗, got %+v", scanResult)
 	}
 }
@@ -400,7 +429,14 @@ func TestServer_MatrixScenesAndAnalytics(t *testing.T) {
 		} `json:"entities"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &heatmapResp)
-	if len(heatmapResp.Entities) != 1 || heatmapResp.Entities[0].TotalMentions != 1 {
+	foundChuFengHeatmap := false
+	for _, ent := range heatmapResp.Entities {
+		if ent.Name == "楚枫" && ent.TotalMentions == 1 {
+			foundChuFengHeatmap = true
+			break
+		}
+	}
+	if !foundChuFengHeatmap {
 		t.Errorf("expected entity 楚枫 mentioned 1 time in chapter 1 via alias, got: %+v", heatmapResp)
 	}
 
@@ -618,12 +654,17 @@ func TestServer_ChapterUncommit(t *testing.T) {
 		ID:             "proj-uncommit-srv",
 		Title:          "撤回草稿测试作品",
 		TargetPlatform: "通用网文",
-		Protagonist: domain.Protagonist{
-			NameAndLevel: "陆青玄 (练气一层)",
-			Inventory:    "新手木剑",
-		},
 	}
 	_ = s.SaveProject(ctx, p)
+	_ = s.SaveCodexEntry(ctx, &domain.CodexEntry{
+		ID:        "codex_proj-uncommit-srv_pro",
+		ProjectID: p.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "陆青玄",
+		Realm:     "练气一层",
+		Inventory: "新手木剑",
+	})
 
 	chap := &domain.Chapter{
 		ID:           "ch_uncommit_srv_1",

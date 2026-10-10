@@ -2,10 +2,12 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/store"
 )
@@ -59,6 +61,7 @@ type WorkshopProduceRequest struct {
 	ResumeCheckpoint bool               `json:"resume_checkpoint,omitempty"`
 	EnableHarmonize  bool               `json:"enable_harmonize,omitempty"`
 	PerturbIntensity float64            `json:"perturb_intensity,omitempty"`
+	RunID            string             `json:"run_id,omitempty"`
 	OnProgress       ProgressCallback   `json:"-"`
 }
 
@@ -132,6 +135,16 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		req.MaxRewriteLoops = 3
 	}
 
+	// Ledger correlation: every event of this run shares one run id so the
+	// timeline can fold beats/drafts/audits/rewrites into a single group.
+	if strings.TrimSpace(req.RunID) == "" {
+		req.RunID = activity.NewRunID()
+	}
+	ctx = activity.WithRunID(ctx, req.RunID)
+	if activity.SourceFromCtx(ctx) == activity.SourceDirect {
+		ctx = activity.WithSource(ctx, activity.SourceAutoPipe)
+	}
+
 	emit := func(ev WorkshopEvent) {
 		if req.OnProgress != nil {
 			req.OnProgress(ev)
@@ -179,6 +192,20 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 				Phase:   WorkshopPhase(cp.Phase),
 				Message: fmt.Sprintf("已从断点恢复 (阶段: %s, 历史返工轮次: %d)", cp.Phase, cp.RewriteLoops),
 				Beats:   cp.Beats,
+			})
+			// Ledger annotation (best-effort: must not break the resumed run).
+			_ = w.store.AppendEvent(ctx, &activity.ActivityEvent{
+				ProjectID:    req.ProjectID,
+				RunID:        req.RunID,
+				EntityType:   activity.EntityCheckpoint,
+				EntityID:     fmt.Sprintf("cp_%s_%d", req.ProjectID, req.ChapterIndex),
+				ChapterIndex: req.ChapterIndex,
+				EventType:    activity.EventCheckpointResumed,
+				Actor:        activity.ActorFromCtx(ctx),
+				Source:       activity.SourceFromCtx(ctx),
+				Title:        fmt.Sprintf("第 %d 章从断点恢复（%s）", req.ChapterIndex, cp.Phase),
+				Summary:      fmt.Sprintf("历史返工 %d 轮", cp.RewriteLoops),
+				CreatedAt:    time.Now(),
 			})
 		}
 	} else {
@@ -244,7 +271,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		addUsage(bOut.Usage)
 
 		// Save Checkpoint after beats derivation
-		_ = w.store.SaveCheckpoint(ctx, &domain.ChapterCheckpoint{
+		_ = w.store.SaveCheckpoint(activity.WithActor(ctx, activity.ActorAIReasoner), &domain.ChapterCheckpoint{
 			ProjectID:     req.ProjectID,
 			ChapterIndex:  req.ChapterIndex,
 			Phase:         domain.CheckpointPhaseBeats,
@@ -287,7 +314,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		}
 
 		// Save Checkpoint after initial rendering
-		_ = w.store.SaveCheckpoint(ctx, &domain.ChapterCheckpoint{
+		_ = w.store.SaveCheckpoint(activity.WithActor(ctx, activity.ActorAIWriter), &domain.ChapterCheckpoint{
 			ProjectID:     req.ProjectID,
 			ChapterIndex:  req.ChapterIndex,
 			Phase:         domain.CheckpointPhaseDrafted,
@@ -307,7 +334,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	// 4. Audit via Quality Gate (with plot hooks resolution awareness)
 	if auditReport == nil {
 		emit(WorkshopEvent{Phase: PhaseAuditing, Message: "正在执行 QualityGate 算法质检与主审综合审校..."})
-		audit, usage, aErr := w.qualityGate.AuditWithHooks(ctx, req.ReviewerModel, horizon.Project, req.ChapterIndex, beatsOut.Beats, horizon.AllActiveHooks, draftText)
+		audit, usage, aErr := w.qualityGate.AuditWithHooks(ctx, req.ReviewerModel, horizon.Project, horizon.ProtagonistEntry, req.ChapterIndex, beatsOut.Beats, horizon.AllActiveHooks, draftText)
 		if aErr != nil {
 			return nil, fmt.Errorf("quality gate audit failed: %w", aErr)
 		}
@@ -315,7 +342,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		addUsage(usage)
 
 		// Save Checkpoint after audit
-		_ = w.store.SaveCheckpoint(ctx, &domain.ChapterCheckpoint{
+		_ = w.store.SaveCheckpoint(activity.WithActor(ctx, activity.ActorAIReviewer), &domain.ChapterCheckpoint{
 			ProjectID:     req.ProjectID,
 			ChapterIndex:  req.ChapterIndex,
 			Phase:         domain.CheckpointPhaseAudited,
@@ -354,14 +381,14 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		addUsage(usage)
 
 		// Re-audit revised draft
-		newAudit, auditUsage, aerr := w.qualityGate.AuditWithHooks(ctx, req.ReviewerModel, horizon.Project, req.ChapterIndex, beatsOut.Beats, horizon.AllActiveHooks, currentDraft)
+		newAudit, auditUsage, aerr := w.qualityGate.AuditWithHooks(ctx, req.ReviewerModel, horizon.Project, horizon.ProtagonistEntry, req.ChapterIndex, beatsOut.Beats, horizon.AllActiveHooks, currentDraft)
 		if aerr == nil {
 			auditReport = newAudit
 			addUsage(auditUsage)
 		}
 
 		// Save checkpoint for rewrite loop
-		_ = w.store.SaveCheckpoint(ctx, &domain.ChapterCheckpoint{
+		_ = w.store.SaveCheckpoint(activity.WithActor(ctx, activity.ActorAIRewriter), &domain.ChapterCheckpoint{
 			ProjectID:     req.ProjectID,
 			ChapterIndex:  req.ChapterIndex,
 			Phase:         domain.CheckpointPhaseRewriting,
@@ -438,7 +465,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			CreatedAt:       time.Now(),
 		}
 
-		updatedProj, cerr := w.store.CommitChapter(ctx, req.ProjectID, chapter)
+		updatedProj, cerr := w.store.CommitChapter(activity.WithActor(ctx, activity.ActorSystem), req.ProjectID, chapter)
 		if cerr != nil {
 			return nil, fmt.Errorf("atomic chapter commitment failed: %w", cerr)
 		}
@@ -458,6 +485,27 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		Phase:       PhaseComplete,
 		Message:     fmt.Sprintf("全流程生产完成！总Token消耗: %d", totalUsage.TotalTokens),
 		TotalTokens: totalUsage.TotalTokens,
+	})
+
+	// Ledger aggregate marker (best-effort annotation; per-phase state events
+	// are already recorded transactionally by the store layer).
+	usageBytes, _ := json.Marshal(totalUsage)
+	pipeSummary := fmt.Sprintf("终审 %s %d 分 · 返工 %d 轮 · %d tokens（$%.4f）· 归档=%v",
+		auditReport.Verdict, auditReport.Score, rewriteLoops,
+		totalUsage.TotalTokens, estimatedCostUSD, result.Committed)
+	_ = w.store.AppendEvent(ctx, &activity.ActivityEvent{
+		ProjectID:    req.ProjectID,
+		RunID:        req.RunID,
+		EntityType:   activity.EntityWorkshop,
+		EntityID:     req.RunID,
+		ChapterIndex: req.ChapterIndex,
+		EventType:    activity.EventWorkshopCompleted,
+		Actor:        activity.ActorSystem,
+		Source:       activity.SourceFromCtx(ctx),
+		Title:        fmt.Sprintf("第 %d 章流水线完成", req.ChapterIndex),
+		Summary:      pipeSummary,
+		TokenUsage:   string(usageBytes),
+		CreatedAt:    time.Now(),
 	})
 
 	return result, nil

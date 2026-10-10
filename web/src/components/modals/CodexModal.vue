@@ -122,6 +122,31 @@
           </div>
         </div>
 
+        <!-- 势力阵营独有字段 (当类别为 FACTION 时展示) -->
+        <div v-if="form.category === 'FACTION'" class="p-3 bg-atelier-950/80 rounded-xl border border-indigo-500/30 space-y-2.5">
+          <div class="text-[11px] font-serif font-bold text-indigo-400 flex items-center gap-1.5">
+            <span>⚔️</span>
+            <span>势力宗门属性 (Faction Lore)</span>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div>
+              <label class="text-[10px] text-ink-400">阵营立场：</label>
+              <input 
+                v-model="form.alignment" 
+                class="w-full mt-1 bg-atelier-900 border border-atelier-750 rounded-md p-1.5 text-xs text-brand-amber focus:outline-none focus:border-brand-amber/60" 
+                placeholder="例如：正道领袖、魔道宗门、隐世皇朝、中立商会">
+            </div>
+            <div>
+              <label class="text-[10px] text-rose-400">威胁级别与宿怨：</label>
+              <input 
+                v-model="form.threat_level" 
+                class="w-full mt-1 bg-atelier-900 border border-atelier-750 rounded-md p-1.5 text-xs text-rose-300 focus:outline-none focus:border-rose-400/60" 
+                placeholder="例如：极高、中等、潜在盟友">
+            </div>
+          </div>
+        </div>
+
         <div>
           <label class="text-ink-300 font-medium">一句话核心特征摘要 (注入 Prompt 核心)：</label>
           <input 
@@ -175,6 +200,8 @@ const form = reactive({
   aliases_text: '',
   summary: '',
   details_markdown: '',
+  alignment: '',
+  threat_level: '',
 });
 
 watch(() => state.showCodexModal, (open) => {
@@ -190,6 +217,8 @@ watch(() => state.showCodexModal, (open) => {
         voice_tone: e.voice_tone || '',
         core_motivation: e.core_motivation || '',
         current_disposition: e.current_disposition || 'WARY',
+        alignment: e.alignment || '',
+        threat_level: e.threat_level || '',
         aliases_text: (e.aliases || []).join(', '),
         summary: e.summary || '',
         details_markdown: e.details_markdown || '',
@@ -204,6 +233,8 @@ watch(() => state.showCodexModal, (open) => {
         voice_tone: '',
         core_motivation: '',
         current_disposition: 'WARY',
+        alignment: '',
+        threat_level: '',
         aliases_text: '',
         summary: '',
         details_markdown: '',
@@ -228,6 +259,8 @@ async function saveCodexEntry() {
     voice_tone: form.voice_tone,
     core_motivation: form.core_motivation,
     current_disposition: form.current_disposition,
+    alignment: form.alignment,
+    threat_level: form.threat_level,
     aliases,
     summary: form.summary,
     details_markdown: form.details_markdown,

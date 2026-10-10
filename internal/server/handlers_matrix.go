@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/engine"
 )
@@ -30,6 +31,8 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 			ReasoningModel string `json:"reasoning_model,omitempty"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		fwRunID := activity.NewRunID()
+		ctx = activity.WithRunID(activity.WithSource(ctx, activity.SourceBootstrap), fwRunID)
 		concept := req.Concept
 		if concept == "" {
 			concept = p.WorldRules
@@ -58,10 +61,6 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 			}
 			p.WorldRules = sb.String()
 		}
-		if p.Protagonist.CoreGoal == "" {
-			p.Protagonist.CoreGoal = fw.ThemePremise
-		}
-
 		if err := s.store.SaveProject(ctx, p); err != nil {
 			errorResponse(w, http.StatusInternalServerError, err.Error())
 			return
@@ -72,24 +71,37 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 		if len(fw.PowerLadder) > 0 && fw.PowerLadder[0].Realm != "" {
 			initialRealm = fw.PowerLadder[0].Realm
 		}
-		if p.Protagonist.NameAndLevel == "" {
-			p.Protagonist.NameAndLevel = fmt.Sprintf("主角 (%s)", initialRealm)
-		}
-		protName := "主角"
-		if parts := strings.Split(p.Protagonist.NameAndLevel, "("); len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
-			protName = strings.TrimSpace(parts[0])
-		}
-		protEntry := &domain.CodexEntry{
-			ID:              fmt.Sprintf("codex_%s_pro", projectID),
-			ProjectID:       projectID,
-			Category:        domain.CategoryCharacter,
-			Name:            protName,
-			Aliases:         []string{"主角", p.Protagonist.NameAndLevel},
-			Summary:         fmt.Sprintf("全书主角 | 初始境界: %s | 核心长线动机: %s", initialRealm, fw.ThemePremise),
-			DetailsMarkdown: fmt.Sprintf("【全书核心主角档案】\n- 初始境界：%s\n- 核心终极目标：%s\n- 随身底牌与物品：%s\n- 当前状态：%s", initialRealm, p.Protagonist.CoreGoal, p.Protagonist.Inventory, p.Protagonist.HealthStatus),
-			TrackingMode:    domain.TrackingModeAutoMention,
-			CreatedAt:       time.Now(),
-			UpdatedAt:       time.Now(),
+		protEntry, _ := s.store.GetProtagonistEntry(ctx, projectID)
+		if protEntry == nil {
+			protID := fmt.Sprintf("codex_%s_pro", projectID)
+			protName := "主角"
+			protEntry = &domain.CodexEntry{
+				ID:              protID,
+				ProjectID:       projectID,
+				Category:        domain.CategoryCharacter,
+				Archetype:       "PROTAGONIST",
+				Name:            protName,
+				Realm:           initialRealm,
+				Aliases:         []string{"主角", fmt.Sprintf("%s (%s)", protName, initialRealm)},
+				Summary:         fmt.Sprintf("全书核心主角 | 初始境界: %s | 核心长线动机: %s", initialRealm, fw.ThemePremise),
+				DetailsMarkdown: fmt.Sprintf("【全书核心主角档案】\n- 初始境界：%s\n- 核心终极目标：%s\n- 随身底牌与物品：随身物品待起草\n- 当前状态：良好", initialRealm, fw.ThemePremise),
+				Inventory:       "随身物品待起草",
+				HealthStatus:    "良好",
+				TrackingMode:    domain.TrackingModeAlwaysInject,
+				CreatedAt:       time.Now(),
+				UpdatedAt:       time.Now(),
+			}
+		} else {
+			if protEntry.Realm == "" {
+				protEntry.Realm = initialRealm
+			}
+			if protEntry.CoreMotivation == "" {
+				protEntry.CoreMotivation = fw.ThemePremise
+			}
+			if protEntry.Archetype == "" {
+				protEntry.Archetype = "PROTAGONIST"
+			}
+			protEntry.UpdatedAt = time.Now()
 		}
 		_ = s.store.SaveCodexEntry(ctx, protEntry)
 
@@ -103,6 +115,8 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 				ProjectID:       projectID,
 				Category:        domain.CategoryFaction,
 				Name:            fac.Name,
+				Alignment:       fac.Alignment,
+				ThreatLevel:     fac.ThreatLevel,
 				Summary:         fmt.Sprintf("立场: %s | 威胁度: %s", fac.Alignment, fac.ThreatLevel),
 				DetailsMarkdown: fac.Doctrine,
 				TrackingMode:    domain.TrackingModeAutoMention,
@@ -180,6 +194,28 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 			}
 		}
 
+		// Ledger aggregate marker for the re-bootstrap run.
+		_ = s.store.AppendEvent(ctx, &activity.ActivityEvent{
+			ProjectID:  projectID,
+			RunID:      fwRunID,
+			EntityType: activity.EntityFramework,
+			EntityID:   projectID,
+			EventType:  activity.EventFrameworkBoot,
+			Actor:      activity.ActorAIReasoner,
+			Source:     activity.SourceBootstrap,
+			Title:      fmt.Sprintf("创世总纲已重新推演《%s》", p.Title),
+			Summary: fmt.Sprintf("%d 卷 · %d 势力 · %d 关键人物 · %d 种子伏笔",
+				len(fw.VolumeArcs), len(fw.Factions), len(fw.KeyCharacters), len(fw.SeedHooks)),
+			CreatedAt: time.Now(),
+		})
+
+		// Transient seeds have been persisted to codex_entries and plot_hooks.
+		// Clean them from the macro framework to maintain a single source of truth.
+		fw.Factions = nil
+		fw.KeyCharacters = nil
+		fw.SeedHooks = nil
+		_ = s.store.SaveProject(ctx, p)
+
 		jsonResponse(w, http.StatusOK, p.Framework)
 		return
 	}
@@ -199,6 +235,13 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		p.Framework = &fw
+		if len(fw.WorldAxioms) > 0 {
+			var sb strings.Builder
+			for i, ax := range fw.WorldAxioms {
+				sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, ax))
+			}
+			p.WorldRules = strings.TrimSpace(sb.String())
+		}
 		if err := s.store.SaveProject(ctx, p); err != nil {
 			errorResponse(w, http.StatusInternalServerError, err.Error())
 			return
@@ -665,6 +708,7 @@ func (s *Server) handleProjectScenes(w http.ResponseWriter, r *http.Request, pro
 }
 
 func (s *Server) handleSceneRoutes(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(activity.WithSource(r.Context(), activity.SourceUIManual))
 	ctx := r.Context()
 	rawPath := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/scenes/"), "/")
 	if rawPath == "" {

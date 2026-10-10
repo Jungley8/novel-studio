@@ -136,6 +136,15 @@
         <p class="text-xs text-ink-300 leading-relaxed font-sans line-clamp-2 min-h-8">
           {{ entry.summary || '暂无一句话摘要' }}
         </p>
+        <!-- 势力阵营标签 -->
+        <div v-if="entry.category === 'FACTION' && (entry.alignment || entry.threat_level)" class="flex items-center gap-1.5 text-[10px]">
+          <span v-if="entry.alignment" class="px-1.5 py-0.5 rounded bg-brand-amber/15 text-brand-amber border border-brand-amber/30 font-medium">
+            {{ entry.alignment }}
+          </span>
+          <span v-if="entry.threat_level" class="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30">
+            威胁: {{ entry.threat_level }}
+          </span>
+        </div>
 
         <!-- 别名列表 -->
         <div v-if="entry.aliases && entry.aliases.length > 0" class="flex flex-wrap gap-1">

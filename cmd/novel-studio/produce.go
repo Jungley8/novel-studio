@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/config"
 	"github.com/Jungley8/novel-studio/internal/engine"
 	"github.com/Jungley8/novel-studio/internal/store"
@@ -42,6 +43,7 @@ func runProduceCLI(argv []string, defaultDataDir string) int {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	ctx = activity.WithSource(ctx, activity.SourceCLIProduce)
 
 	// Resolve Project ID
 	projectID := *projectIDFlag

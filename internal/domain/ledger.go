@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -14,15 +15,17 @@ var (
 	qtyTrailingNumRegex = regexp.MustCompile(`\s+(\d+)$`)
 )
 
-// ApplyStateMutation executes a structured transition on the protagonist's state machine,
+// ApplyStateMutation executes a structured transition on a character's state machine (such as the protagonist),
 // validating invariants (e.g. attempting to consume an item not present in inventory)
 // and producing a clean, canonical inventory and level snapshot.
-func ApplyStateMutation(p Protagonist, mutation StateMutation) (Protagonist, []string, error) {
-	updated := p
+func ApplyStateMutation(e *CodexEntry, mutation StateMutation) ([]string, error) {
+	if e == nil {
+		return nil, errors.New("codex entry cannot be nil")
+	}
 	var auditTrail []string
 
 	// 1. Process Inventory Mutations
-	items := initInventoryItems(p)
+	items := initInventoryItems(e)
 	rawDelta := strings.TrimSpace(mutation.InventoryDelta)
 
 	if rawDelta != "" {
@@ -93,47 +96,53 @@ func ApplyStateMutation(p Protagonist, mutation StateMutation) (Protagonist, []s
 				formatted = append(formatted, itm.Name)
 			}
 		}
-		updated.Inventory = strings.Join(formatted, ", ")
-		updated.StructuredItems = items
-	} else if len(updated.StructuredItems) == 0 && len(items) > 0 {
-		updated.StructuredItems = items
+		e.Inventory = strings.Join(formatted, ", ")
+		e.StructuredItems = items
+	} else if len(e.StructuredItems) == 0 && len(items) > 0 {
+		e.StructuredItems = items
 	}
 
 	// 2. Process Power / Level Progression
 	powerDelta := strings.TrimSpace(mutation.PowerDelta)
 	if powerDelta != "" {
-		updatedLevel, oldRealm, newRealm := applyPowerDelta(p.NameAndLevel, powerDelta)
-		if updatedLevel != p.NameAndLevel {
-			auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 境界/战力演变: %s ➔ %s", p.NameAndLevel, updatedLevel))
-			updated.NameAndLevel = updatedLevel
+		currentLevel := e.Realm
+		if currentLevel == "" {
+			currentLevel = e.Name
+		}
+		_, oldRealm, newRealm := applyPowerDelta(currentLevel, powerDelta)
+		if newRealm != "" && newRealm != oldRealm {
+			auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 境界/战力演变: %s ➔ %s", currentLevel, newRealm))
+			e.Realm = newRealm
 
 			// Update structured level history
-			if updated.StructuredLevel == nil {
-				updated.StructuredLevel = &PowerLevel{
+			if e.StructuredLevel == nil {
+				e.StructuredLevel = &PowerLevel{
 					Realm: newRealm,
 				}
 			}
-			updated.StructuredLevel.History = append(updated.StructuredLevel.History, LevelTransition{
+			e.StructuredLevel.History = append(e.StructuredLevel.History, LevelTransition{
 				FromRealm: oldRealm,
 				ToRealm:   newRealm,
 				Reason:    powerDelta,
 				Timestamp: time.Now(),
 			})
-			updated.StructuredLevel.Realm = newRealm
+			e.StructuredLevel.Realm = newRealm
 		}
 	}
 
-	return updated, auditTrail, nil
+	return auditTrail, nil
 }
 
 // RollbackStateMutation reverts the effects of a StateMutation from a withdrawn chapter,
 // restoring consumed inventory items, removing acquired items, and rewinding power level transitions.
-func RollbackStateMutation(p Protagonist, mutation StateMutation) (Protagonist, []string, error) {
-	updated := p
+func RollbackStateMutation(e *CodexEntry, mutation StateMutation) ([]string, error) {
+	if e == nil {
+		return nil, errors.New("codex entry cannot be nil")
+	}
 	var auditTrail []string
 
 	// 1. Invert inventory delta
-	items := initInventoryItems(p)
+	items := initInventoryItems(e)
 	rawDelta := strings.TrimSpace(mutation.InventoryDelta)
 
 	if rawDelta != "" {
@@ -190,27 +199,21 @@ func RollbackStateMutation(p Protagonist, mutation StateMutation) (Protagonist, 
 				formatted = append(formatted, itm.Name)
 			}
 		}
-		updated.Inventory = strings.Join(formatted, ", ")
-		updated.StructuredItems = items
+		e.Inventory = strings.Join(formatted, ", ")
+		e.StructuredItems = items
 	}
 
 	// 2. Rollback Power progression
-	if updated.StructuredLevel != nil && len(updated.StructuredLevel.History) > 0 {
-		lastIdx := len(updated.StructuredLevel.History) - 1
-		lastHist := updated.StructuredLevel.History[lastIdx]
-		updated.StructuredLevel.Realm = lastHist.FromRealm
-		updated.StructuredLevel.History = updated.StructuredLevel.History[:lastIdx]
-
-		namePart := strings.Split(updated.NameAndLevel, " ")[0]
-		if lastHist.FromRealm != "" {
-			updated.NameAndLevel = fmt.Sprintf("%s (%s)", namePart, lastHist.FromRealm)
-		} else {
-			updated.NameAndLevel = namePart
-		}
+	if e.StructuredLevel != nil && len(e.StructuredLevel.History) > 0 {
+		lastIdx := len(e.StructuredLevel.History) - 1
+		lastHist := e.StructuredLevel.History[lastIdx]
+		e.StructuredLevel.Realm = lastHist.FromRealm
+		e.StructuredLevel.History = e.StructuredLevel.History[:lastIdx]
+		e.Realm = lastHist.FromRealm
 		auditTrail = append(auditTrail, fmt.Sprintf("[Ledger Rollback] 境界回滚: %s ➔ %s", lastHist.ToRealm, lastHist.FromRealm))
 	}
 
-	return updated, auditTrail, nil
+	return auditTrail, nil
 }
 
 func parseInventoryItems(inv string) []string {
@@ -330,10 +333,13 @@ func parseItemAndQuantity(raw string) (name string, qty int) {
 	return s, 1
 }
 
-func initInventoryItems(p Protagonist) []InventoryItem {
-	if len(p.StructuredItems) > 0 {
+func initInventoryItems(e *CodexEntry) []InventoryItem {
+	if e == nil {
+		return nil
+	}
+	if len(e.StructuredItems) > 0 {
 		var copyItems []InventoryItem
-		for _, itm := range p.StructuredItems {
+		for _, itm := range e.StructuredItems {
 			name := strings.TrimSpace(itm.Name)
 			qty := itm.Quantity
 			if qty <= 0 {
@@ -349,7 +355,7 @@ func initInventoryItems(p Protagonist) []InventoryItem {
 		return copyItems
 	}
 
-	rawItems := parseInventoryItems(p.Inventory)
+	rawItems := parseInventoryItems(e.Inventory)
 	var items []InventoryItem
 	for _, raw := range rawItems {
 		name, qty := parseItemAndQuantity(raw)
@@ -410,5 +416,5 @@ func applyPowerDelta(current, delta string) (updatedLevel, oldRealm, newRealm st
 		return fmt.Sprintf("%s (%s)", name, newRealm), oldRealm, newRealm
 	}
 
-	return fmt.Sprintf("%s (%s)", current, cleanDelta), current, cleanDelta
+	return cleanDelta, current, cleanDelta
 }

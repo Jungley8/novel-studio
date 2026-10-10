@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/domain"
 )
 
@@ -92,6 +93,14 @@ func (m *mockChronicleStore) GetCodexEntry(ctx context.Context, projectID, id st
 func (m *mockChronicleStore) ListCodexEntries(ctx context.Context, projectID string, category domain.CodexCategory) ([]*domain.CodexEntry, error) {
 	return m.codexEntries, nil
 }
+func (m *mockChronicleStore) GetProtagonistEntry(ctx context.Context, projectID string) (*domain.CodexEntry, error) {
+	for _, e := range m.codexEntries {
+		if e.Archetype == "PROTAGONIST" || e.ID == "codex_"+projectID+"_pro" {
+			return e, nil
+		}
+	}
+	return nil, nil
+}
 func (m *mockChronicleStore) DeleteCodexEntry(ctx context.Context, projectID, id string) error {
 	return nil
 }
@@ -125,6 +134,15 @@ func (m *mockChronicleStore) ListSceneMarkers(ctx context.Context, sceneID strin
 	return nil, nil
 }
 func (m *mockChronicleStore) DeleteSceneMarker(ctx context.Context, id string) error { return nil }
+func (m *mockChronicleStore) AppendEvent(ctx context.Context, event *activity.ActivityEvent) error {
+	return nil
+}
+func (m *mockChronicleStore) ListEvents(ctx context.Context, q activity.EventQuery) ([]*activity.ActivityEvent, int64, error) {
+	return nil, 0, nil
+}
+func (m *mockChronicleStore) GetEvent(ctx context.Context, projectID, eventID string) (*activity.ActivityEvent, error) {
+	return nil, nil
+}
 func (m *mockChronicleStore) GetMatrixOverview(ctx context.Context, projectID string) (*domain.MatrixOverview, error) {
 	return nil, nil
 }
@@ -137,9 +155,16 @@ func TestCanonChronicle_AssembleHorizon(t *testing.T) {
 			Title:          "万古长青诀",
 			TargetPlatform: "起点仙侠",
 			WorldRules:     "天地不仁以万物为刍狗",
-			Protagonist: domain.Protagonist{
-				NameAndLevel: "韩立 (筑基初期)",
-				Inventory:    "掌天瓶, 绿叶法宝",
+		},
+		codexEntries: []*domain.CodexEntry{
+			{
+				ID:        "codex_p1_pro",
+				ProjectID: "p1",
+				Category:  domain.CategoryCharacter,
+				Archetype: "PROTAGONIST",
+				Name:      "韩立",
+				Realm:     "筑基初期",
+				Inventory: "掌天瓶, 绿叶法宝",
 			},
 		},
 		chapters: []*domain.Chapter{
@@ -207,8 +232,15 @@ func TestCanonChronicle_HistoricalCallbacks_NarrativeExcerpt(t *testing.T) {
 			ID:         "p_callback_test",
 			Title:      "诛仙记",
 			WorldRules: "修道者逆天而行",
-			Protagonist: domain.Protagonist{
-				NameAndLevel: "张小凡 (玉清四层)",
+		},
+		codexEntries: []*domain.CodexEntry{
+			{
+				ID:        "codex_p_callback_test_pro",
+				ProjectID: "p_callback_test",
+				Category:  domain.CategoryCharacter,
+				Archetype: "PROTAGONIST",
+				Name:      "张小凡",
+				Realm:     "玉清四层",
 			},
 		},
 		chapters: []*domain.Chapter{
@@ -309,9 +341,6 @@ func TestCanonChronicle_CodexAssembly(t *testing.T) {
 			ID:         "p_codex_chronicle",
 			Title:      "修罗弑神传",
 			WorldRules: "神明窃取香火，凡人皆为血食",
-			Protagonist: domain.Protagonist{
-				NameAndLevel: "楚枫 (筑基初期)",
-			},
 		},
 		chapters: []*domain.Chapter{
 			{
@@ -325,6 +354,8 @@ func TestCanonChronicle_CodexAssembly(t *testing.T) {
 			{
 				ID:           "e-chufeng",
 				Name:         "楚枫",
+				Realm:        "筑基初期",
+				Archetype:    "PROTAGONIST",
 				Aliases:      []string{"白衣修罗", "疯子楚"},
 				Category:     domain.CategoryCharacter,
 				TrackingMode: domain.TrackingModeAutoMention,

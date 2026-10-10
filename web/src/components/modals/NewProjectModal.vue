@@ -208,11 +208,7 @@ async function submitCreate() {
       created = await api.createProject({
         title: form.title,
         target_platform: form.target_platform,
-        protagonist: {
-          name_and_level: form.protagonist_name || '主角 (初始)',
-          inventory: '',
-          core_goal: '探查真相',
-        },
+        protagonist_name: form.protagonist_name || '主角',
       });
     }
     await actions.loadProjects();

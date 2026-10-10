@@ -132,37 +132,44 @@
 
         <!-- 主角档案 -->
         <div 
-          v-if="state.currentProject.protagonist" 
+          v-if="computedState.protagonistCharacter.value" 
           class="p-4 bg-atelier-900 border border-atelier-750 rounded-xl space-y-2.5 lg:col-span-2 shadow-atelier-sm">
           <div class="flex items-center gap-2 text-xs font-serif font-bold text-brand-amber">
             <User class="w-3.5 h-3.5" />
             <span>主角档案</span>
           </div>
-          <p class="text-[10px] text-ink-400">主角姓名、当前境界、核心目标与健康状态。</p>
+          <p class="text-[10px] text-ink-400">主角姓名、当前境界、核心动机与健康状态。</p>
           
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
             <div>
-              <label class="text-ink-400 text-[11px] font-medium">姓名与境界：</label>
+              <label class="text-ink-400 text-[11px] font-medium">姓名：</label>
               <input 
-                v-model="state.currentProject.protagonist.name_and_level" 
+                v-model="computedState.protagonistCharacter.value.name" 
                 class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-brand-amber font-mono font-bold focus:outline-none focus:border-brand-amber/60">
+            </div>
+            <div>
+              <label class="text-ink-400 text-[11px] font-medium">当前境界：</label>
+              <input 
+                v-model="computedState.protagonistCharacter.value.realm" 
+                class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-brand-amber font-mono font-bold focus:outline-none focus:border-brand-amber/60"
+                placeholder="例如：练气六层巅峰">
             </div>
             <div>
               <label class="text-ink-400 text-[11px] font-medium">战备/健康状态：</label>
               <input 
-                v-model="state.currentProject.protagonist.health_status" 
+                v-model="computedState.protagonistCharacter.value.health_status" 
                 class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-emerald-400 font-mono focus:outline-none focus:border-brand-amber/60">
             </div>
-            <div class="sm:col-span-2">
-              <label class="text-ink-400 text-[11px] font-medium">当前主线目标与行事底线：</label>
+            <div>
+              <label class="text-ink-400 text-[11px] font-medium">当前主线目标与核心动机：</label>
               <input 
-                v-model="state.currentProject.protagonist.core_goal" 
+                v-model="computedState.protagonistCharacter.value.core_motivation" 
                 class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60">
             </div>
             <div class="sm:col-span-2">
               <label class="text-ink-400 text-[11px] font-medium">随身携带道具 (Inventory)：</label>
               <textarea 
-                v-model="state.currentProject.protagonist.inventory" 
+                v-model="computedState.protagonistCharacter.value.inventory" 
                 rows="2"
                 class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md p-2 text-xs text-ink-300 font-mono focus:outline-none focus:border-brand-amber/60 resize-none leading-relaxed"></textarea>
             </div>
@@ -366,13 +373,6 @@
           </div>
           <div class="flex items-center gap-2">
             <button 
-              @click="syncFactionsToCodex" 
-              class="text-xs text-brand-amber hover:text-brand-amber-hover font-medium flex items-center gap-1 cursor-pointer bg-brand-amber/10 px-2 py-1 rounded border border-brand-amber/30"
-              title="将所有势力一键同步至设定集与关系图谱">
-              <Share2 class="w-3 h-3" />
-              <span>同步至设定集</span>
-            </button>
-            <button 
               @click="addFrameworkFaction" 
               class="text-xs text-brand-amber hover:text-brand-amber-hover font-medium flex items-center gap-1 cursor-pointer">
               <Plus class="w-3 h-3" />
@@ -383,11 +383,11 @@
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div 
-            v-for="(fac, fIdx) in state.currentProject.framework.factions" 
-            :key="fIdx" 
+            v-for="(fac, fIdx) in factionEntries" 
+            :key="fac.id || fIdx" 
             class="p-4 bg-atelier-950 border border-atelier-750 rounded-lg space-y-2 relative">
             <button 
-              @click="removeFrameworkFaction(fIdx)" 
+              @click="removeFrameworkFaction(fac)" 
               class="absolute top-2.5 right-2.5 text-ink-500 hover:text-rose-400 text-xs transition cursor-pointer">
               ✕
             </button>
@@ -404,8 +404,9 @@
             <div>
               <label class="text-[10px] text-ink-400">核心主张与独门手段：</label>
               <input 
-                v-model="fac.doctrine" 
-                class="w-full mt-0.5 bg-atelier-900 border border-atelier-750 rounded px-2 py-1 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60">
+                v-model="fac.details_markdown" 
+                class="w-full mt-0.5 bg-atelier-900 border border-atelier-750 rounded px-2 py-1 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60"
+                placeholder="宗门教义、修行功法或组织运作手段">
             </div>
             <div>
               <label class="text-[10px] text-rose-400">威胁级别与宿怨：</label>
@@ -423,8 +424,8 @@
 </template>
 
 <script setup>
-import { onMounted, watch } from 'vue';
-import { state, actions, notify } from '../stores/appState';
+import { computed, onMounted, watch } from 'vue';
+import { state, computedState, actions, notify } from '../stores/appState';
 import { 
   Compass, 
   Sparkles, 
@@ -437,8 +438,7 @@ import {
   Swords, 
   Plus,
   Sliders,
-  Loader2,
-  Share2
+  Loader2
 } from 'lucide-vue-next';
 
 function normalizeFramework() {
@@ -465,14 +465,6 @@ function normalizeFramework() {
       if (!v.estimated_chapters && v.end_chapter && v.start_chapter) {
         v.estimated_chapters = v.end_chapter - v.start_chapter + 1;
       }
-    });
-  }
-  // 势力阵营规范
-  if (Array.isArray(fw.factions)) {
-    fw.factions.forEach(f => {
-      if (!f.alignment && f.stance) f.alignment = f.stance;
-      if (!f.doctrine && f.power_base) f.doctrine = f.power_base;
-      if (!f.threat_level && f.secret_agenda) f.threat_level = f.secret_agenda;
     });
   }
 }
@@ -542,43 +534,26 @@ function removeFrameworkVolume(idx) {
   state.currentProject.framework.volume_arcs.splice(idx, 1);
 }
 
-function addFrameworkFaction() {
-  if (!state.currentProject?.framework) return;
-  state.currentProject.framework.factions = state.currentProject.framework.factions || [];
-  state.currentProject.framework.factions.push({
-    name: '',
+const factionEntries = computed(() => {
+  return (state.codexEntries || []).filter(e => e.category === 'FACTION');
+});
+
+async function addFrameworkFaction() {
+  if (!state.currentProject) return;
+  await actions.createCodexEntry({
+    project_id: state.currentProject.id,
+    category: 'FACTION',
+    name: '新建宗门/势力',
     alignment: '中立',
-    doctrine: '',
     threat_level: '中等',
+    summary: '立场: 中立 | 威胁度: 中等',
+    details_markdown: '',
+    tracking_mode: 'AUTO_MENTION',
   });
 }
 
-function removeFrameworkFaction(idx) {
-  state.currentProject.framework.factions.splice(idx, 1);
-}
-
-async function syncFactionsToCodex() {
-  const fw = state.currentProject?.framework;
-  if (!fw || !Array.isArray(fw.factions) || fw.factions.length === 0) {
-    notify('暂无势力', '请先添加或推演势力阵营', 'info');
-    return;
-  }
-  let addedCount = 0;
-  for (const fac of fw.factions) {
-    if (!fac.name.trim()) continue;
-    const exists = (state.codexEntries || []).some(e => e.name === fac.name.trim());
-    if (!exists) {
-      await actions.createCodexEntry?.({
-        name: fac.name.trim(),
-        category: 'FACTION',
-        summary: `立场: ${fac.alignment || '中立'} | 威胁: ${fac.threat_level || '中等'}`,
-        details_markdown: fac.doctrine || '',
-        tracking_mode: 'AUTO_MENTION',
-      });
-      addedCount++;
-    }
-  }
-  await actions.loadCodexEntries?.();
-  notify('同步完成', `已将 ${addedCount} 个新势力同步至设定集与图谱`, 'success');
+async function removeFrameworkFaction(fac) {
+  if (!fac?.id) return;
+  await actions.deleteCodexEntry(fac.id);
 }
 </script>

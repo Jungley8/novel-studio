@@ -17,6 +17,7 @@
         <StateMachineView v-show="state.activeTab === 'statemachine'" />
         <HooksView v-show="state.activeTab === 'hooks'" />
         <ChaptersView v-show="state.activeTab === 'chapters'" />
+        <ActivityView v-show="state.activeTab === 'activity'" />
         <GraphView v-show="state.activeTab === 'graph'" />
         <AnalyticsView v-show="state.activeTab === 'analytics'" />
         <SettingsView v-show="state.activeTab === 'config'" />
@@ -68,6 +69,7 @@ import FrameworkView from './views/FrameworkView.vue';
 import StateMachineView from './views/StateMachineView.vue';
 import HooksView from './views/HooksView.vue';
 import ChaptersView from './views/ChaptersView.vue';
+import ActivityView from './views/ActivityView.vue';
 import GraphView from './views/GraphView.vue';
 import AnalyticsView from './views/AnalyticsView.vue';
 import SettingsView from './views/SettingsView.vue';

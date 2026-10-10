@@ -75,9 +75,16 @@ func TestChapterWorkshop_ProduceChapter(t *testing.T) {
 			Title:          "万域封神",
 			TargetPlatform: "番茄脑洞",
 			WorldRules:     "杀生夺灵，因果必报",
-			Protagonist: domain.Protagonist{
-				NameAndLevel: "林凡 (练气圆满)",
-				Inventory:    "青玉短剑",
+		},
+		codexEntries: []*domain.CodexEntry{
+			{
+				ID:        "codex_p-ws_pro",
+				ProjectID: "p-ws",
+				Category:  domain.CategoryCharacter,
+				Archetype: "PROTAGONIST",
+				Name:      "林凡",
+				Realm:     "练气圆满",
+				Inventory: "青玉短剑",
 			},
 		},
 		chapters: []*domain.Chapter{},

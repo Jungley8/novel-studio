@@ -99,15 +99,91 @@ func (s *Server) handleRenderScene(w http.ResponseWriter, r *http.Request, proje
 		}
 	}
 	if horizon == nil {
+		prot, _ := s.store.GetProtagonistEntry(r.Context(), projectID)
 		horizon = &engine.CanonHorizon{
 			Project:          p,
 			TargetChapter:    req.ChapterIndex,
-			ProtagonistState: p.Protagonist,
+			ProtagonistEntry: prot,
 			WorldRules:       p.WorldRules,
 		}
 	}
 	if req.NarrativeStyle != "" {
 		horizon.NarrativeTone = req.NarrativeStyle
+	}
+
+	isSSE := strings.Contains(r.Header.Get("Accept"), "text/event-stream") || r.URL.Query().Get("stream") == "true"
+	if isSSE {
+		rc := http.NewResponseController(w)
+		_ = rc.SetWriteDeadline(time.Time{})
+
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		var writeMu sync.Mutex
+		safeWrite := func(data string) {
+			writeMu.Lock()
+			defer writeMu.Unlock()
+			_, _ = fmt.Fprint(w, data)
+			flusher.Flush()
+		}
+
+		stopHeartbeat := make(chan struct{})
+		defer close(stopHeartbeat)
+		go func() {
+			ticker := time.NewTicker(3 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopHeartbeat:
+					return
+				case <-ticker.C:
+					safeWrite(": keep-alive\n\n")
+				}
+			}
+		}()
+
+		content, _, err := s.orch.RenderSceneStream(r.Context(), s.cfg.WriterModel, horizon, req.Beats, req.WordsTarget, func(delta string) {
+			deltaPayload, _ := json.Marshal(map[string]string{"delta": delta})
+			safeWrite(fmt.Sprintf("event: delta\ndata: %s\n\n", string(deltaPayload)))
+		})
+		if err != nil {
+			errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
+			safeWrite(fmt.Sprintf("event: error\ndata: %s\n\n", string(errPayload)))
+			return
+		}
+
+		existingRenderCp, _ := s.store.GetCheckpoint(r.Context(), projectID, req.ChapterIndex)
+		renderCp := &domain.ChapterCheckpoint{
+			ProjectID:    projectID,
+			ChapterIndex: req.ChapterIndex,
+			Phase:        domain.CheckpointPhaseDrafted,
+			Beats:        req.Beats,
+			DraftText:    content,
+			UpdatedAt:    time.Now(),
+		}
+		if existingRenderCp != nil {
+			renderCp.CoreConflict = existingRenderCp.CoreConflict
+			renderCp.StateMutation = existingRenderCp.StateMutation
+			renderCp.RewriteLoops = existingRenderCp.RewriteLoops
+			renderCp.AuditReport = existingRenderCp.AuditReport
+		}
+		_ = s.store.SaveCheckpoint(r.Context(), renderCp)
+
+		donePayload, _ := json.Marshal(map[string]any{
+			"content":    content,
+			"checkpoint": renderCp,
+		})
+		safeWrite(fmt.Sprintf("event: complete\ndata: %s\n\n", string(donePayload)))
+		safeWrite(fmt.Sprintf("event: done\ndata: %s\n\n", string(donePayload)))
+		return
 	}
 
 	content, _, err := s.orch.RenderSceneWithHorizon(r.Context(), s.cfg.WriterModel, horizon, req.Beats, req.WordsTarget)
@@ -146,13 +222,19 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request, proje
 		return
 	}
 	var req struct {
-		ChapterIndex int                `json:"chapter_index"`
-		Beats        []domain.SceneBeat `json:"beats"`
-		DraftText    string             `json:"draft_text"`
+		ChapterIndex  int                `json:"chapter_index"`
+		Beats         []domain.SceneBeat `json:"beats"`
+		DraftText     string             `json:"draft_text"`
+		Content       string             `json:"content"`
+		ReviewerModel string             `json:"reviewer_model"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		errorResponse(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	if strings.TrimSpace(req.DraftText) == "" && strings.TrimSpace(req.Content) != "" {
+		req.DraftText = req.Content
 	}
 
 	p, err := s.store.GetProject(r.Context(), projectID)
@@ -166,9 +248,25 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request, proje
 		return
 	}
 
-	audit, _, err := s.qualityGate.Audit(r.Context(), s.cfg.ReasoningModel, p, req.ChapterIndex, req.Beats, req.DraftText)
+	reviewerModel := strings.TrimSpace(req.ReviewerModel)
+	if reviewerModel == "" {
+		reviewerModel = strings.TrimSpace(s.cfg.ReviewerModel)
+	}
+	if reviewerModel == "" {
+		reviewerModel = strings.TrimSpace(s.cfg.ReasoningModel)
+	}
+	if reviewerModel == "" {
+		reviewerModel = strings.TrimSpace(s.cfg.WriterModel)
+	}
+
+	prot, _ := s.store.GetProtagonistEntry(r.Context(), projectID)
+	audit, _, err := s.qualityGate.Audit(r.Context(), reviewerModel, p, prot, req.ChapterIndex, req.Beats, req.DraftText)
 	if err != nil {
-		errorResponse(w, http.StatusInternalServerError, err.Error())
+		errStr := err.Error()
+		if strings.Contains(errStr, "Model is unavailable") {
+			errStr = fmt.Sprintf("体检失败: 模型 [%s] 在当前接口不可用。请前往【设置】将“文风体检”或“剧情构思”更新为你当前可用的模型名称: %s", reviewerModel, errStr)
+		}
+		errorResponse(w, http.StatusInternalServerError, errStr)
 		return
 	}
 
@@ -349,6 +447,89 @@ func (s *Server) handleRewriteDraft(w http.ResponseWriter, r *http.Request, proj
 
 	if s.orch == nil {
 		errorResponse(w, http.StatusInternalServerError, "orchestrator not configured")
+		return
+	}
+
+	isSSE := strings.Contains(r.Header.Get("Accept"), "text/event-stream") || r.URL.Query().Get("stream") == "true"
+	if isSSE {
+		rc := http.NewResponseController(w)
+		_ = rc.SetWriteDeadline(time.Time{})
+
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		var writeMu sync.Mutex
+		safeWrite := func(data string) {
+			writeMu.Lock()
+			defer writeMu.Unlock()
+			_, _ = fmt.Fprint(w, data)
+			flusher.Flush()
+		}
+
+		stopHeartbeat := make(chan struct{})
+		defer close(stopHeartbeat)
+		go func() {
+			ticker := time.NewTicker(3 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopHeartbeat:
+					return
+				case <-ticker.C:
+					safeWrite(": keep-alive\n\n")
+				}
+			}
+		}()
+
+		rewritten, _, err := s.orch.RewriteDraftStream(r.Context(), s.cfg.WriterModel, p, req.ChapterIndex, req.OriginalDraft, req.Review, engine.RewriteOptions{
+			WordsTarget:    req.WordsTarget,
+			NarrativeStyle: req.NarrativeStyle,
+		}, func(delta string) {
+			deltaPayload, _ := json.Marshal(map[string]string{"delta": delta})
+			safeWrite(fmt.Sprintf("event: delta\ndata: %s\n\n", string(deltaPayload)))
+		})
+		if err != nil {
+			errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
+			safeWrite(fmt.Sprintf("event: error\ndata: %s\n\n", string(errPayload)))
+			return
+		}
+
+		existingRewriteCp, _ := s.store.GetCheckpoint(r.Context(), projectID, req.ChapterIndex)
+		loops := 1
+		if existingRewriteCp != nil {
+			loops = existingRewriteCp.RewriteLoops + 1
+		}
+		rewriteCp := &domain.ChapterCheckpoint{
+			ProjectID:    projectID,
+			ChapterIndex: req.ChapterIndex,
+			Phase:        domain.CheckpointPhaseRewriting,
+			DraftText:    rewritten,
+			RewriteLoops: loops,
+			UpdatedAt:    time.Now(),
+		}
+		if existingRewriteCp != nil {
+			rewriteCp.CoreConflict = existingRewriteCp.CoreConflict
+			rewriteCp.Beats = existingRewriteCp.Beats
+			rewriteCp.StateMutation = existingRewriteCp.StateMutation
+			rewriteCp.AuditReport = existingRewriteCp.AuditReport
+		}
+		_ = s.store.SaveCheckpoint(r.Context(), rewriteCp)
+
+		donePayload, _ := json.Marshal(map[string]any{
+			"content":       rewritten,
+			"rewrite_loops": loops,
+			"checkpoint":    rewriteCp,
+		})
+		safeWrite(fmt.Sprintf("event: complete\ndata: %s\n\n", string(donePayload)))
+		safeWrite(fmt.Sprintf("event: done\ndata: %s\n\n", string(donePayload)))
 		return
 	}
 

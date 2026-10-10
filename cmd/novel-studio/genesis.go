@@ -103,21 +103,55 @@ func runGenesisCLI(argv []string, defaultDataDir string) int {
 		Title:          *titleFlag,
 		TargetPlatform: *platformFlag,
 		WorldRules:     strings.TrimSpace(worldRules.String()),
-		Protagonist: domain.Protagonist{
-			NameAndLevel: fmt.Sprintf("%s (%s)", protagonistName, initialRealm),
-			Inventory:    "凡骨铁印x1, 粗布短褐x1, 引路符x1",
-			CoreGoal:     protagonistGoal,
-			HealthStatus: "良好",
-		},
-		Framework: fw,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		Framework:      fw,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
 	}
 
 	if err := s.SaveProject(ctx, proj); err != nil {
 		fmt.Fprintf(os.Stderr, "✗ 保存作品失败: %v\n", err)
 		return 1
 	}
+
+	// 0. Seed Protagonist into The Codex
+	protEntry := &domain.CodexEntry{
+		ID:                 fmt.Sprintf("codex_%s_pro", projectID),
+		ProjectID:          projectID,
+		Category:           domain.CategoryCharacter,
+		Name:               protagonistName,
+		ColorTag:           "#f59e0b",
+		Summary:            fmt.Sprintf("全书核心主角 | 境界: %s | 动机: %s", initialRealm, protagonistGoal),
+		DetailsMarkdown:    fmt.Sprintf("### %s (全书核心主角)\n- **初始境界**: %s\n- **核心动机**: %s\n- **随身底牌**: 凡骨铁印x1, 粗布短褐x1, 引路符x1\n- **初始状态**: 良好\n", protagonistName, initialRealm, protagonistGoal),
+		Archetype:          "PROTAGONIST",
+		VoiceTone:          "内敛隐忍，遇死地杀伐果决",
+		CoreMotivation:     protagonistGoal,
+		CurrentDisposition: "FRIENDLY",
+		TrackingMode:       domain.TrackingModeAlwaysInject,
+		Aliases:            []string{"主角", protagonistName, fmt.Sprintf("%s (%s)", protagonistName, initialRealm)},
+		Realm:              initialRealm,
+		Inventory:          "凡骨铁印x1, 粗布短褐x1, 引路符x1",
+		HealthStatus:       "良好",
+		StructuredLevel: &domain.PowerLevel{
+			Realm: initialRealm,
+			History: []domain.LevelTransition{
+				{
+					FromRealm: "凡俗白身",
+					ToRealm:   initialRealm,
+					Chapter:   0,
+					Reason:    "创世开局设定",
+					Timestamp: time.Now(),
+				},
+			},
+		},
+		StructuredItems: []domain.InventoryItem{
+			{Name: "凡骨铁印", Quantity: 1, Quality: "上古不灭残印", AcquiredAt: 0},
+			{Name: "粗布短褐", Quantity: 1, Quality: "随身布衣", AcquiredAt: 0},
+			{Name: "引路符", Quantity: 1, Quality: "低阶符箓", AcquiredAt: 0},
+		},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	_ = s.SaveCodexEntry(ctx, protEntry)
 
 	// 1. Seed plot hooks
 	for i, sh := range fw.SeedHooks {
@@ -212,6 +246,28 @@ func runGenesisCLI(argv []string, defaultDataDir string) int {
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
 	})
+
+	// 4. Seed Factions into The Codex
+	for i, f := range fw.Factions {
+		if strings.TrimSpace(f.Name) == "" {
+			continue
+		}
+		entry := &domain.CodexEntry{
+			ID:              fmt.Sprintf("codex_%s_fac_%d", projectID, i+1),
+			ProjectID:       projectID,
+			Category:        domain.CategoryFaction,
+			Name:            f.Name,
+			Alignment:       f.Alignment,
+			ThreatLevel:     f.ThreatLevel,
+			ColorTag:        "#6366f1",
+			Summary:         fmt.Sprintf("立场: %s | 威胁度: %s", f.Alignment, f.ThreatLevel),
+			DetailsMarkdown: f.Doctrine,
+			TrackingMode:    domain.TrackingModeAutoMention,
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
+		}
+		_ = s.SaveCodexEntry(ctx, entry)
+	}
 
 	// Print Summary
 	fmt.Printf("\n✨ 宏观总纲创世推演完成！作品已原子落库 (ID: %s)\n", projectID)

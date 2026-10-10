@@ -31,15 +31,25 @@ func TestSQLiteStore_CRUD(t *testing.T) {
 		WorldRules:            "筑基期不能跨界传信",
 		DefaultWordsTarget:    3500,
 		DefaultNarrativeStyle: "fastpaced",
-		Protagonist: domain.Protagonist{
-			NameAndLevel: "叶天 (练气九层)",
-			Inventory:    "生锈铁剑x1, 回春丹x3",
-			CoreGoal:     "在宗门小比中战胜外门大师兄",
-		},
 	}
 
 	if err := s.SaveProject(ctx, p); err != nil {
 		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	// Also verify protagonist as CodexEntry
+	prot := &domain.CodexEntry{
+		ID:        "codex_proj-001_pro",
+		ProjectID: "proj-001",
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "叶天",
+		Realm:     "练气九层",
+		Inventory: "生锈铁剑x1, 回春丹x3",
+		Summary:   "在宗门小比中战胜外门大师兄",
+	}
+	if err := s.SaveCodexEntry(ctx, prot); err != nil {
+		t.Fatalf("SaveCodexEntry failed: %v", err)
 	}
 
 	// 2. Read project
@@ -50,8 +60,12 @@ func TestSQLiteStore_CRUD(t *testing.T) {
 	if gotP.Title != "极道修仙传" {
 		t.Errorf("expected Title 极道修仙传, got %s", gotP.Title)
 	}
-	if gotP.Protagonist.NameAndLevel != "叶天 (练气九层)" {
-		t.Errorf("expected Protagonist name 叶天 (练气九层), got %s", gotP.Protagonist.NameAndLevel)
+	gotProt, err := s.GetProtagonistEntry(ctx, "proj-001")
+	if err != nil {
+		t.Fatalf("GetProtagonistEntry failed: %v", err)
+	}
+	if gotProt.Name != "叶天" || gotProt.Realm != "练气九层" {
+		t.Errorf("expected Protagonist name 叶天, realm 练气九层, got %s (%s)", gotProt.Name, gotProt.Realm)
 	}
 	if gotP.DefaultWordsTarget != 3500 {
 		t.Errorf("expected DefaultWordsTarget 3500, got %d", gotP.DefaultWordsTarget)
@@ -134,14 +148,19 @@ func TestSQLiteStore_CommitChapterAtomic(t *testing.T) {
 		ID:             "proj-atomic",
 		Title:          "修仙传",
 		TargetPlatform: "番茄",
-		Protagonist: domain.Protagonist{
-			NameAndLevel: "林凡 (练气一层)",
-			Inventory:    "粗布衣",
-		},
 	}
 	if err := s.SaveProject(ctx, p); err != nil {
 		t.Fatalf("SaveProject failed: %v", err)
 	}
+	_ = s.SaveCodexEntry(ctx, &domain.CodexEntry{
+		ID:        "codex_proj-atomic_pro",
+		ProjectID: "proj-atomic",
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "林凡",
+		Realm:     "练气一层",
+		Inventory: "粗布衣",
+	})
 
 	// Add an open hook targeting chapter 2
 	hook := &domain.PlotHook{
@@ -167,20 +186,24 @@ func TestSQLiteStore_CommitChapterAtomic(t *testing.T) {
 		},
 	}
 
-	updatedProj, err := s.CommitChapter(ctx, "proj-atomic", ch2)
+	_, err = s.CommitChapter(ctx, "proj-atomic", ch2)
 	if err != nil {
 		t.Fatalf("CommitChapter failed: %v", err)
 	}
 
 	// 1. Verify updated protagonist
-	if updatedProj.Protagonist.Inventory != "粗布衣, 洗髓丹" {
-		t.Errorf("unexpected inventory: %s", updatedProj.Protagonist.Inventory)
+	updatedProt, err := s.GetProtagonistEntry(ctx, "proj-atomic")
+	if err != nil {
+		t.Fatalf("GetProtagonistEntry failed: %v", err)
 	}
-	if len(updatedProj.Protagonist.StructuredItems) != 2 || updatedProj.Protagonist.StructuredItems[1].Quantity != 1 {
-		t.Errorf("unexpected structured items: %+v", updatedProj.Protagonist.StructuredItems)
+	if updatedProt.Inventory != "粗布衣, 洗髓丹" {
+		t.Errorf("unexpected inventory: %s", updatedProt.Inventory)
 	}
-	if updatedProj.Protagonist.NameAndLevel != "林凡 (灵力初醒)" {
-		t.Errorf("unexpected name and level: %s", updatedProj.Protagonist.NameAndLevel)
+	if len(updatedProt.StructuredItems) != 2 || updatedProt.StructuredItems[1].Quantity != 1 {
+		t.Errorf("unexpected structured items: %+v", updatedProt.StructuredItems)
+	}
+	if updatedProt.Realm != "灵力初醒" {
+		t.Errorf("unexpected realm: %s", updatedProt.Realm)
 	}
 
 	// 2. Verify chapter was persisted
@@ -299,9 +322,6 @@ func TestSQLiteStore_NullFrameworkJsonCompatibility(t *testing.T) {
 		Title:          "万古旧传",
 		TargetPlatform: "起点仙侠",
 		WorldRules:     "天地不仁",
-		Protagonist: domain.Protagonist{
-			NameAndLevel: "古修士 (金丹期)",
-		},
 	}
 	if err := s.SaveProject(ctx, p); err != nil {
 		t.Fatalf("SaveProject failed: %v", err)
@@ -642,14 +662,23 @@ func TestSQLiteStore_MultiCharacterMutationCommit(t *testing.T) {
 		Title:          "凡人弑神录",
 		TargetPlatform: "起点仙侠",
 		WorldRules:     "神明不可直视，凡骨亦可弑神",
-		Protagonist: domain.Protagonist{
-			NameAndLevel: "顾渊 (凡人胎骨)",
-			Inventory:    "凡骨残印x1",
-			CoreGoal:     "隐忍查明三千年前宗门覆灭真相",
-		},
 	}
 	if err := s.SaveProject(ctx, proj); err != nil {
 		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	prot := &domain.CodexEntry{
+		ID:        "codex_proj_cast_pro",
+		ProjectID: proj.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "顾渊",
+		Realm:     "凡人胎骨",
+		Inventory: "凡骨残印x1",
+		Summary:   "隐忍查明三千年前宗门覆灭真相",
+	}
+	if err := s.SaveCodexEntry(ctx, prot); err != nil {
+		t.Fatalf("SaveCodexEntry prot failed: %v", err)
 	}
 
 	// 2. Create Cast Characters in Codex
@@ -717,17 +746,21 @@ func TestSQLiteStore_MultiCharacterMutationCommit(t *testing.T) {
 		Content: "寒夜风雪呼啸。聚仙楼二楼雅间内，楚掌柜端着酒盏，眼神冰冷...",
 	}
 
-	updatedProj, err := s.CommitChapter(ctx, proj.ID, ch)
+	_, err = s.CommitChapter(ctx, proj.ID, ch)
 	if err != nil {
 		t.Fatalf("CommitChapter failed: %v", err)
 	}
 
 	// 4. Verify Protagonist update
-	if !strings.Contains(updatedProj.Protagonist.Inventory, "百年寒铁令") {
-		t.Errorf("expected protagonist inventory to have 百年寒铁令, got %s", updatedProj.Protagonist.Inventory)
+	updatedProt, err := s.GetProtagonistEntry(ctx, proj.ID)
+	if err != nil {
+		t.Fatalf("GetProtagonistEntry failed: %v", err)
 	}
-	if !strings.Contains(updatedProj.Protagonist.NameAndLevel, "觉醒凡骨神纹") {
-		t.Errorf("expected protagonist power update, got %s", updatedProj.Protagonist.NameAndLevel)
+	if !strings.Contains(updatedProt.Inventory, "百年寒铁令") {
+		t.Errorf("expected protagonist inventory to have 百年寒铁令, got %s", updatedProt.Inventory)
+	}
+	if !strings.Contains(updatedProt.Realm, "觉醒凡骨神纹") {
+		t.Errorf("expected protagonist power update, got %s", updatedProt.Realm)
 	}
 
 	// 5. Verify Character 1 (楚掌柜) Progression & Disposition via alias match
@@ -774,14 +807,19 @@ func TestSQLiteStore_UncommitChapter(t *testing.T) {
 	proj := &domain.Project{
 		ID:    "proj-uncommit",
 		Title: "回滚测试录",
-		Protagonist: domain.Protagonist{
-			NameAndLevel: "叶孤鸿 (凡人境)",
-			Inventory:    "粗布包袱",
-		},
 	}
 	if err := s.SaveProject(ctx, proj); err != nil {
 		t.Fatalf("SaveProject failed: %v", err)
 	}
+	_ = s.SaveCodexEntry(ctx, &domain.CodexEntry{
+		ID:        "codex_proj-uncommit_pro",
+		ProjectID: "proj-uncommit",
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "叶孤鸿",
+		Realm:     "凡人境",
+		Inventory: "粗布包袱",
+	})
 
 	ch := &domain.Chapter{
 		ID:           "ch_uncommit_1",
@@ -804,12 +842,13 @@ func TestSQLiteStore_UncommitChapter(t *testing.T) {
 	}
 
 	// 1. Commit chapter
-	updatedProj, err := s.CommitChapter(ctx, proj.ID, ch)
+	_, err = s.CommitChapter(ctx, proj.ID, ch)
 	if err != nil {
 		t.Fatalf("CommitChapter failed: %v", err)
 	}
-	if !strings.Contains(updatedProj.Protagonist.Inventory, "灵蛇胆") {
-		t.Fatalf("expected 灵蛇胆 in inventory, got %s", updatedProj.Protagonist.Inventory)
+	protAfterCommit, err := s.GetProtagonistEntry(ctx, proj.ID)
+	if err != nil || !strings.Contains(protAfterCommit.Inventory, "灵蛇胆") {
+		t.Fatalf("expected 灵蛇胆 in inventory, got %+v", protAfterCommit)
 	}
 
 	chs, err := s.ListChapters(ctx, proj.ID)
@@ -818,7 +857,7 @@ func TestSQLiteStore_UncommitChapter(t *testing.T) {
 	}
 
 	// 2. Uncommit chapter back to draft
-	cp, uncommittedProj, err := s.UncommitChapter(ctx, proj.ID, 1)
+	cp, _, err := s.UncommitChapter(ctx, proj.ID, 1)
 	if err != nil {
 		t.Fatalf("UncommitChapter failed: %v", err)
 	}
@@ -856,7 +895,11 @@ func TestSQLiteStore_UncommitChapter(t *testing.T) {
 	}
 
 	// Check protagonist inventory rolled back
-	if strings.Contains(uncommittedProj.Protagonist.Inventory, "灵蛇胆") {
-		t.Errorf("expected 灵蛇胆 removed from inventory after rollback, got %s", uncommittedProj.Protagonist.Inventory)
+	protAfterUncommit, err := s.GetProtagonistEntry(ctx, proj.ID)
+	if err != nil {
+		t.Fatalf("GetProtagonistEntry failed: %v", err)
+	}
+	if strings.Contains(protAfterUncommit.Inventory, "灵蛇胆") {
+		t.Errorf("expected 灵蛇胆 removed from inventory after rollback, got %s", protAfterUncommit.Inventory)
 	}
 }

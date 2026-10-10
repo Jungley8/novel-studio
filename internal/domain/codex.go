@@ -65,8 +65,26 @@ type CodexEntry struct {
 	CurrentDisposition string           `json:"current_disposition,omitempty"` // 当前对主角立场态势: "HOSTILE" | "WARY" | "NEUTRAL" | "FRIENDLY" | "DEVOTED"
 	Progressions       []Progression    `json:"progressions,omitempty"`
 	Relations          []EntityRelation `json:"relations,omitempty"`
+	Realm              string           `json:"realm,omitempty"`            // 境界/战力等级 (如: 练气九层、金丹中期)
+	Inventory          string           `json:"inventory,omitempty"`        // 随身底牌/物品清单 (如: 沉渊古剑x1, 洗髓丹x2)
+	HealthStatus       string           `json:"health_status,omitempty"`    // 身心/伤势状态 (如: 经脉轻伤, 气血充盈)
+	StructuredLevel    *PowerLevel      `json:"structured_level,omitempty"` // 结构化境界历程
+	StructuredItems    []InventoryItem  `json:"structured_items,omitempty"` // 结构化物品清单
+	Alignment          string           `json:"alignment,omitempty"`        // 阵营立场 (如: 正道, 魔道, 隐世, 皇朝, 中立)
+	ThreatLevel        string           `json:"threat_level,omitempty"`     // 威胁级别 (如: 极高, 中等, 低)
 	CreatedAt          time.Time        `json:"created_at"`
 	UpdatedAt          time.Time        `json:"updated_at"`
+}
+
+// NameAndLevel returns a formatted string combining name and realm if present.
+func (e *CodexEntry) NameAndLevel() string {
+	if e == nil {
+		return ""
+	}
+	if strings.TrimSpace(e.Realm) == "" {
+		return e.Name
+	}
+	return e.Name + " (" + e.Realm + ")"
 }
 
 // ActiveProgression returns the most relevant Progression snapshot for a given chapter index.

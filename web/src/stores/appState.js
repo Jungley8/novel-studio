@@ -183,11 +183,17 @@ export const computedState = {
     return state.currentProject.framework.volume_arcs.find(v => ch >= v.start_chapter && ch <= v.end_chapter)
       || state.currentProject.framework.volume_arcs[0];
   }),
+  protagonistCharacter: computed(() => {
+    return state.codexEntries.find(e => e.archetype === 'PROTAGONIST')
+      || state.codexEntries.find(e => e.id?.endsWith('_pro'))
+      || null;
+  }),
   currentPowerTier: computed(() => {
     if (!state.currentProject?.framework?.power_ladder) return null;
-    const realm = state.currentProject.protagonist?.name_and_level || '';
+    const prot = computedState.protagonistCharacter.value;
+    const realm = (prot?.realm || prot?.name || '') + ' ' + (prot?.structured_level?.realm || '');
     for (const tier of state.currentProject.framework.power_ladder) {
-      if (realm.includes(tier.tier_name)) return tier;
+      if (realm.includes(tier.tier_name) || (tier.realm && realm.includes(tier.realm))) return tier;
     }
     return state.currentProject.framework.power_ladder[0];
   }),

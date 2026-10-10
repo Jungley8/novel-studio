@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/domain"
 	_ "modernc.org/sqlite"
 )
@@ -47,7 +48,6 @@ func (s *SQLiteStore) migrate() error {
 		title TEXT NOT NULL,
 		target_platform TEXT NOT NULL,
 		world_rules TEXT,
-		protagonist_json TEXT,
 		framework_json TEXT,
 		default_words_target INTEGER DEFAULT 2000,
 		default_narrative_style TEXT DEFAULT 'hardboiled',
@@ -113,6 +113,13 @@ func (s *SQLiteStore) migrate() error {
 		voice_tone TEXT DEFAULT '',
 		core_motivation TEXT DEFAULT '',
 		current_disposition TEXT DEFAULT '',
+		realm TEXT DEFAULT '',
+		inventory TEXT DEFAULT '',
+		health_status TEXT DEFAULT '',
+		structured_level_json TEXT DEFAULT '',
+		structured_items_json TEXT DEFAULT '',
+		alignment TEXT DEFAULT '',
+		threat_level TEXT DEFAULT '',
 		created_at TIMESTAMP NOT NULL,
 		updated_at TIMESTAMP NOT NULL,
 		FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -187,6 +194,38 @@ func (s *SQLiteStore) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_scenes_chapter ON scenes(chapter_id, scene_index);
 	CREATE INDEX IF NOT EXISTS idx_scenes_project ON scenes(project_id);
 	CREATE INDEX IF NOT EXISTS idx_scene_markers_scene ON scene_markers(scene_id);
+
+	-- project_events has intentionally NO foreign key to projects: the ledger
+	-- is a tombstone history and must survive project deletion.
+	CREATE TABLE IF NOT EXISTS project_events (
+		id TEXT PRIMARY KEY,
+		project_id TEXT NOT NULL,
+		seq INTEGER NOT NULL,
+		run_id TEXT NOT NULL DEFAULT '',
+		entity_type TEXT NOT NULL,
+		entity_id TEXT NOT NULL,
+		chapter_index INTEGER DEFAULT 0,
+		event_type TEXT NOT NULL,
+		actor TEXT NOT NULL,
+		source TEXT NOT NULL,
+		title TEXT NOT NULL,
+		summary TEXT,
+		excerpt_before TEXT,
+		excerpt_after TEXT,
+		before_blob BLOB,
+		after_blob BLOB,
+		codec TEXT NOT NULL DEFAULT 'none',
+		fields_changed TEXT,
+		chars_added INTEGER DEFAULT 0,
+		chars_removed INTEGER DEFAULT 0,
+		token_usage TEXT,
+		created_at TIMESTAMP NOT NULL
+	);
+
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_events_proj_seq ON project_events(project_id, seq);
+	CREATE INDEX IF NOT EXISTS idx_events_entity ON project_events(project_id, entity_type, entity_id);
+	CREATE INDEX IF NOT EXISTS idx_events_chapter ON project_events(project_id, chapter_index);
+	CREATE INDEX IF NOT EXISTS idx_events_run ON project_events(project_id, run_id);
 	`
 	if _, err := s.db.Exec(schema); err != nil {
 		return err
@@ -203,7 +242,390 @@ func (s *SQLiteStore) migrate() error {
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN voice_tone TEXT DEFAULT '';`)
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN core_motivation TEXT DEFAULT '';`)
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN current_disposition TEXT DEFAULT '';`)
+	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN realm TEXT DEFAULT '';`)
+	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN inventory TEXT DEFAULT '';`)
+	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN health_status TEXT DEFAULT '';`)
+	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN structured_level_json TEXT DEFAULT '';`)
+	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN structured_items_json TEXT DEFAULT '';`)
+	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN alignment TEXT DEFAULT '';`)
+	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN threat_level TEXT DEFAULT '';`)
+
+	// One-time data migration from legacy projects.protagonist_json into codex_entries
+	var colCount int
+	_ = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('projects') WHERE name = 'protagonist_json'`).Scan(&colCount)
+	if colCount > 0 {
+		type legacyRow struct {
+			pid   string
+			pjson string
+		}
+		var legRows []legacyRow
+		rows, err := s.db.Query(`SELECT id, protagonist_json FROM projects WHERE protagonist_json IS NOT NULL AND protagonist_json != ''`)
+		if err == nil {
+			for rows.Next() {
+				var pid, pjson string
+				if err := rows.Scan(&pid, &pjson); err == nil && pjson != "" {
+					legRows = append(legRows, legacyRow{pid: pid, pjson: pjson})
+				}
+			}
+			_ = rows.Close()
+
+			for _, lr := range legRows {
+				var checkCount int
+				_ = s.db.QueryRow(`SELECT count(*) FROM codex_entries WHERE project_id = ? AND archetype = 'PROTAGONIST'`, lr.pid).Scan(&checkCount)
+				if checkCount == 0 {
+					var legacy struct {
+						NameAndLevel    string `json:"name_and_level"`
+						Inventory       string `json:"inventory"`
+						CoreGoal        string `json:"core_goal"`
+						HealthStatus    string `json:"health_status"`
+						StructuredLevel any    `json:"structured_level"`
+						StructuredItems any    `json:"structured_items"`
+					}
+					if uerr := json.Unmarshal([]byte(lr.pjson), &legacy); uerr == nil {
+						name := legacy.NameAndLevel
+						realm := ""
+						if parts := strings.Split(legacy.NameAndLevel, "("); len(parts) > 1 {
+							name = strings.TrimSpace(parts[0])
+							realm = strings.TrimSpace(strings.TrimSuffix(parts[1], ")"))
+						} else if parts := strings.Split(legacy.NameAndLevel, "（"); len(parts) > 1 {
+							name = strings.TrimSpace(parts[0])
+							realm = strings.TrimSpace(strings.TrimSuffix(parts[1], "）"))
+						}
+						if name == "" {
+							name = "主角"
+						}
+						levelBytes, _ := json.Marshal(legacy.StructuredLevel)
+						itemsBytes, _ := json.Marshal(legacy.StructuredItems)
+						eid := fmt.Sprintf("codex_%s_pro", lr.pid)
+						_, _ = s.db.Exec(`
+							INSERT INTO codex_entries (
+								id, project_id, category, name, color_tag, summary, details_markdown,
+								tracking_mode, archetype, voice_tone, core_motivation, current_disposition,
+								realm, inventory, health_status, structured_level_json, structured_items_json,
+								created_at, updated_at
+							) VALUES (?, ?, 'CHARACTER', ?, '#fbbf24', ?, ?, 'ALWAYS_INJECT', 'PROTAGONIST', '', ?, '', ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+							ON CONFLICT(id) DO NOTHING
+						`, eid, lr.pid, name, "全书核心主角", "【全书核心主角档案】", legacy.CoreGoal, realm, legacy.Inventory, legacy.HealthStatus, string(levelBytes), string(itemsBytes))
+					}
+				}
+			}
+		}
+	}
+
+	// One-time data migration from legacy projects.framework_json.factions into codex_entries
+	type frameworkRow struct {
+		pid   string
+		fjson string
+	}
+	var fRows []frameworkRow
+	fQueryRows, err := s.db.Query(`SELECT id, framework_json FROM projects WHERE framework_json IS NOT NULL AND framework_json != ''`)
+	if err == nil {
+		for fQueryRows.Next() {
+			var pid, fjson string
+			if err := fQueryRows.Scan(&pid, &fjson); err == nil && fjson != "" {
+				fRows = append(fRows, frameworkRow{pid: pid, fjson: fjson})
+			}
+		}
+		_ = fQueryRows.Close()
+
+		for _, fr := range fRows {
+			var fw struct {
+				Factions []domain.Faction `json:"factions"`
+			}
+			if err := json.Unmarshal([]byte(fr.fjson), &fw); err == nil && len(fw.Factions) > 0 {
+				for i, fac := range fw.Factions {
+					if strings.TrimSpace(fac.Name) == "" {
+						continue
+					}
+					var checkCount int
+					_ = s.db.QueryRow(`SELECT count(*) FROM codex_entries WHERE project_id = ? AND category = 'FACTION' AND name = ?`, fr.pid, fac.Name).Scan(&checkCount)
+					if checkCount == 0 {
+						entryID := fmt.Sprintf("codex_%s_fac_%d", fr.pid, time.Now().UnixNano()+int64(i))
+						_, _ = s.db.Exec(`
+							INSERT INTO codex_entries (
+								id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
+								archetype, voice_tone, core_motivation, current_disposition, realm, inventory, health_status,
+								structured_level_json, structured_items_json, alignment, threat_level, created_at, updated_at
+							) VALUES (?, ?, 'FACTION', ?, '', ?, ?, 'AUTO_MENTION', '', '', '', '', '', '', '', '', '', ?, ?, datetime('now'), datetime('now'))
+							ON CONFLICT(id) DO NOTHING
+						`, entryID, fr.pid, fac.Name, fmt.Sprintf("立场: %s | 威胁度: %s", fac.Alignment, fac.ThreatLevel), fac.Doctrine, fac.Alignment, fac.ThreatLevel)
+					}
+				}
+			}
+		}
+	}
 	return nil
+}
+
+// -------------------------------------------------------------
+// Activity Ledger (内容生产与变更事件账本) 写入与查询基础设施
+// -------------------------------------------------------------
+
+// execer is satisfied by both *sql.DB and *sql.Tx so state mutations and
+// their ledger events always share one transaction.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// newEvent fills authorship attribution from ctx (actor/source/run_id).
+func newEvent(ctx context.Context, projectID, entityType, entityID string, chapterIndex int, eventType, title, summary string) *activity.ActivityEvent {
+	return &activity.ActivityEvent{
+		ID:           activity.NewID(),
+		ProjectID:    projectID,
+		RunID:        activity.RunIDFromCtx(ctx),
+		EntityType:   entityType,
+		EntityID:     entityID,
+		ChapterIndex: chapterIndex,
+		EventType:    eventType,
+		Actor:        activity.ActorFromCtx(ctx),
+		Source:       activity.SourceFromCtx(ctx),
+		Title:        title,
+		Summary:      summary,
+		CreatedAt:    time.Now(),
+	}
+}
+
+// withTextSnapshots attaches full before/after snapshots plus the plain-text
+// list-view signals (excerpts, char deltas). Large payloads are gzipped.
+func withTextSnapshots(e *activity.ActivityEvent, before, after string, fieldsChanged []string) {
+	added, removed := activity.CharsDelta(before, after)
+	e.ExcerptBefore = activity.Excerpt(before, activity.ExcerptRunes)
+	e.ExcerptAfter = activity.Excerpt(after, activity.ExcerptRunes)
+	e.Before = before
+	e.After = after
+	e.FieldsChanged = fieldsChanged
+	e.CharsAdded = added
+	e.CharsRemoved = removed
+}
+
+// insertEvent persists one ledger record. Seq is allocated by an in-statement
+// scalar subquery so the write is atomic even for non-transactional callers;
+// inside an explicit tx it joins that tx for all-or-nothing guarantees.
+func insertEvent(ctx context.Context, ex execer, e *activity.ActivityEvent) error {
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	if e.ID == "" {
+		e.ID = activity.NewID()
+	}
+	if e.CreatedAt.IsZero() {
+		e.CreatedAt = time.Now()
+	}
+	if e.Codec == "" {
+		e.Codec = activity.CodecNone
+	}
+
+	beforeBlob, beforeCodec, err := activity.Encode([]byte(e.Before))
+	if err != nil {
+		return fmt.Errorf("encode event before snapshot: %w", err)
+	}
+	afterBlob, afterCodec, err := activity.Encode([]byte(e.After))
+	if err != nil {
+		return fmt.Errorf("encode event after snapshot: %w", err)
+	}
+	// One codec per row: if either side needed gzip, force it on the other
+	// non-empty side as well.
+	codec := activity.CodecNone
+	if beforeCodec == activity.CodecGzip || afterCodec == activity.CodecGzip {
+		codec = activity.CodecGzip
+		if beforeBlob, err = activity.EncodeForced([]byte(e.Before), codec); err != nil {
+			return fmt.Errorf("encode event before snapshot: %w", err)
+		}
+		if afterBlob, err = activity.EncodeForced([]byte(e.After), codec); err != nil {
+			return fmt.Errorf("encode event after snapshot: %w", err)
+		}
+	}
+
+	fieldsChangedJSON := ""
+	if len(e.FieldsChanged) > 0 {
+		if fb, merr := json.Marshal(e.FieldsChanged); merr == nil {
+			fieldsChangedJSON = string(fb)
+		}
+	}
+
+	query := `
+	INSERT INTO project_events (
+		id, project_id, seq, run_id, entity_type, entity_id, chapter_index,
+		event_type, actor, source, title, summary, excerpt_before, excerpt_after,
+		before_blob, after_blob, codec, fields_changed, chars_added, chars_removed,
+		token_usage, created_at
+	) VALUES (
+		?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM project_events WHERE project_id = ?),
+		?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+	);
+	`
+	_, err = ex.ExecContext(ctx, query,
+		e.ID, e.ProjectID, e.ProjectID,
+		e.RunID, e.EntityType, e.EntityID, e.ChapterIndex,
+		e.EventType, e.Actor, e.Source, e.Title, e.Summary,
+		e.ExcerptBefore, e.ExcerptAfter,
+		beforeBlob, afterBlob, codec, fieldsChangedJSON,
+		e.CharsAdded, e.CharsRemoved, e.TokenUsage, e.CreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("insert activity event: %w", err)
+	}
+	return nil
+}
+
+// AppendEvent records an explicitly built event (workshop aggregates,
+// inline actions, bootstrap markers). Store-layer CRUD emits its own events
+// internally; callers must not double-report the same mutation.
+func (s *SQLiteStore) AppendEvent(ctx context.Context, e *activity.ActivityEvent) error {
+	if e == nil {
+		return errors.New("activity event is nil")
+	}
+	return insertEvent(ctx, s.db, e)
+}
+
+// emitLedger records an auto-emitted CRUD event inside the caller's tx.
+// Unlike insertEvent it never fails the enclosing write: when the mutation
+// cannot be attributed to a project (empty id bypassing the project-scoped
+// routes), the state change still commits and the ledger simply skips a row
+// it could not describe. The ledger is secondary; the mutation is primary.
+func emitLedger(ctx context.Context, tx *sql.Tx, e *activity.ActivityEvent) error {
+	if e == nil || strings.TrimSpace(e.ProjectID) == "" {
+		return nil
+	}
+	return insertEvent(ctx, tx, e)
+}
+
+// ListEvents returns the timeline newest-first without decompressing blobs:
+// Before/After stay empty, excerpts carry the preview.
+func (s *SQLiteStore) ListEvents(ctx context.Context, q activity.EventQuery) ([]*activity.ActivityEvent, int64, error) {
+	if strings.TrimSpace(q.ProjectID) == "" {
+		return nil, 0, errors.New("list events requires project_id")
+	}
+	limit := q.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`
+	SELECT id, project_id, seq, run_id, entity_type, entity_id, chapter_index,
+	       event_type, actor, source, title, COALESCE(summary, ''),
+	       COALESCE(excerpt_before, ''), COALESCE(excerpt_after, ''),
+	       COALESCE(fields_changed, ''), chars_added, chars_removed,
+	       COALESCE(token_usage, ''), created_at
+	FROM project_events WHERE project_id = ?
+	`)
+	args := []any{q.ProjectID}
+	if q.EntityType != "" {
+		sb.WriteString(` AND entity_type = ?`)
+		args = append(args, q.EntityType)
+	}
+	if q.EntityID != "" {
+		sb.WriteString(` AND entity_id = ?`)
+		args = append(args, q.EntityID)
+	}
+	if q.ChapterIndex > 0 {
+		sb.WriteString(` AND chapter_index = ?`)
+		args = append(args, q.ChapterIndex)
+	}
+	if q.EventTypePrefix != "" {
+		sb.WriteString(` AND event_type LIKE ?`)
+		args = append(args, q.EventTypePrefix+"%")
+	}
+	if !q.IncludeCheckpoint {
+		sb.WriteString(` AND event_type NOT LIKE 'checkpoint.%'`)
+	}
+	if q.Cursor > 0 {
+		sb.WriteString(` AND seq < ?`)
+		args = append(args, q.Cursor)
+	}
+	sb.WriteString(` ORDER BY seq DESC LIMIT ?`)
+	args = append(args, limit+1)
+
+	rows, err := s.db.QueryContext(ctx, sb.String(), args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list events: %w", err)
+	}
+	defer rows.Close()
+
+	var list []*activity.ActivityEvent
+	for rows.Next() {
+		var e activity.ActivityEvent
+		var fieldsChangedJSON, tokenUsage string
+		if err := rows.Scan(
+			&e.ID, &e.ProjectID, &e.Seq, &e.RunID, &e.EntityType, &e.EntityID,
+			&e.ChapterIndex, &e.EventType, &e.Actor, &e.Source, &e.Title, &e.Summary,
+			&e.ExcerptBefore, &e.ExcerptAfter, &fieldsChangedJSON,
+			&e.CharsAdded, &e.CharsRemoved, &tokenUsage, &e.CreatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scan event row: %w", err)
+		}
+		if fieldsChangedJSON != "" {
+			_ = json.Unmarshal([]byte(fieldsChangedJSON), &e.FieldsChanged)
+		}
+		if tokenUsage != "" {
+			e.TokenUsage = tokenUsage
+		}
+		list = append(list, &e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate events: %w", err)
+	}
+
+	var nextCursor int64
+	if len(list) > limit {
+		list = list[:limit]
+		nextCursor = list[len(list)-1].Seq
+	}
+	return list, nextCursor, nil
+}
+
+// GetEvent returns one event with full before/after snapshots decoded.
+func (s *SQLiteStore) GetEvent(ctx context.Context, projectID, eventID string) (*activity.ActivityEvent, error) {
+	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(eventID) == "" {
+		return nil, errors.New("get event requires project_id and event id")
+	}
+	row := s.db.QueryRowContext(ctx, `
+	SELECT id, project_id, seq, run_id, entity_type, entity_id, chapter_index,
+	       event_type, actor, source, title, COALESCE(summary, ''),
+	       COALESCE(excerpt_before, ''), COALESCE(excerpt_after, ''),
+	       before_blob, after_blob, codec,
+	       COALESCE(fields_changed, ''), chars_added, chars_removed,
+	       COALESCE(token_usage, ''), created_at
+	FROM project_events WHERE project_id = ? AND id = ?
+	`, projectID, eventID)
+
+	var e activity.ActivityEvent
+	var fieldsChangedJSON, tokenUsage string
+	var beforeBlob, afterBlob []byte
+	if err := row.Scan(
+		&e.ID, &e.ProjectID, &e.Seq, &e.RunID, &e.EntityType, &e.EntityID,
+		&e.ChapterIndex, &e.EventType, &e.Actor, &e.Source, &e.Title, &e.Summary,
+		&e.ExcerptBefore, &e.ExcerptAfter,
+		&beforeBlob, &afterBlob, &e.Codec,
+		&fieldsChangedJSON, &e.CharsAdded, &e.CharsRemoved,
+		&tokenUsage, &e.CreatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errors.New("activity event not found")
+		}
+		return nil, fmt.Errorf("scan event: %w", err)
+	}
+	if before, derr := activity.Decode(beforeBlob, e.Codec); derr != nil {
+		return nil, fmt.Errorf("decode event before snapshot: %w", derr)
+	} else if len(before) > 0 {
+		e.Before = string(before)
+	}
+	if after, derr := activity.Decode(afterBlob, e.Codec); derr != nil {
+		return nil, fmt.Errorf("decode event after snapshot: %w", derr)
+	} else if len(after) > 0 {
+		e.After = string(after)
+	}
+	if fieldsChangedJSON != "" {
+		_ = json.Unmarshal([]byte(fieldsChangedJSON), &e.FieldsChanged)
+	}
+	if tokenUsage != "" {
+		e.TokenUsage = tokenUsage
+	}
+	return &e, nil
 }
 
 func (s *SQLiteStore) SaveProject(ctx context.Context, p *domain.Project) error {
@@ -214,16 +636,26 @@ func (s *SQLiteStore) SaveProject(ctx context.Context, p *domain.Project) error 
 		return errors.New("project ID cannot be empty")
 	}
 
+	// Before snapshot for the ledger (best effort: absent means creation).
+	var beforeJSON, beforeFrameworkJSON string
+	existed := false
+	if old, oerr := s.GetProject(ctx, p.ID); oerr == nil && old != nil {
+		existed = true
+		if ob, merr := json.Marshal(old); merr == nil {
+			beforeJSON = string(ob)
+		}
+		if old.Framework != nil {
+			if fb, merr := json.Marshal(old.Framework); merr == nil {
+				beforeFrameworkJSON = string(fb)
+			}
+		}
+	}
+
 	now := time.Now()
 	if p.CreatedAt.IsZero() {
 		p.CreatedAt = now
 	}
 	p.UpdatedAt = now
-
-	protagonistJSON, err := json.Marshal(p.Protagonist)
-	if err != nil {
-		return fmt.Errorf("marshal protagonist: %w", err)
-	}
 
 	var frameworkJSON string
 	if p.Framework != nil {
@@ -232,41 +664,95 @@ func (s *SQLiteStore) SaveProject(ctx context.Context, p *domain.Project) error 
 		}
 	}
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
 	query := `
-	INSERT INTO projects (id, title, target_platform, world_rules, protagonist_json, framework_json, default_words_target, default_narrative_style, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO projects (id, title, target_platform, world_rules, framework_json, default_words_target, default_narrative_style, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		title = excluded.title,
 		target_platform = excluded.target_platform,
 		world_rules = excluded.world_rules,
-		protagonist_json = excluded.protagonist_json,
 		framework_json = excluded.framework_json,
 		default_words_target = excluded.default_words_target,
 		default_narrative_style = excluded.default_narrative_style,
 		updated_at = excluded.updated_at;
 	`
-	_, err = s.db.ExecContext(ctx, query,
-		p.ID, p.Title, p.TargetPlatform, p.WorldRules, string(protagonistJSON), frameworkJSON, p.DefaultWordsTarget, p.DefaultNarrativeStyle, p.CreatedAt, p.UpdatedAt,
-	)
-	return err
+	if _, err = tx.ExecContext(ctx, query,
+		p.ID, p.Title, p.TargetPlatform, p.WorldRules, frameworkJSON, p.DefaultWordsTarget, p.DefaultNarrativeStyle, p.CreatedAt, p.UpdatedAt,
+	); err != nil {
+		return err
+	}
+
+	afterBytes, _ := json.Marshal(p)
+	afterJSON := string(afterBytes)
+	eventType := activity.EventProjectUpdated
+	title := fmt.Sprintf("更新作品《%s》", p.Title)
+	var fieldsChanged []string
+	if !existed {
+		eventType = activity.EventProjectCreated
+		title = fmt.Sprintf("创建作品《%s》", p.Title)
+	} else {
+		if frameworkJSON != beforeFrameworkJSON {
+			eventType = activity.EventFrameworkUpdated
+			title = fmt.Sprintf("更新创世总纲《%s》", p.Title)
+		}
+		var oldProj domain.Project
+		if beforeJSON != "" {
+			_ = json.Unmarshal([]byte(beforeJSON), &oldProj)
+		}
+		if oldProj.Title != p.Title {
+			fieldsChanged = append(fieldsChanged, "title")
+		}
+		if oldProj.WorldRules != p.WorldRules {
+			fieldsChanged = append(fieldsChanged, "world_rules")
+		}
+		if frameworkJSON != beforeFrameworkJSON {
+			fieldsChanged = append(fieldsChanged, "framework")
+		}
+		if oldProj.DefaultWordsTarget != p.DefaultWordsTarget || oldProj.DefaultNarrativeStyle != p.DefaultNarrativeStyle {
+			fieldsChanged = append(fieldsChanged, "defaults")
+		}
+	}
+
+	e := newEvent(ctx, p.ID, activity.EntityProject, p.ID, 0, eventType, title, "")
+	if eventType == activity.EventFrameworkUpdated {
+		e.EntityType = activity.EntityFramework
+	}
+	withTextSnapshots(e, beforeJSON, afterJSON, fieldsChanged)
+	if err := insertEvent(ctx, tx, e); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) GetProject(ctx context.Context, id string) (*domain.Project, error) {
-	query := `SELECT id, title, target_platform, world_rules, protagonist_json, COALESCE(framework_json, ''), COALESCE(default_words_target, 2000), COALESCE(default_narrative_style, 'hardboiled'), created_at, updated_at FROM projects WHERE id = ?`
+	query := `SELECT id, title, target_platform, world_rules, COALESCE(framework_json, ''), COALESCE(default_words_target, 2000), COALESCE(default_narrative_style, 'hardboiled'), created_at, updated_at FROM projects WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, query, id)
 
 	var p domain.Project
-	var protagonistJSON, frameworkJSON string
-	if err := row.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &protagonistJSON, &frameworkJSON, &p.DefaultWordsTarget, &p.DefaultNarrativeStyle, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	var frameworkJSON string
+	if err := row.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &frameworkJSON, &p.DefaultWordsTarget, &p.DefaultNarrativeStyle, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("project not found")
 		}
 		return nil, err
 	}
 
-	if err := json.Unmarshal([]byte(protagonistJSON), &p.Protagonist); err != nil {
-		return nil, fmt.Errorf("unmarshal protagonist: %w", err)
-	}
 	if strings.TrimSpace(frameworkJSON) != "" {
 		var fw domain.ProjectFramework
 		if err := json.Unmarshal([]byte(frameworkJSON), &fw); err == nil {
@@ -277,7 +763,7 @@ func (s *SQLiteStore) GetProject(ctx context.Context, id string) (*domain.Projec
 }
 
 func (s *SQLiteStore) ListProjects(ctx context.Context) ([]*domain.Project, error) {
-	query := `SELECT id, title, target_platform, world_rules, protagonist_json, COALESCE(framework_json, ''), COALESCE(default_words_target, 2000), COALESCE(default_narrative_style, 'hardboiled'), created_at, updated_at FROM projects ORDER BY updated_at DESC`
+	query := `SELECT id, title, target_platform, world_rules, COALESCE(framework_json, ''), COALESCE(default_words_target, 2000), COALESCE(default_narrative_style, 'hardboiled'), created_at, updated_at FROM projects ORDER BY updated_at DESC`
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -287,11 +773,10 @@ func (s *SQLiteStore) ListProjects(ctx context.Context) ([]*domain.Project, erro
 	var list []*domain.Project
 	for rows.Next() {
 		var p domain.Project
-		var protagonistJSON, frameworkJSON string
-		if err := rows.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &protagonistJSON, &frameworkJSON, &p.DefaultWordsTarget, &p.DefaultNarrativeStyle, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		var frameworkJSON string
+		if err := rows.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &frameworkJSON, &p.DefaultWordsTarget, &p.DefaultNarrativeStyle, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal([]byte(protagonistJSON), &p.Protagonist)
 		if strings.TrimSpace(frameworkJSON) != "" {
 			var fw domain.ProjectFramework
 			if err := json.Unmarshal([]byte(frameworkJSON), &fw); err == nil {
@@ -304,8 +789,41 @@ func (s *SQLiteStore) ListProjects(ctx context.Context) ([]*domain.Project, erro
 }
 
 func (s *SQLiteStore) DeleteProject(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id)
-	return err
+	var beforeJSON string
+	if old, oerr := s.GetProject(ctx, id); oerr == nil && old != nil {
+		if ob, merr := json.Marshal(old); merr == nil {
+			beforeJSON = string(ob)
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id); err != nil {
+		return err
+	}
+
+	// The ledger table has no FK to projects, so this tombstone survives deletion.
+	e := newEvent(ctx, id, activity.EntityProject, id, 0, activity.EventProjectDeleted,
+		"删除作品", "作品及其章节/伏笔/百科已删除，此条为账本留存的墓碑记录")
+	withTextSnapshots(e, beforeJSON, "", []string{"deleted"})
+	if err := emitLedger(ctx, tx, e); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) CommitChapter(ctx context.Context, projectID string, c *domain.Chapter) (*domain.Project, error) {
@@ -332,16 +850,36 @@ func (s *SQLiteStore) CommitChapter(ctx context.Context, projectID string, c *do
 
 	// 1. Fetch current project state
 	var p domain.Project
-	var protagonistJSON string
-	row := tx.QueryRowContext(ctx, `SELECT id, title, target_platform, world_rules, protagonist_json, created_at, updated_at FROM projects WHERE id = ?`, projectID)
-	if err := row.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &protagonistJSON, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	row := tx.QueryRowContext(ctx, `SELECT id, title, target_platform, world_rules, created_at, updated_at FROM projects WHERE id = ?`, projectID)
+	if err := row.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("project not found")
 		}
 		return nil, fmt.Errorf("query project: %w", err)
 	}
-	if err := json.Unmarshal([]byte(protagonistJSON), &p.Protagonist); err != nil {
-		return nil, fmt.Errorf("unmarshal protagonist: %w", err)
+
+	// 1b. Ledger before-snapshots: overwritten chapter (if any) + protagonist.
+	var beforeChapterJSON string
+	var oldRow struct {
+		id, title, conflict, content string
+		words                        int
+	}
+	orow := tx.QueryRowContext(ctx, `SELECT id, title, core_conflict, content, word_count FROM chapters WHERE project_id = ? AND chapter_index = ?`, projectID, c.ChapterIndex)
+	if oerr := orow.Scan(&oldRow.id, &oldRow.title, &oldRow.conflict, &oldRow.content, &oldRow.words); oerr == nil {
+		if ob, merr := json.Marshal(map[string]any{
+			"id": oldRow.id, "title": oldRow.title, "core_conflict": oldRow.conflict,
+			"content": oldRow.content, "word_count": oldRow.words,
+		}); merr == nil {
+			beforeChapterJSON = string(ob)
+		}
+	}
+
+	protagonist, _ := s.getProtagonistTx(ctx, tx, projectID)
+	var protagonistBeforeJSON string
+	if protagonist != nil {
+		if pb, merr := json.Marshal(protagonist); merr == nil {
+			protagonistBeforeJSON = string(pb)
+		}
 	}
 
 	// 2. Save chapter within transaction
@@ -391,23 +929,33 @@ func (s *SQLiteStore) CommitChapter(ctx context.Context, projectID string, c *do
 	}
 
 	// 3. Atomically apply StateMutation to protagonist via EntityLedger
-	updatedProtagonist, _, err := domain.ApplyStateMutation(p.Protagonist, c.StateMutation)
-	if err != nil {
-		return nil, fmt.Errorf("apply state mutation in tx: %w", err)
-	}
-	p.Protagonist = updatedProtagonist
-	p.UpdatedAt = time.Now()
-
-	newProtagonistJSON, err := json.Marshal(p.Protagonist)
-	if err != nil {
-		return nil, fmt.Errorf("marshal updated protagonist: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE projects SET protagonist_json = ?, updated_at = ? WHERE id = ?`,
-		string(newProtagonistJSON), p.UpdatedAt, p.ID,
-	); err != nil {
-		return nil, fmt.Errorf("update project protagonist in tx: %w", err)
+	var newProtagonistJSON string
+	if protagonist != nil {
+		_, err := domain.ApplyStateMutation(protagonist, c.StateMutation)
+		if err != nil {
+			return nil, fmt.Errorf("apply state mutation in tx: %w", err)
+		}
+		protagonist.UpdatedAt = time.Now()
+		var levelJSON, itemsJSON string
+		if protagonist.StructuredLevel != nil {
+			if lb, lerr := json.Marshal(protagonist.StructuredLevel); lerr == nil {
+				levelJSON = string(lb)
+			}
+		}
+		if len(protagonist.StructuredItems) > 0 {
+			if ib, ierr := json.Marshal(protagonist.StructuredItems); ierr == nil {
+				itemsJSON = string(ib)
+			}
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE codex_entries SET realm = ?, inventory = ?, structured_level_json = ?, structured_items_json = ?, updated_at = ? WHERE id = ?`,
+			protagonist.Realm, protagonist.Inventory, levelJSON, itemsJSON, protagonist.UpdatedAt, protagonist.ID,
+		); err != nil {
+			return nil, fmt.Errorf("update protagonist in tx: %w", err)
+		}
+		if pb, merr := json.Marshal(protagonist); merr == nil {
+			newProtagonistJSON = string(pb)
+		}
 	}
 
 	// 4. Update plot hooks status: mark resolved hooks as RESOLVED, and overdue open hooks as FERMENTING
@@ -461,6 +1009,15 @@ func (s *SQLiteStore) CommitChapter(ctx context.Context, projectID string, c *do
 					VALUES (?, ?, ?, ?, ?, ?)
 				`, progID, entryID, c.ChapterIndex, payloadJSON, notes, time.Now())
 
+				progAfter, _ := json.Marshal(map[string]any{
+					"entry_id": entryID, "name": cmName, "chapter": c.ChapterIndex,
+					"status_delta": cm.StatusDelta, "relation_delta": cm.RelationDelta,
+				})
+				progEvent := newEvent(ctx, projectID, activity.EntityCodexProgression, progID, c.ChapterIndex,
+					activity.EventCodexProgAdded, fmt.Sprintf("「%s」状态演进（第 %d 章）", cmName, c.ChapterIndex), notes)
+				withTextSnapshots(progEvent, "", string(progAfter), []string{"state_payload"})
+				_ = insertEvent(ctx, tx, progEvent)
+
 				// Update current_disposition if specified
 				if cm.RelationDelta != "" {
 					_, _ = tx.ExecContext(ctx, `
@@ -476,6 +1033,45 @@ func (s *SQLiteStore) CommitChapter(ctx context.Context, projectID string, c *do
 		`DELETE FROM chapter_checkpoints WHERE project_id = ? AND chapter_index = ?`,
 		projectID, c.ChapterIndex,
 	)
+
+	// 6. Ledger: chapter.committed with full after snapshot + protagonist delta.
+	afterBytes, _ := json.Marshal(c)
+	verdictStr := ""
+	score := 0
+	resolvedCount := 0
+	if c.Review != nil {
+		verdictStr = string(c.Review.Verdict)
+		score = c.Review.Score
+		resolvedCount = len(c.Review.ResolvedHookIDs)
+	}
+	summary := fmt.Sprintf("第 %d 章归档 %d 字", c.ChapterIndex, c.WordCount)
+	if verdictStr != "" {
+		summary += fmt.Sprintf("，终审 %s %d 分", verdictStr, score)
+	}
+	if resolvedCount > 0 {
+		summary += fmt.Sprintf("，回收伏笔 %d 条", resolvedCount)
+	}
+	if beforeChapterJSON != "" {
+		summary += "（覆盖旧稿）"
+	}
+	commitEvent := newEvent(ctx, projectID, activity.EntityChapter, c.ID, c.ChapterIndex,
+		activity.EventChapterCommitted, fmt.Sprintf("第 %d 章已归档", c.ChapterIndex), summary)
+	withTextSnapshots(commitEvent, beforeChapterJSON, string(afterBytes), []string{"content", "beats", "state_mutation", "review"})
+	commitEvent.ExcerptBefore = activity.Excerpt(oldRow.content, activity.ExcerptRunes)
+	commitEvent.ExcerptAfter = activity.Excerpt(c.Content, activity.ExcerptRunes)
+	// Protagonist delta rides along so state-machine drift is visible on the chapter event.
+	var protBefore, protAfter map[string]any
+	_ = json.Unmarshal([]byte(protagonistBeforeJSON), &protBefore)
+	_ = json.Unmarshal([]byte(newProtagonistJSON), &protAfter)
+	for _, f := range activity.ChangedFields(protBefore, protAfter) {
+		commitEvent.FieldsChanged = append(commitEvent.FieldsChanged, "protagonist."+f)
+	}
+	if len(activity.ChangedFields(protBefore, protAfter)) > 0 {
+		commitEvent.Summary += "，主角状态机已演进"
+	}
+	if err := insertEvent(ctx, tx, commitEvent); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit tx: %w", err)
@@ -514,6 +1110,21 @@ func (s *SQLiteStore) SaveChapter(ctx context.Context, c *domain.Chapter) error 
 		}
 	}
 
+	var beforeContent string
+	orow := s.db.QueryRowContext(ctx, `SELECT content FROM chapters WHERE project_id = ? AND chapter_index = ?`, c.ProjectID, c.ChapterIndex)
+	_ = orow.Scan(&beforeContent)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
 	query := `
 	INSERT INTO chapters (
 		id, project_id, chapter_index, title, core_conflict,
@@ -531,12 +1142,30 @@ func (s *SQLiteStore) SaveChapter(ctx context.Context, c *domain.Chapter) error 
 		linter_passed = excluded.linter_passed,
 		review_json = excluded.review_json;
 	`
-	_, err = s.db.ExecContext(ctx, query,
+	if _, err = tx.ExecContext(ctx, query,
 		c.ID, c.ProjectID, c.ChapterIndex, c.Title, c.CoreConflict,
 		string(beatsJSON), string(mutationJSON), c.Content, c.WordCount,
 		c.BurstinessScore, c.LinterPassed, reviewJSON, c.CreatedAt,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	afterBytes, _ := json.Marshal(c)
+	e := newEvent(ctx, c.ProjectID, activity.EntityChapter, c.ID, c.ChapterIndex,
+		activity.EventChapterDrafted, fmt.Sprintf("第 %d 章草稿已保存", c.ChapterIndex),
+		fmt.Sprintf("草稿 %d 字（未触发状态机结算）", c.WordCount))
+	withTextSnapshots(e, beforeContent, string(afterBytes), []string{"content"})
+	e.ExcerptBefore = activity.Excerpt(beforeContent, activity.ExcerptRunes)
+	e.ExcerptAfter = activity.Excerpt(c.Content, activity.ExcerptRunes)
+	if err := insertEvent(ctx, tx, e); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) GetChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.Chapter, error) {
@@ -657,13 +1286,9 @@ func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, cha
 
 	// 2. Fetch current project
 	var p domain.Project
-	var protagonistJSON string
-	pRow := tx.QueryRowContext(ctx, `SELECT id, title, target_platform, world_rules, protagonist_json, created_at, updated_at FROM projects WHERE id = ?`, projectID)
-	if err := pRow.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &protagonistJSON, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	pRow := tx.QueryRowContext(ctx, `SELECT id, title, target_platform, world_rules, created_at, updated_at FROM projects WHERE id = ?`, projectID)
+	if err := pRow.Scan(&p.ID, &p.Title, &p.TargetPlatform, &p.WorldRules, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, nil, fmt.Errorf("query project: %w", err)
-	}
-	if err := json.Unmarshal([]byte(protagonistJSON), &p.Protagonist); err != nil {
-		return nil, nil, fmt.Errorf("unmarshal protagonist: %w", err)
 	}
 
 	// 3. Formulate checkpoint from chapter
@@ -722,18 +1347,25 @@ func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, cha
 	}
 
 	// 5. Rollback protagonist mutations
-	rolledBackProtagonist, _, rerr := domain.RollbackStateMutation(p.Protagonist, c.StateMutation)
-	if rerr == nil {
-		p.Protagonist = rolledBackProtagonist
-	}
-
-	p.UpdatedAt = time.Now()
-	newProtagonistJSON, _ := json.Marshal(p.Protagonist)
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE projects SET protagonist_json = ?, updated_at = ? WHERE id = ?`,
-		string(newProtagonistJSON), p.UpdatedAt, p.ID,
-	); err != nil {
-		return nil, nil, fmt.Errorf("update project protagonist in tx: %w", err)
+	protagonist, _ := s.getProtagonistTx(ctx, tx, projectID)
+	if protagonist != nil {
+		_, _ = domain.RollbackStateMutation(protagonist, c.StateMutation)
+		protagonist.UpdatedAt = time.Now()
+		var levelJSON, itemsJSON string
+		if protagonist.StructuredLevel != nil {
+			if lb, lerr := json.Marshal(protagonist.StructuredLevel); lerr == nil {
+				levelJSON = string(lb)
+			}
+		}
+		if len(protagonist.StructuredItems) > 0 {
+			if ib, ierr := json.Marshal(protagonist.StructuredItems); ierr == nil {
+				itemsJSON = string(ib)
+			}
+		}
+		_, _ = tx.ExecContext(ctx,
+			`UPDATE codex_entries SET realm = ?, inventory = ?, structured_level_json = ?, structured_items_json = ?, updated_at = ? WHERE id = ?`,
+			protagonist.Realm, protagonist.Inventory, levelJSON, itemsJSON, protagonist.UpdatedAt, protagonist.ID,
+		)
 	}
 
 	// 6. Revert resolved plot hooks if any were resolved in this chapter
@@ -756,6 +1388,17 @@ func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, cha
 		  AND active_from_chapter = ?
 	`, projectID, chapterIndex)
 
+	// 8. Ledger: chapter.uncommitted keeps the full withdrawn draft inspectable.
+	beforeBytes, _ := json.Marshal(c)
+	uncommitEvent := newEvent(ctx, projectID, activity.EntityChapter, c.ID, chapterIndex,
+		activity.EventChapterUncommitted, fmt.Sprintf("第 %d 章已撤回为草稿", chapterIndex),
+		fmt.Sprintf("正文 %d 字回退至断点，伏笔回收已还原", len([]rune(c.Content))))
+	withTextSnapshots(uncommitEvent, string(beforeBytes), "", []string{"content", "status"})
+	uncommitEvent.ExcerptBefore = activity.Excerpt(c.Content, activity.ExcerptRunes)
+	if err := insertEvent(ctx, tx, uncommitEvent); err != nil {
+		return nil, nil, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, nil, fmt.Errorf("commit tx: %w", err)
 	}
@@ -765,8 +1408,41 @@ func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, cha
 }
 
 func (s *SQLiteStore) DeleteChapter(ctx context.Context, projectID string, chapterIndex int) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM chapters WHERE project_id = ? AND chapter_index = ?`, projectID, chapterIndex)
-	return err
+	var beforeContent, chapterID string
+	orow := s.db.QueryRowContext(ctx, `SELECT id, content FROM chapters WHERE project_id = ? AND chapter_index = ?`, projectID, chapterIndex)
+	_ = orow.Scan(&chapterID, &beforeContent)
+	if chapterID == "" {
+		chapterID = fmt.Sprintf("ch_%s_%d", projectID, chapterIndex)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chapters WHERE project_id = ? AND chapter_index = ?`, projectID, chapterIndex); err != nil {
+		return err
+	}
+
+	e := newEvent(ctx, projectID, activity.EntityChapter, chapterID, chapterIndex,
+		activity.EventChapterDeleted, fmt.Sprintf("第 %d 章已删除", chapterIndex),
+		fmt.Sprintf("删除正文 %d 字（状态机不回滚，墓碑留存）", len([]rune(beforeContent))))
+	withTextSnapshots(e, beforeContent, "", []string{"deleted"})
+	if err := emitLedger(ctx, tx, e); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) SavePlotHook(ctx context.Context, h *domain.PlotHook) error {
@@ -783,6 +1459,34 @@ func (s *SQLiteStore) SavePlotHook(ctx context.Context, h *domain.PlotHook) erro
 		h.CreatedAt = time.Now()
 	}
 
+	// Before snapshot to detect creation vs field/status transitions.
+	var beforeJSON, beforeStatus string
+	orow := s.db.QueryRowContext(ctx, `SELECT title, details, created_chapter, target_chapter, status FROM plot_hooks WHERE id = ?`, h.ID)
+	var ot, od, os string
+	var oc, otc int
+	existed := false
+	if oerr := orow.Scan(&ot, &od, &oc, &otc, &os); oerr == nil {
+		existed = true
+		beforeStatus = os
+		if ob, merr := json.Marshal(map[string]any{
+			"id": h.ID, "title": ot, "details": od, "created_chapter": oc,
+			"target_chapter": otc, "status": os,
+		}); merr == nil {
+			beforeJSON = string(ob)
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
 	query := `
 	INSERT INTO plot_hooks (id, project_id, title, details, created_chapter, target_chapter, status, created_at)
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -793,10 +1497,48 @@ func (s *SQLiteStore) SavePlotHook(ctx context.Context, h *domain.PlotHook) erro
 		target_chapter = excluded.target_chapter,
 		status = excluded.status;
 	`
-	_, err := s.db.ExecContext(ctx, query,
+	if _, err := tx.ExecContext(ctx, query,
 		h.ID, h.ProjectID, h.Title, h.Details, h.CreatedChapter, h.TargetChapter, string(h.Status), h.CreatedAt,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	afterBytes, _ := json.Marshal(h)
+	eventType := activity.EventHookUpdated
+	title := fmt.Sprintf("伏笔「%s」已更新", h.Title)
+	var fieldsChanged []string
+	if !existed {
+		eventType = activity.EventHookCreated
+		title = fmt.Sprintf("埋设伏笔「%s」（目标第 %d 章）", h.Title, h.TargetChapter)
+	} else {
+		if ot != h.Title || od != h.Details || oc != h.CreatedChapter || otc != h.TargetChapter {
+			fieldsChanged = append(fieldsChanged, "content")
+		}
+		if beforeStatus != string(h.Status) {
+			fieldsChanged = append(fieldsChanged, "status")
+			switch h.Status {
+			case domain.HookStatusResolved:
+				eventType = activity.EventHookResolved
+				title = fmt.Sprintf("伏笔「%s」已回收", h.Title)
+			case domain.HookStatusOpen:
+				eventType = activity.EventHookReopened
+				title = fmt.Sprintf("伏笔「%s」已重开", h.Title)
+			default:
+				title = fmt.Sprintf("伏笔「%s」状态→%s", h.Title, h.Status)
+			}
+		}
+	}
+	e := newEvent(ctx, h.ProjectID, activity.EntityHook, h.ID, 0, eventType, title, h.Details)
+	withTextSnapshots(e, beforeJSON, string(afterBytes), fieldsChanged)
+	if err := insertEvent(ctx, tx, e); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) ListPlotHooks(ctx context.Context, projectID string) ([]*domain.PlotHook, error) {
@@ -826,8 +1568,46 @@ func (s *SQLiteStore) ListPlotHooks(ctx context.Context, projectID string) ([]*d
 }
 
 func (s *SQLiteStore) DeletePlotHook(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM plot_hooks WHERE id = ?`, id)
-	return err
+	var beforeJSON, projectID, hookTitle string
+	orow := s.db.QueryRowContext(ctx, `SELECT project_id, title, details, status FROM plot_hooks WHERE id = ?`, id)
+	var details, status string
+	if oerr := orow.Scan(&projectID, &hookTitle, &details, &status); oerr == nil {
+		if ob, merr := json.Marshal(map[string]any{
+			"id": id, "title": hookTitle, "details": details, "status": status,
+		}); merr == nil {
+			beforeJSON = string(ob)
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM plot_hooks WHERE id = ?`, id); err != nil {
+		return err
+	}
+
+	if projectID != "" {
+		e := newEvent(ctx, projectID, activity.EntityHook, id, 0, activity.EventHookDeleted,
+			fmt.Sprintf("伏笔「%s」已删除", hookTitle), details)
+		withTextSnapshots(e, beforeJSON, "", []string{"deleted"})
+		if err := insertEvent(ctx, tx, e); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) SaveCheckpoint(ctx context.Context, cp *domain.ChapterCheckpoint) error {
@@ -840,6 +1620,21 @@ func (s *SQLiteStore) SaveCheckpoint(ctx context.Context, cp *domain.ChapterChec
 		return fmt.Errorf("marshal checkpoint payload: %w", err)
 	}
 
+	var beforePayload string
+	orow := s.db.QueryRowContext(ctx, `SELECT payload_json FROM chapter_checkpoints WHERE project_id = ? AND chapter_index = ?`, cp.ProjectID, cp.ChapterIndex)
+	_ = orow.Scan(&beforePayload)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
 	query := `
 	INSERT INTO chapter_checkpoints (project_id, chapter_index, phase, core_conflict, payload_json, updated_at)
 	VALUES (?, ?, ?, ?, ?, ?)
@@ -849,8 +1644,74 @@ func (s *SQLiteStore) SaveCheckpoint(ctx context.Context, cp *domain.ChapterChec
 		payload_json = excluded.payload_json,
 		updated_at = excluded.updated_at;
 	`
-	_, err = s.db.ExecContext(ctx, query, cp.ProjectID, cp.ChapterIndex, string(cp.Phase), cp.CoreConflict, string(payload), cp.UpdatedAt)
-	return err
+	if _, err = tx.ExecContext(ctx, query, cp.ProjectID, cp.ChapterIndex, string(cp.Phase), cp.CoreConflict, string(payload), cp.UpdatedAt); err != nil {
+		return err
+	}
+
+	title, summary := checkpointEventText(cp)
+	e := newEvent(ctx, cp.ProjectID, activity.EntityCheckpoint,
+		fmt.Sprintf("cp_%s_%d", cp.ProjectID, cp.ChapterIndex), cp.ChapterIndex,
+		activity.EventCheckpointSaved, title, summary)
+	withTextSnapshots(e, beforePayload, string(payload), []string{string(cp.Phase)})
+	e.ExcerptBefore = activity.Excerpt(checkpointDraftOf(beforePayload), activity.ExcerptRunes)
+	e.ExcerptAfter = activity.Excerpt(cp.DraftText, activity.ExcerptRunes)
+	if err := insertEvent(ctx, tx, e); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+// checkpointEventText renders a human-readable timeline title/summary so
+// intermediate states (score, rewrite loops, draft size) are visible
+// without opening the detail view.
+func checkpointEventText(cp *domain.ChapterCheckpoint) (title, summary string) {
+	draftWords := len([]rune(cp.DraftText))
+	switch cp.Phase {
+	case domain.CheckpointPhaseBeats:
+		title = fmt.Sprintf("第 %d 章节拍已推演（%d 拍）", cp.ChapterIndex, len(cp.Beats))
+		summary = cp.CoreConflict
+	case domain.CheckpointPhaseDrafted:
+		title = fmt.Sprintf("第 %d 章初稿已渲染（%d 字）", cp.ChapterIndex, draftWords)
+		summary = cp.CoreConflict
+	case domain.CheckpointPhaseAudited:
+		title = fmt.Sprintf("第 %d 章已审校", cp.ChapterIndex)
+		summary = cp.CoreConflict
+		if cp.AuditReport != nil {
+			title = fmt.Sprintf("第 %d 章已审校（%s %d 分）", cp.ChapterIndex, cp.AuditReport.Verdict, cp.AuditReport.Score)
+			if len(cp.AuditReport.Issues) > 0 {
+				summary = strings.Join(cp.AuditReport.Issues, "；")
+			}
+		}
+	case domain.CheckpointPhaseRewriting:
+		title = fmt.Sprintf("第 %d 章精修第 %d 轮（%d 字）", cp.ChapterIndex, cp.RewriteLoops, draftWords)
+		if cp.AuditReport != nil {
+			summary = fmt.Sprintf("质检 %s %d 分", cp.AuditReport.Verdict, cp.AuditReport.Score)
+		} else {
+			summary = cp.CoreConflict
+		}
+	default:
+		title = fmt.Sprintf("第 %d 章断点已保存", cp.ChapterIndex)
+		summary = cp.CoreConflict
+	}
+	return title, summary
+}
+
+// checkpointDraftOf extracts the draft text from a stored checkpoint payload
+// for excerpt purposes; garbage in yields empty out, never an error.
+func checkpointDraftOf(payloadJSON string) string {
+	if strings.TrimSpace(payloadJSON) == "" {
+		return ""
+	}
+	var cp domain.ChapterCheckpoint
+	if err := json.Unmarshal([]byte(payloadJSON), &cp); err != nil {
+		return ""
+	}
+	return cp.DraftText
 }
 
 func (s *SQLiteStore) GetCheckpoint(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, error) {
@@ -873,11 +1734,48 @@ func (s *SQLiteStore) GetCheckpoint(ctx context.Context, projectID string, chapt
 }
 
 func (s *SQLiteStore) ClearCheckpoint(ctx context.Context, projectID string, chapterIndex int) error {
-	_, err := s.db.ExecContext(ctx,
+	// Silent when nothing exists: clean-run clears must not pollute the timeline.
+	var existed bool
+	var phase, conflict string
+	orow := s.db.QueryRowContext(ctx, `SELECT phase, core_conflict FROM chapter_checkpoints WHERE project_id = ? AND chapter_index = ?`, projectID, chapterIndex)
+	if oerr := orow.Scan(&phase, &conflict); oerr == nil {
+		existed = true
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM chapter_checkpoints WHERE project_id = ? AND chapter_index = ?`,
 		projectID, chapterIndex,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	if existed {
+		e := newEvent(ctx, projectID, activity.EntityCheckpoint,
+			fmt.Sprintf("cp_%s_%d", projectID, chapterIndex), chapterIndex,
+			activity.EventCheckpointCleared, fmt.Sprintf("第 %d 章断点已清除", chapterIndex),
+			fmt.Sprintf("清除阶段 %s · %s", phase, conflict))
+		withTextSnapshots(e, phase, "", []string{"cleared"})
+		if err := insertEvent(ctx, tx, e); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 // -------------------------------------------------------------
@@ -896,17 +1794,44 @@ func (s *SQLiteStore) SaveCodexEntry(ctx context.Context, entry *domain.CodexEnt
 	}
 	entry.UpdatedAt = time.Now()
 
+	// Before snapshot for created-vs-updated detection.
+	var beforeJSON string
+	existed := false
+	if entry.ID != "" {
+		if old, oerr := s.GetCodexEntry(ctx, entry.ProjectID, entry.ID); oerr == nil && old != nil {
+			existed = true
+			if ob, merr := json.Marshal(old); merr == nil {
+				beforeJSON = string(ob)
+			}
+		}
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx failed: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	var levelJSON, itemsJSON string
+	if entry.StructuredLevel != nil {
+		if lb, lerr := json.Marshal(entry.StructuredLevel); lerr == nil {
+			levelJSON = string(lb)
+		}
+	}
+	if len(entry.StructuredItems) > 0 {
+		if ib, ierr := json.Marshal(entry.StructuredItems); ierr == nil {
+			itemsJSON = string(ib)
+		}
+	}
+
 	query := `
 	INSERT INTO codex_entries (
 		id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
-		archetype, voice_tone, core_motivation, current_disposition, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		archetype, voice_tone, core_motivation, current_disposition,
+		realm, inventory, health_status, structured_level_json, structured_items_json,
+		alignment, threat_level,
+		created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		category = excluded.category,
 		name = excluded.name,
@@ -918,12 +1843,21 @@ func (s *SQLiteStore) SaveCodexEntry(ctx context.Context, entry *domain.CodexEnt
 		voice_tone = excluded.voice_tone,
 		core_motivation = excluded.core_motivation,
 		current_disposition = excluded.current_disposition,
+		realm = excluded.realm,
+		inventory = excluded.inventory,
+		health_status = excluded.health_status,
+		structured_level_json = excluded.structured_level_json,
+		structured_items_json = excluded.structured_items_json,
+		alignment = excluded.alignment,
+		threat_level = excluded.threat_level,
 		updated_at = excluded.updated_at;
 	`
 	_, err = tx.ExecContext(ctx, query,
 		entry.ID, entry.ProjectID, string(entry.Category), entry.Name,
 		entry.ColorTag, entry.Summary, entry.DetailsMarkdown, string(entry.TrackingMode),
 		entry.Archetype, entry.VoiceTone, entry.CoreMotivation, entry.CurrentDisposition,
+		entry.Realm, entry.Inventory, entry.HealthStatus, levelJSON, itemsJSON,
+		entry.Alignment, entry.ThreatLevel,
 		entry.CreatedAt, entry.UpdatedAt,
 	)
 	if err != nil {
@@ -949,13 +1883,76 @@ func (s *SQLiteStore) SaveCodexEntry(ctx context.Context, entry *domain.CodexEnt
 		}
 	}
 
+	afterBytes, _ := json.Marshal(entry)
+	eventType := activity.EventCodexEntryUpdated
+	title := fmt.Sprintf("百科「%s」已更新", entry.Name)
+	if !existed {
+		eventType = activity.EventCodexEntryCreated
+		title = fmt.Sprintf("百科新建「%s」（%s）", entry.Name, entry.Category)
+	}
+	var fieldsChanged []string
+	if existed && beforeJSON != "" {
+		var oldEntry domain.CodexEntry
+		if uerr := json.Unmarshal([]byte(beforeJSON), &oldEntry); uerr == nil {
+			var ob, ab map[string]any
+			obb, _ := json.Marshal(map[string]any{
+				"name": oldEntry.Name, "summary": oldEntry.Summary,
+				"details": oldEntry.DetailsMarkdown, "aliases": oldEntry.Aliases,
+				"tracking": string(oldEntry.TrackingMode),
+			})
+			abb, _ := json.Marshal(map[string]any{
+				"name": entry.Name, "summary": entry.Summary,
+				"details": entry.DetailsMarkdown, "aliases": entry.Aliases,
+				"tracking": string(entry.TrackingMode),
+			})
+			_ = json.Unmarshal(obb, &ob)
+			_ = json.Unmarshal(abb, &ab)
+			fieldsChanged = activity.ChangedFields(ob, ab)
+		}
+	}
+	e := newEvent(ctx, entry.ProjectID, activity.EntityCodexEntry, entry.ID, 0, eventType, title, entry.Summary)
+	withTextSnapshots(e, beforeJSON, string(afterBytes), fieldsChanged)
+	e.ExcerptBefore = activity.Excerpt(codexExcerptOf(beforeJSON), activity.ExcerptRunes)
+	e.ExcerptAfter = activity.Excerpt(entry.Summary+"\n"+entry.DetailsMarkdown, activity.ExcerptRunes)
+	if err := insertEvent(ctx, tx, e); err != nil {
+		return err
+	}
+
 	return tx.Commit()
+}
+
+// codexExcerptOf pulls a readable preview out of a stored entry snapshot.
+func codexExcerptOf(entryJSON string) string {
+	if strings.TrimSpace(entryJSON) == "" {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(entryJSON), &m); err != nil {
+		return ""
+	}
+	summary, _ := m["summary"].(string)
+	details, _ := m["details_markdown"].(string)
+	if summary == "" {
+		summary, _ = m["Summary"].(string)
+	}
+	if details == "" {
+		var v string
+		v, _ = m["details"].(string)
+		details = v
+	}
+	if summary != "" && details != "" {
+		return summary + "\n" + details
+	}
+	return summary + details
 }
 
 func (s *SQLiteStore) GetCodexEntry(ctx context.Context, projectID, id string) (*domain.CodexEntry, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
 		       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(core_motivation, ''), COALESCE(current_disposition, ''),
+		       COALESCE(realm, ''), COALESCE(inventory, ''), COALESCE(health_status, ''),
+		       COALESCE(structured_level_json, ''), COALESCE(structured_items_json, ''),
+		       COALESCE(alignment, ''), COALESCE(threat_level, ''),
 		       created_at, updated_at
 		FROM codex_entries
 		WHERE project_id = ? AND id = ?
@@ -963,9 +1960,12 @@ func (s *SQLiteStore) GetCodexEntry(ctx context.Context, projectID, id string) (
 
 	var e domain.CodexEntry
 	var cat, tm, colorTag, summary, details, arch, vt, motiv, disp sql.NullString
+	var realm, inv, health, levelJSON, itemsJSON, align, threat sql.NullString
 	if err := row.Scan(
 		&e.ID, &e.ProjectID, &cat, &e.Name, &colorTag, &summary, &details, &tm,
 		&arch, &vt, &motiv, &disp,
+		&realm, &inv, &health, &levelJSON, &itemsJSON,
+		&align, &threat,
 		&e.CreatedAt, &e.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -982,6 +1982,23 @@ func (s *SQLiteStore) GetCodexEntry(ctx context.Context, projectID, id string) (
 	e.VoiceTone = vt.String
 	e.CoreMotivation = motiv.String
 	e.CurrentDisposition = disp.String
+	e.Realm = realm.String
+	e.Inventory = inv.String
+	e.HealthStatus = health.String
+	e.Alignment = align.String
+	e.ThreatLevel = threat.String
+	if levelJSON.String != "" {
+		var pl domain.PowerLevel
+		if json.Unmarshal([]byte(levelJSON.String), &pl) == nil {
+			e.StructuredLevel = &pl
+		}
+	}
+	if itemsJSON.String != "" {
+		var itms []domain.InventoryItem
+		if json.Unmarshal([]byte(itemsJSON.String), &itms) == nil {
+			e.StructuredItems = itms
+		}
+	}
 
 	// Fetch aliases
 	aliasRows, err := s.db.QueryContext(ctx, `SELECT alias FROM codex_aliases WHERE entry_id = ? ORDER BY alias ASC`, e.ID)
@@ -1010,6 +2027,147 @@ func (s *SQLiteStore) GetCodexEntry(ctx context.Context, projectID, id string) (
 	return &e, nil
 }
 
+func (s *SQLiteStore) GetProtagonistEntry(ctx context.Context, projectID string) (*domain.CodexEntry, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
+		       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(core_motivation, ''), COALESCE(current_disposition, ''),
+		       COALESCE(realm, ''), COALESCE(inventory, ''), COALESCE(health_status, ''),
+		       COALESCE(structured_level_json, ''), COALESCE(structured_items_json, ''),
+		       COALESCE(alignment, ''), COALESCE(threat_level, ''),
+		       created_at, updated_at
+		FROM codex_entries
+		WHERE project_id = ? AND (archetype = 'PROTAGONIST' OR (category = 'CHARACTER' AND (name = '主角' OR id LIKE '%pro%')))
+		ORDER BY CASE WHEN archetype = 'PROTAGONIST' THEN 0 ELSE 1 END, created_at ASC
+		LIMIT 1
+	`, projectID)
+
+	var e domain.CodexEntry
+	var cat, tm, colorTag, summary, details, arch, vt, motiv, disp sql.NullString
+	var realm, inv, health, levelJSON, itemsJSON, align, threat sql.NullString
+	if err := row.Scan(
+		&e.ID, &e.ProjectID, &cat, &e.Name, &colorTag, &summary, &details, &tm,
+		&arch, &vt, &motiv, &disp,
+		&realm, &inv, &health, &levelJSON, &itemsJSON,
+		&align, &threat,
+		&e.CreatedAt, &e.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("scan protagonist entry: %w", err)
+	}
+	e.Category = domain.CodexCategory(cat.String)
+	e.TrackingMode = domain.TrackingMode(tm.String)
+	e.ColorTag = colorTag.String
+	e.Summary = summary.String
+	e.DetailsMarkdown = details.String
+	e.Archetype = arch.String
+	e.VoiceTone = vt.String
+	e.CoreMotivation = motiv.String
+	e.CurrentDisposition = disp.String
+	e.Realm = realm.String
+	e.Inventory = inv.String
+	e.HealthStatus = health.String
+	e.Alignment = align.String
+	e.ThreatLevel = threat.String
+	if levelJSON.String != "" {
+		var pl domain.PowerLevel
+		if json.Unmarshal([]byte(levelJSON.String), &pl) == nil {
+			e.StructuredLevel = &pl
+		}
+	}
+	if itemsJSON.String != "" {
+		var itms []domain.InventoryItem
+		if json.Unmarshal([]byte(itemsJSON.String), &itms) == nil {
+			e.StructuredItems = itms
+		}
+	}
+
+	// Fetch aliases
+	aliasRows, err := s.db.QueryContext(ctx, `SELECT alias FROM codex_aliases WHERE entry_id = ? ORDER BY alias ASC`, e.ID)
+	if err == nil {
+		defer aliasRows.Close()
+		for aliasRows.Next() {
+			var a string
+			if err := aliasRows.Scan(&a); err == nil && a != "" {
+				e.Aliases = append(e.Aliases, a)
+			}
+		}
+	}
+
+	// Fetch progressions
+	progs, err := s.ListCodexProgressions(ctx, e.ID)
+	if err == nil {
+		e.Progressions = progs
+	}
+
+	// Fetch relations
+	rels, err := s.ListCodexRelations(ctx, projectID, e.ID)
+	if err == nil {
+		e.Relations = rels
+	}
+
+	return &e, nil
+}
+
+func (s *SQLiteStore) getProtagonistTx(ctx context.Context, tx *sql.Tx, projectID string) (*domain.CodexEntry, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
+		       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(core_motivation, ''), COALESCE(current_disposition, ''),
+		       COALESCE(realm, ''), COALESCE(inventory, ''), COALESCE(health_status, ''),
+		       COALESCE(structured_level_json, ''), COALESCE(structured_items_json, ''),
+		       COALESCE(alignment, ''), COALESCE(threat_level, ''),
+		       created_at, updated_at
+		FROM codex_entries
+		WHERE project_id = ? AND (archetype = 'PROTAGONIST' OR (category = 'CHARACTER' AND (name = '主角' OR id LIKE '%pro%')))
+		ORDER BY CASE WHEN archetype = 'PROTAGONIST' THEN 0 ELSE 1 END, created_at ASC
+		LIMIT 1
+	`, projectID)
+
+	var e domain.CodexEntry
+	var cat, tm, colorTag, summary, details, arch, vt, motiv, disp sql.NullString
+	var realm, inv, health, levelJSON, itemsJSON, align, threat sql.NullString
+	if err := row.Scan(
+		&e.ID, &e.ProjectID, &cat, &e.Name, &colorTag, &summary, &details, &tm,
+		&arch, &vt, &motiv, &disp,
+		&realm, &inv, &health, &levelJSON, &itemsJSON,
+		&align, &threat,
+		&e.CreatedAt, &e.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	e.Category = domain.CodexCategory(cat.String)
+	e.TrackingMode = domain.TrackingMode(tm.String)
+	e.ColorTag = colorTag.String
+	e.Summary = summary.String
+	e.DetailsMarkdown = details.String
+	e.Archetype = arch.String
+	e.VoiceTone = vt.String
+	e.CoreMotivation = motiv.String
+	e.CurrentDisposition = disp.String
+	e.Realm = realm.String
+	e.Inventory = inv.String
+	e.HealthStatus = health.String
+	e.Alignment = align.String
+	e.ThreatLevel = threat.String
+	if levelJSON.String != "" {
+		var pl domain.PowerLevel
+		if json.Unmarshal([]byte(levelJSON.String), &pl) == nil {
+			e.StructuredLevel = &pl
+		}
+	}
+	if itemsJSON.String != "" {
+		var itms []domain.InventoryItem
+		if json.Unmarshal([]byte(itemsJSON.String), &itms) == nil {
+			e.StructuredItems = itms
+		}
+	}
+	return &e, nil
+}
+
 func (s *SQLiteStore) ListCodexEntries(ctx context.Context, projectID string, category domain.CodexCategory) ([]*domain.CodexEntry, error) {
 	var query string
 	var args []interface{}
@@ -1017,6 +2175,9 @@ func (s *SQLiteStore) ListCodexEntries(ctx context.Context, projectID string, ca
 		query = `
 			SELECT id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
 			       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(core_motivation, ''), COALESCE(current_disposition, ''),
+			       COALESCE(realm, ''), COALESCE(inventory, ''), COALESCE(health_status, ''),
+			       COALESCE(structured_level_json, ''), COALESCE(structured_items_json, ''),
+			       COALESCE(alignment, ''), COALESCE(threat_level, ''),
 			       created_at, updated_at
 			FROM codex_entries
 			WHERE project_id = ? AND category = ?
@@ -1027,6 +2188,9 @@ func (s *SQLiteStore) ListCodexEntries(ctx context.Context, projectID string, ca
 		query = `
 			SELECT id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
 			       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(core_motivation, ''), COALESCE(current_disposition, ''),
+			       COALESCE(realm, ''), COALESCE(inventory, ''), COALESCE(health_status, ''),
+			       COALESCE(structured_level_json, ''), COALESCE(structured_items_json, ''),
+			       COALESCE(alignment, ''), COALESCE(threat_level, ''),
 			       created_at, updated_at
 			FROM codex_entries
 			WHERE project_id = ?
@@ -1046,9 +2210,12 @@ func (s *SQLiteStore) ListCodexEntries(ctx context.Context, projectID string, ca
 	for rows.Next() {
 		var e domain.CodexEntry
 		var cat, tm, colorTag, summary, details, arch, vt, motiv, disp sql.NullString
+		var realm, inv, health, levelJSON, itemsJSON, align, threat sql.NullString
 		if err := rows.Scan(
 			&e.ID, &e.ProjectID, &cat, &e.Name, &colorTag, &summary, &details, &tm,
 			&arch, &vt, &motiv, &disp,
+			&realm, &inv, &health, &levelJSON, &itemsJSON,
+			&align, &threat,
 			&e.CreatedAt, &e.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan codex row: %w", err)
@@ -1062,6 +2229,23 @@ func (s *SQLiteStore) ListCodexEntries(ctx context.Context, projectID string, ca
 		e.VoiceTone = vt.String
 		e.CoreMotivation = motiv.String
 		e.CurrentDisposition = disp.String
+		e.Realm = realm.String
+		e.Inventory = inv.String
+		e.HealthStatus = health.String
+		e.Alignment = align.String
+		e.ThreatLevel = threat.String
+		if levelJSON.String != "" {
+			var pl domain.PowerLevel
+			if json.Unmarshal([]byte(levelJSON.String), &pl) == nil {
+				e.StructuredLevel = &pl
+			}
+		}
+		if itemsJSON.String != "" {
+			var itms []domain.InventoryItem
+			if json.Unmarshal([]byte(itemsJSON.String), &itms) == nil {
+				e.StructuredItems = itms
+			}
+		}
 		entries = append(entries, &e)
 		entryMap[e.ID] = &e
 	}
@@ -1113,7 +2297,26 @@ func (s *SQLiteStore) ListCodexEntries(ctx context.Context, projectID string, ca
 }
 
 func (s *SQLiteStore) DeleteCodexEntry(ctx context.Context, projectID, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM codex_entries WHERE project_id = ? AND id = ?`, projectID, id)
+	var beforeJSON, entryName string
+	if old, oerr := s.GetCodexEntry(ctx, projectID, id); oerr == nil && old != nil {
+		entryName = old.Name
+		if ob, merr := json.Marshal(old); merr == nil {
+			beforeJSON = string(ob)
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM codex_entries WHERE project_id = ? AND id = ?`, projectID, id)
 	if err != nil {
 		return fmt.Errorf("delete codex entry: %w", err)
 	}
@@ -1121,6 +2324,19 @@ func (s *SQLiteStore) DeleteCodexEntry(ctx context.Context, projectID, id string
 	if n == 0 {
 		return errors.New("codex entry not found")
 	}
+
+	e := newEvent(ctx, projectID, activity.EntityCodexEntry, id, 0, activity.EventCodexEntryDeleted,
+		fmt.Sprintf("百科「%s」已删除", entryName), "条目及其别名/进展/关系已级联删除，墓碑留存")
+	withTextSnapshots(e, beforeJSON, "", []string{"deleted"})
+	e.ExcerptBefore = activity.Excerpt(codexExcerptOf(beforeJSON), activity.ExcerptRunes)
+	if err := emitLedger(ctx, tx, e); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
 	return nil
 }
 
@@ -1133,6 +2349,17 @@ func (s *SQLiteStore) SaveCodexProgression(ctx context.Context, entryID string, 
 		prog.CreatedAt = time.Now()
 	}
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
 	query := `
 	INSERT INTO codex_progressions (id, entry_id, active_from_chapter, state_payload_json, notes, created_at)
 	VALUES (?, ?, ?, ?, ?, ?)
@@ -1141,10 +2368,29 @@ func (s *SQLiteStore) SaveCodexProgression(ctx context.Context, entryID string, 
 		state_payload_json = excluded.state_payload_json,
 		notes = excluded.notes;
 	`
-	_, err := s.db.ExecContext(ctx, query,
+	if _, err := tx.ExecContext(ctx, query,
 		prog.ID, prog.EntryID, prog.ActiveFromChapter, prog.StatePayloadJSON, prog.Notes, prog.CreatedAt,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	var projectID, entryName string
+	_ = tx.QueryRowContext(ctx, `SELECT project_id, name FROM codex_entries WHERE id = ?`, entryID).Scan(&projectID, &entryName)
+	if projectID != "" {
+		afterBytes, _ := json.Marshal(prog)
+		e := newEvent(ctx, projectID, activity.EntityCodexProgression, prog.ID, prog.ActiveFromChapter,
+			activity.EventCodexProgAdded, fmt.Sprintf("「%s」阶段演进（第 %d 章起）", entryName, prog.ActiveFromChapter), prog.Notes)
+		withTextSnapshots(e, "", string(afterBytes), []string{"state_payload"})
+		if err := insertEvent(ctx, tx, e); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) ListCodexProgressions(ctx context.Context, entryID string) ([]domain.Progression, error) {
@@ -1179,6 +2425,17 @@ func (s *SQLiteStore) SaveCodexRelation(ctx context.Context, projectID string, r
 		rel.CreatedAt = time.Now()
 	}
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
 	query := `
 	INSERT INTO codex_relations (id, project_id, source_entry_id, target_entry_id, relation_type, description, created_at)
 	VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1186,10 +2443,25 @@ func (s *SQLiteStore) SaveCodexRelation(ctx context.Context, projectID string, r
 		relation_type = excluded.relation_type,
 		description = excluded.description;
 	`
-	_, err := s.db.ExecContext(ctx, query,
+	if _, err := tx.ExecContext(ctx, query,
 		rel.ID, rel.ProjectID, rel.SourceEntryID, rel.TargetEntryID, rel.RelationType, rel.Description, rel.CreatedAt,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	afterBytes, _ := json.Marshal(rel)
+	e := newEvent(ctx, projectID, activity.EntityCodexRelation, rel.ID, 0,
+		activity.EventCodexRelAdded, fmt.Sprintf("关系 %s→%s（%s）", rel.SourceEntryID, rel.TargetEntryID, rel.RelationType), rel.Description)
+	withTextSnapshots(e, "", string(afterBytes), []string{"relation"})
+	if err := emitLedger(ctx, tx, e); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) ListCodexRelations(ctx context.Context, projectID string, entryID string) ([]domain.EntityRelation, error) {
@@ -1235,8 +2507,44 @@ func (s *SQLiteStore) ListCodexRelations(ctx context.Context, projectID string, 
 }
 
 func (s *SQLiteStore) DeleteCodexRelation(ctx context.Context, projectID string, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM codex_relations WHERE project_id = ? AND id = ?`, projectID, id)
-	return err
+	var beforeJSON string
+	orow := s.db.QueryRowContext(ctx, `SELECT source_entry_id, target_entry_id, relation_type, description FROM codex_relations WHERE project_id = ? AND id = ?`, projectID, id)
+	var src, tgt, rtype, desc string
+	if oerr := orow.Scan(&src, &tgt, &rtype, &desc); oerr == nil {
+		if ob, merr := json.Marshal(map[string]any{
+			"id": id, "source": src, "target": tgt, "type": rtype, "description": desc,
+		}); merr == nil {
+			beforeJSON = string(ob)
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM codex_relations WHERE project_id = ? AND id = ?`, projectID, id); err != nil {
+		return err
+	}
+
+	e := newEvent(ctx, projectID, activity.EntityCodexRelation, id, 0,
+		activity.EventCodexRelDeleted, fmt.Sprintf("关系 %s→%s 已删除", src, tgt), desc)
+	withTextSnapshots(e, beforeJSON, "", []string{"deleted"})
+	if err := emitLedger(ctx, tx, e); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 // -------------------------------------------------------------
@@ -1261,6 +2569,24 @@ func (s *SQLiteStore) SaveScene(ctx context.Context, sc *domain.Scene) error {
 		sc.WordCount = len([]rune(sc.ProseContent))
 	}
 
+	var beforeProse string
+	orow := s.db.QueryRowContext(ctx, `SELECT prose_content FROM scenes WHERE id = ?`, sc.ID)
+	existed := false
+	if oerr := orow.Scan(&beforeProse); oerr == nil {
+		existed = true
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
 	query := `
 	INSERT INTO scenes (
 		id, chapter_id, project_id, scene_index, title, location_entry_id, dramatic_goal, conflict_barrier,
@@ -1281,12 +2607,33 @@ func (s *SQLiteStore) SaveScene(ctx context.Context, sc *domain.Scene) error {
 		exclude_from_ai = excluded.exclude_from_ai,
 		updated_at = excluded.updated_at;
 	`
-	_, err := s.db.ExecContext(ctx, query,
+	if _, err := tx.ExecContext(ctx, query,
 		sc.ID, sc.ChapterID, sc.ProjectID, sc.SceneIndex, sc.Title, sc.LocationEntryID,
 		sc.DramaticGoal, sc.ConflictBarrier, sc.TensionLevel, string(beatsJSON), string(stateMutJSON),
 		sc.ProseContent, sc.WordCount, sc.ExcludeFromAI, sc.CreatedAt, sc.UpdatedAt,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	afterBytes, _ := json.Marshal(sc)
+	title := fmt.Sprintf("场次「%s」已保存（%d 字）", sc.Title, sc.WordCount)
+	if !existed {
+		title = fmt.Sprintf("场次「%s」已创建", sc.Title)
+	}
+	e := newEvent(ctx, sc.ProjectID, activity.EntityScene, sc.ID, 0,
+		activity.EventSceneUpserted, title, sc.DramaticGoal)
+	withTextSnapshots(e, beforeProse, string(afterBytes), []string{"prose_content"})
+	e.ExcerptBefore = activity.Excerpt(beforeProse, activity.ExcerptRunes)
+	e.ExcerptAfter = activity.Excerpt(sc.ProseContent, activity.ExcerptRunes)
+	if err := emitLedger(ctx, tx, e); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) GetScene(ctx context.Context, id string) (*domain.Scene, error) {
@@ -1359,8 +2706,39 @@ func (s *SQLiteStore) ListScenes(ctx context.Context, chapterID string) ([]*doma
 }
 
 func (s *SQLiteStore) DeleteScene(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM scenes WHERE id = ?`, id)
-	return err
+	var beforeProse, projectID, sceneTitle string
+	orow := s.db.QueryRowContext(ctx, `SELECT project_id, title, prose_content FROM scenes WHERE id = ?`, id)
+	_ = orow.Scan(&projectID, &sceneTitle, &beforeProse)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM scenes WHERE id = ?`, id); err != nil {
+		return err
+	}
+
+	if projectID != "" {
+		e := newEvent(ctx, projectID, activity.EntityScene, id, 0,
+			activity.EventSceneDeleted, fmt.Sprintf("场次「%s」已删除", sceneTitle), "场次及其批注已级联删除，墓碑留存")
+		withTextSnapshots(e, beforeProse, "", []string{"deleted"})
+		if err := insertEvent(ctx, tx, e); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) SaveSceneMarker(ctx context.Context, m *domain.SceneMarker) error {
@@ -1370,6 +2748,17 @@ func (s *SQLiteStore) SaveSceneMarker(ctx context.Context, m *domain.SceneMarker
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = time.Now()
 	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
 
 	query := `
 	INSERT INTO scene_markers (id, scene_id, marker_type, color, text_range_start, text_range_end, content, resolved, created_at)
@@ -1382,10 +2771,29 @@ func (s *SQLiteStore) SaveSceneMarker(ctx context.Context, m *domain.SceneMarker
 		content = excluded.content,
 		resolved = excluded.resolved;
 	`
-	_, err := s.db.ExecContext(ctx, query,
+	if _, err := tx.ExecContext(ctx, query,
 		m.ID, m.SceneID, string(m.MarkerType), m.Color, m.TextRangeStart, m.TextRangeEnd, m.Content, m.Resolved, m.CreatedAt,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	var projectID string
+	_ = tx.QueryRowContext(ctx, `SELECT project_id FROM scenes WHERE id = ?`, m.SceneID).Scan(&projectID)
+	if projectID != "" {
+		afterBytes, _ := json.Marshal(m)
+		e := newEvent(ctx, projectID, activity.EntitySceneMarker, m.ID, 0,
+			activity.EventSceneMarkerAdded, fmt.Sprintf("批注 [%s] %s", m.MarkerType, m.Content), fmt.Sprintf("场次 %s · 区间 %d-%d", m.SceneID, m.TextRangeStart, m.TextRangeEnd))
+		withTextSnapshots(e, "", string(afterBytes), []string{"marker"})
+		if err := insertEvent(ctx, tx, e); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) ListSceneMarkers(ctx context.Context, sceneID string) ([]domain.SceneMarker, error) {
@@ -1414,8 +2822,43 @@ func (s *SQLiteStore) ListSceneMarkers(ctx context.Context, sceneID string) ([]d
 }
 
 func (s *SQLiteStore) DeleteSceneMarker(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM scene_markers WHERE id = ?`, id)
-	return err
+	var sceneID, content, markerType string
+	orow := s.db.QueryRowContext(ctx, `SELECT scene_id, marker_type, content FROM scene_markers WHERE id = ?`, id)
+	_ = orow.Scan(&sceneID, &markerType, &content)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM scene_markers WHERE id = ?`, id); err != nil {
+		return err
+	}
+
+	var projectID string
+	if sceneID != "" {
+		_ = tx.QueryRowContext(ctx, `SELECT project_id FROM scenes WHERE id = ?`, sceneID).Scan(&projectID)
+	}
+	if projectID != "" {
+		e := newEvent(ctx, projectID, activity.EntitySceneMarker, id, 0,
+			activity.EventSceneMarkerDelete, fmt.Sprintf("批注 [%s] 已删除", markerType), content)
+		withTextSnapshots(e, content, "", []string{"deleted"})
+		if err := insertEvent(ctx, tx, e); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) GetMatrixOverview(ctx context.Context, projectID string) (*domain.MatrixOverview, error) {

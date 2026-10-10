@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 
+	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/domain"
 )
 
@@ -32,7 +33,13 @@ type Store interface {
 	GetCheckpoint(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, error)
 	ClearCheckpoint(ctx context.Context, projectID string, chapterIndex int) error
 
+	// Activity Ledger (内容生产与变更事件账本, append-only)
+	AppendEvent(ctx context.Context, event *activity.ActivityEvent) error
+	ListEvents(ctx context.Context, q activity.EventQuery) ([]*activity.ActivityEvent, int64, error)
+	GetEvent(ctx context.Context, projectID, eventID string) (*activity.ActivityEvent, error)
+
 	// The Codex (全域世界观百科)
+	GetProtagonistEntry(ctx context.Context, projectID string) (*domain.CodexEntry, error)
 	SaveCodexEntry(ctx context.Context, entry *domain.CodexEntry) error
 	GetCodexEntry(ctx context.Context, projectID, id string) (*domain.CodexEntry, error)
 	ListCodexEntries(ctx context.Context, projectID string, category domain.CodexCategory) ([]*domain.CodexEntry, error)

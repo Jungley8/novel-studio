@@ -35,11 +35,12 @@ func (q *QualityGate) Audit(
 	ctx context.Context,
 	reviewerModel string,
 	project *domain.Project,
+	protagonist *domain.CodexEntry,
 	chapterIndex int,
 	beats []domain.SceneBeat,
 	draftText string,
 ) (*domain.AuditReport, TokenUsage, error) {
-	return q.AuditWithHooks(ctx, reviewerModel, project, chapterIndex, beats, nil, draftText)
+	return q.AuditWithHooks(ctx, reviewerModel, project, protagonist, chapterIndex, beats, nil, draftText)
 }
 
 // AuditWithHooks extends Audit with open plot hook awareness to verify hook payoffs and resolutions.
@@ -47,6 +48,7 @@ func (q *QualityGate) AuditWithHooks(
 	ctx context.Context,
 	reviewerModel string,
 	project *domain.Project,
+	protagonist *domain.CodexEntry,
 	chapterIndex int,
 	beats []domain.SceneBeat,
 	activeHooks []*domain.PlotHook,
@@ -113,6 +115,15 @@ func (q *QualityGate) AuditWithHooks(
 
 	beatsJSON, _ := json.Marshal(beats)
 
+	protName := "未知"
+	protInv := "无"
+	if protagonist != nil {
+		protName = protagonist.NameAndLevel()
+		if protagonist.Inventory != "" {
+			protInv = protagonist.Inventory
+		}
+	}
+
 	userPrompt := fmt.Sprintf(`【送审章节】《%s》 第 %d 章
 【世界法则公理】%s
 【主角当前状态】%s | 物品栏: %s
@@ -127,7 +138,7 @@ func (q *QualityGate) AuditWithHooks(
 请给出你的综合审阅判决。`,
 		project.Title, chapterIndex,
 		project.WorldRules,
-		project.Protagonist.NameAndLevel, project.Protagonist.Inventory,
+		protName, protInv,
 		string(beatsJSON),
 		heuristicNotes,
 		hooksContext,
@@ -135,7 +146,7 @@ func (q *QualityGate) AuditWithHooks(
 	)
 
 	ctxRole := ContextWithRole(ctx, RoleReviewer)
-	resp, usage, err := q.client.ChatCompletionWithUsage(ctxRole, reviewerModel, systemPrompt, userPrompt, 0.3)
+	resp, usage, err := SafeChatCompletionWithStreamFallback(ctxRole, q.client, reviewerModel, systemPrompt, userPrompt, 0.3, nil)
 	if err != nil {
 		return nil, usage, fmt.Errorf("quality gate LLM review failed: %w", err)
 	}

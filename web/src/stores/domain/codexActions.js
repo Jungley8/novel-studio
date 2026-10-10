@@ -11,6 +11,34 @@ export function createCodexActions(state, notify, dialogs) {
       }
     },
 
+    async createCodexEntry(data) {
+      if (!state.currentProject) return null;
+      try {
+        const created = await api.createCodexEntry(state.currentProject.id, data);
+        state.codexEntries.push(created);
+        notify('词条创建成功', `已收录【${created.name}】至设定集`, 'success', 2000);
+        return created;
+      } catch (e) {
+        notify('创建词条失败', e.message, 'error');
+        return null;
+      }
+    },
+
+    async updateCodexEntry(entry) {
+      if (!state.currentProject || !entry?.id) return null;
+      try {
+        const updated = await api.updateCodexEntry(state.currentProject.id, entry.id, entry);
+        const idx = state.codexEntries.findIndex(e => e.id === entry.id);
+        if (idx >= 0) {
+          state.codexEntries[idx] = updated;
+        }
+        return updated;
+      } catch (e) {
+        notify('更新词条失败', e.message, 'error');
+        return null;
+      }
+    },
+
     async deleteCodexEntry(entryId) {
       if (dialogs) {
         const ok = await dialogs.confirm({

@@ -104,7 +104,6 @@ type Project struct {
 	Title                 string            `json:"title"`
 	TargetPlatform        string            `json:"target_platform"` // e.g. "番茄脑洞", "起点仙侠", "知乎盐言"
 	WorldRules            string            `json:"world_rules"`
-	Protagonist           Protagonist       `json:"protagonist"`
 	Framework             *ProjectFramework `json:"framework,omitempty"`
 	DefaultWordsTarget    int               `json:"default_words_target,omitempty"`    // e.g. 2000, 3000, 4000
 	DefaultNarrativeStyle string            `json:"default_narrative_style,omitempty"` // e.g. "hardboiled", "fastpaced", "classical", "slang", "omniscient"

@@ -546,7 +546,7 @@
             <span class="w-2 h-2 rounded-full bg-brand-amber shrink-0 animate-pulse"></span>
             <span class="font-serif font-bold text-ink-100 text-[11px] shrink-0">创作参考</span>
             <span class="text-[10px] text-ink-400 truncate font-mono">
-              {{ state.currentProject?.protagonist?.name_and_level || '凡人' }} · {{ lastChapterTail ? '上章末尾' : '开局首章' }}
+              {{ computedState.protagonistCharacter.value ? (computedState.protagonistCharacter.value.name + (computedState.protagonistCharacter.value.realm ? ' (' + computedState.protagonistCharacter.value.realm + ')' : '')) : '凡人' }} · {{ lastChapterTail ? '上章末尾' : '开局首章' }}
             </span>
           </div>
           <div class="flex items-center gap-1 text-[10px] text-ink-400 group-hover:text-brand-amber shrink-0">
@@ -565,10 +565,10 @@
                 <Cpu class="w-3.5 h-3.5" />
                 <span>主角现状</span>
               </span>
-              <strong class="text-ink-100 font-semibold truncate max-w-[140px]">{{ state.currentProject?.protagonist?.name_and_level || '凡人' }}</strong>
+              <strong class="text-ink-100 font-semibold truncate max-w-[140px]">{{ computedState.protagonistCharacter.value ? (computedState.protagonistCharacter.value.name + (computedState.protagonistCharacter.value.realm ? ' (' + computedState.protagonistCharacter.value.realm + ')' : '')) : '凡人' }}</strong>
             </div>
             <div class="text-[10px] text-ink-300">
-              随身底牌：<span class="text-ink-200">{{ state.currentProject?.protagonist?.inventory || '无' }}</span>
+              随身底牌：<span class="text-ink-200">{{ computedState.protagonistCharacter.value?.inventory || '无' }}</span>
             </div>
           </div>
 
@@ -870,16 +870,24 @@
           <div 
             v-if="renderError"
             class="mb-4 p-3.5 rounded-xl bg-brand-rose/15 border border-brand-rose/40 text-xs flex items-start justify-between gap-3 shrink-0 animate-fade-in">
-            <div class="space-y-1">
+            <div class="space-y-1.5 flex-1 min-w-0">
               <div class="font-bold text-brand-rose flex items-center gap-1.5">
-                <AlertCircle class="w-4 h-4" />
-                <span>起草异常</span>
+                <AlertCircle class="w-4 h-4 shrink-0" />
+                <span>{{ isTimeoutErrorText(renderError) ? '生成超时 / 算力拥堵' : '起草 / 精修异常' }}</span>
               </div>
-              <p class="text-[11px] text-ink-200 leading-relaxed font-sans select-text">{{ renderError }}</p>
+              <p class="text-[11px] text-ink-200 leading-relaxed font-sans select-text break-words">{{ renderError }}</p>
+              <div v-if="isTimeoutErrorText(renderError)" class="mt-2 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1.5 rounded-lg flex items-center justify-between gap-2">
+                <span>💡 建议：免费/预览通道长文本算力有限，建议前往设置切换为主力写作模型（如 DeepSeek-V3 / Qwen-2.5）</span>
+                <button 
+                  @click="state.activeTab = 'config'" 
+                  class="underline font-bold hover:text-white cursor-pointer shrink-0 text-amber-200">
+                  前往设置 →
+                </button>
+              </div>
             </div>
             <div class="flex items-center gap-2 shrink-0">
               <button 
-                @click="handleRenderScene" 
+                @click="state.activeStep === 5 ? handleRewriteDraft() : handleRenderScene()" 
                 class="px-2.5 py-1 bg-brand-rose/20 hover:bg-brand-rose/30 text-brand-rose border border-brand-rose/40 rounded text-xs transition cursor-pointer font-bold">
                 重试
               </button>
@@ -1031,6 +1039,12 @@ const renderError = ref(null);
 let renderTimer = null;
 let rewriteTimer = null;
 
+function isTimeoutErrorText(msg) {
+  if (!msg) return false;
+  const lower = String(msg).toLowerCase();
+  return lower.includes('超时') || lower.includes('timeout') || lower.includes('deadline') || lower.includes('算力') || lower.includes('headers');
+}
+
 const dismissedBannerProjectId = ref(null);
 const showBeginnerBanner = computed(() => {
   if (!state.currentProject) return false;
@@ -1178,13 +1192,32 @@ async function handleRenderScene() {
   );
 
   try {
-    const res = await api.renderScene(state.currentProject.id, {
-      chapter_index: targetIndex,
-      beats: state.workbench.beats,
-      words_target: state.wordsTarget || 2000,
-      narrative_style: state.narrativeStyle || 'hardboiled',
-    });
-    state.workbench.content = res.content || '';
+    let streamedDraft = '';
+    let isFirstDelta = true;
+    const res = await api.renderSceneStream(
+      state.currentProject.id,
+      {
+        chapter_index: targetIndex,
+        beats: state.workbench.beats,
+        words_target: state.wordsTarget || 2000,
+        narrative_style: state.narrativeStyle || 'hardboiled',
+      },
+      {
+        onDelta: (delta) => {
+          if (isFirstDelta) {
+            streamedDraft = delta;
+            state.workbench.content = streamedDraft;
+            isFirstDelta = false;
+          } else {
+            streamedDraft += delta;
+            state.workbench.content = streamedDraft;
+          }
+        },
+      }
+    );
+    if (res && res.content) {
+      state.workbench.content = res.content;
+    }
     state.activeStep = 3;
     await actions.runLinter();
     await actions.saveCheckpoint();
@@ -1244,7 +1277,9 @@ async function handleReviewDraft() {
     const res = await api.reviewDraft(state.currentProject.id, {
       chapter_index: targetIndex,
       content: state.workbench.content,
+      draft_text: state.workbench.content,
       beats: state.workbench.beats,
+      reviewer_model: state.config?.reviewer_model || state.config?.reviewer_provider?.model || '',
     });
     state.reviewResult = res;
     state.activeStep = res.verdict === 'ACCEPTED' ? 6 : 5;
@@ -1268,7 +1303,8 @@ async function handleReviewDraft() {
     }
   } catch (e) {
     console.error('handleReviewDraft error:', e);
-    notify('体检失败', e.message || '请检查网络或配置', 'error', 5000, { taskType: 'review', chapterIndex: targetIndex, status: 'failed' });
+    renderError.value = e.message || '文风体检异常';
+    notify('体检失败', e.message || '请检查网络或配置', 'error', 6000, { taskType: 'review', chapterIndex: targetIndex, status: 'failed' });
   } finally {
     state.isReviewing = false;
   }
@@ -1301,22 +1337,41 @@ async function handleRewriteDraft() {
     const suggestions = state.reviewResult?.suggestions 
       || '请重塑叙事节奏，补齐主谓宾完整结构，消除机械断句与模式化废词。';
 
-    const res = await api.rewriteDraft(state.currentProject.id, {
-      chapter_index: targetIndex,
-      original_draft: state.workbench.content,
-      content: state.workbench.content,
-      issues: issues,
-      suggestions: suggestions,
-      words_target: state.wordsTarget || 2000,
-      narrative_style: state.narrativeStyle || 'hardboiled',
-      review: {
-        verdict: 'REVISION_NEEDED',
-        score: state.reviewResult?.score || 70,
+    let streamedContent = '';
+    let isFirstDelta = true;
+    const res = await api.rewriteDraftStream(
+      state.currentProject.id,
+      {
+        chapter_index: targetIndex,
+        original_draft: state.workbench.content,
+        content: state.workbench.content,
         issues: issues,
         suggestions: suggestions,
+        words_target: state.wordsTarget || 2000,
+        narrative_style: state.narrativeStyle || 'hardboiled',
+        review: {
+          verdict: 'REVISION_NEEDED',
+          score: state.reviewResult?.score || 70,
+          issues: issues,
+          suggestions: suggestions,
+        },
       },
-    });
-    state.workbench.content = res.content || '';
+      {
+        onDelta: (delta) => {
+          if (isFirstDelta) {
+            streamedContent = delta;
+            state.workbench.content = streamedContent;
+            isFirstDelta = false;
+          } else {
+            streamedContent += delta;
+            state.workbench.content = streamedContent;
+          }
+        },
+      }
+    );
+    if (res && res.content) {
+      state.workbench.content = res.content;
+    }
     state.rewriteLoopCount++;
     await actions.runLinter();
     state.activeStep = 4;

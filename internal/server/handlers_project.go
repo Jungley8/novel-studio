@@ -8,11 +8,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/engine"
 )
 
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(activity.WithSource(r.Context(), activity.SourceUIManual))
 	ctx := r.Context()
 	switch r.Method {
 	case http.MethodGet:
@@ -26,17 +28,45 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonResponse(w, http.StatusOK, list)
 	case http.MethodPost:
-		var p domain.Project
-		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		var req struct {
+			domain.Project
+			ProtagonistName string `json:"protagonist_name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			errorResponse(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		p := req.Project
 		if p.ID == "" {
 			p.ID = fmt.Sprintf("proj_%d", time.Now().UnixNano())
 		}
 		if err := s.store.SaveProject(ctx, &p); err != nil {
 			errorResponse(w, http.StatusBadRequest, err.Error())
 			return
+		}
+		if existing, _ := s.store.GetProtagonistEntry(ctx, p.ID); existing == nil {
+			protName := strings.TrimSpace(req.ProtagonistName)
+			if protName == "" {
+				protName = "主角"
+			}
+			initialRealm := "凡人"
+			protEntry := &domain.CodexEntry{
+				ID:              fmt.Sprintf("codex_%s_pro", p.ID),
+				ProjectID:       p.ID,
+				Category:        domain.CategoryCharacter,
+				Archetype:       "PROTAGONIST",
+				Name:            protName,
+				Realm:           initialRealm,
+				Aliases:         []string{protName},
+				Summary:         fmt.Sprintf("全书核心主角 | 境界: %s", initialRealm),
+				DetailsMarkdown: fmt.Sprintf("【全书核心主角档案】\n- 境界：%s\n- 随身底牌与物品：无\n- 当前状态：良好", initialRealm),
+				Inventory:       "无",
+				HealthStatus:    "良好",
+				TrackingMode:    domain.TrackingModeAlwaysInject,
+				CreatedAt:       time.Now(),
+				UpdatedAt:       time.Now(),
+			}
+			_ = s.store.SaveCodexEntry(ctx, protEntry)
 		}
 		jsonResponse(w, http.StatusCreated, p)
 	default:
@@ -53,6 +83,7 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r = r.WithContext(activitySourceForProjectRoute(r.Context(), parts))
 	ctx := r.Context()
 
 	// 1. /api/projects/:id (GET / DELETE / POST)
@@ -161,6 +192,12 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		errorResponse(w, http.StatusBadRequest, "invalid workshop action")
+	case "activity":
+		subParts := []string{}
+		if len(parts) > 2 {
+			subParts = parts[2:]
+		}
+		s.handleProjectActivity(w, r, projectID, subParts)
 	case "export":
 		if len(parts) >= 3 {
 			s.handleProjectExport(w, r, projectID, parts[2])
@@ -208,10 +245,12 @@ func (s *Server) handleProjectChapters(w http.ResponseWriter, r *http.Request, p
 			return
 		}
 		_ = s.store.ClearCheckpoint(ctx, projectID, c.ChapterIndex)
+		protEntry, _ := s.store.GetProtagonistEntry(ctx, projectID)
 
 		jsonResponse(w, http.StatusCreated, map[string]any{
-			"chapter": c,
-			"project": updatedProj,
+			"chapter":     c,
+			"project":     updatedProj,
+			"protagonist": protEntry,
 		})
 	default:
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -238,11 +277,13 @@ func (s *Server) handleProjectChapterSub(w http.ResponseWriter, r *http.Request,
 			errorResponse(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		protEntry, _ := s.store.GetProtagonistEntry(ctx, projectID)
 		jsonResponse(w, http.StatusOK, map[string]any{
-			"status":     "uncommitted",
-			"message":    fmt.Sprintf("第 %d 章已成功从正史撤回为草稿", chapterIndex),
-			"checkpoint": cp,
-			"project":    updatedProj,
+			"status":      "uncommitted",
+			"message":     fmt.Sprintf("第 %d 章已成功从正史撤回为草稿", chapterIndex),
+			"checkpoint":  cp,
+			"project":     updatedProj,
+			"protagonist": protEntry,
 		})
 		return
 	}
@@ -264,11 +305,13 @@ func (s *Server) handleProjectChapterSub(w http.ResponseWriter, r *http.Request,
 				errorResponse(w, http.StatusBadRequest, err.Error())
 				return
 			}
+			protEntry, _ := s.store.GetProtagonistEntry(ctx, projectID)
 			jsonResponse(w, http.StatusOK, map[string]any{
-				"status":     "uncommitted",
-				"message":    fmt.Sprintf("第 %d 章已成功撤回为草稿", chapterIndex),
-				"checkpoint": cp,
-				"project":    updatedProj,
+				"status":      "uncommitted",
+				"message":     fmt.Sprintf("第 %d 章已成功撤回为草稿", chapterIndex),
+				"checkpoint":  cp,
+				"project":     updatedProj,
+				"protagonist": protEntry,
 			})
 			return
 		}
@@ -409,72 +452,91 @@ func (s *Server) handleProjectStateMachine(w http.ResponseWriter, r *http.Reques
 			errorResponse(w, http.StatusNotFound, "project not found")
 			return
 		}
+		protEntry, err := s.store.GetProtagonistEntry(ctx, projectID)
+		if err != nil || protEntry == nil {
+			errorResponse(w, http.StatusNotFound, "protagonist codex entry not found")
+			return
+		}
 		chapters, err := s.store.ListChapters(ctx, projectID)
 		if err != nil {
 			errorResponse(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		updated, _, err := s.orch.AnalyzeProtagonistState(ctx, s.cfg.ReasoningModel, proj, chapters)
+		updated, _, err := s.orch.AnalyzeProtagonistState(ctx, s.cfg.ReasoningModel, proj, protEntry, chapters)
 		if err != nil {
 			errorResponse(w, http.StatusInternalServerError, "analyze protagonist state failed: "+err.Error())
 			return
 		}
-		proj.Protagonist = *updated
-		if err := s.store.SaveProject(ctx, proj); err != nil {
-			errorResponse(w, http.StatusInternalServerError, "save project failed: "+err.Error())
+		if err := s.store.SaveCodexEntry(ctx, updated); err != nil {
+			errorResponse(w, http.StatusInternalServerError, "save protagonist codex entry failed: "+err.Error())
 			return
 		}
-		jsonResponse(w, http.StatusOK, proj.Protagonist)
+		jsonResponse(w, http.StatusOK, updated)
 		return
 	}
 
 	switch r.Method {
 	case http.MethodGet:
-		proj, err := s.store.GetProject(ctx, projectID)
-		if err != nil {
-			errorResponse(w, http.StatusNotFound, "project not found")
+		protEntry, err := s.store.GetProtagonistEntry(ctx, projectID)
+		if err != nil || protEntry == nil {
+			errorResponse(w, http.StatusNotFound, "protagonist not found")
 			return
 		}
-		jsonResponse(w, http.StatusOK, proj.Protagonist)
+		jsonResponse(w, http.StatusOK, protEntry)
 	case http.MethodPost:
-		var prot domain.Protagonist
-		if err := json.NewDecoder(r.Body).Decode(&prot); err != nil {
+		var update domain.CodexEntry
+		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
 			errorResponse(w, http.StatusBadRequest, "invalid json: "+err.Error())
 			return
 		}
-		proj, err := s.store.GetProject(ctx, projectID)
-		if err != nil {
-			errorResponse(w, http.StatusNotFound, "project not found")
-			return
-		}
-		proj.Protagonist = prot
-		if err := s.store.SaveProject(ctx, proj); err != nil {
-			errorResponse(w, http.StatusInternalServerError, "save project failed: "+err.Error())
-			return
-		}
-
-		protID := fmt.Sprintf("codex_%s_pro", projectID)
-		protEntry, _ := s.store.GetCodexEntry(ctx, projectID, protID)
-		if protEntry != nil {
-			protName := "主角"
-			if parts := strings.Split(prot.NameAndLevel, "("); len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
-				protName = strings.TrimSpace(parts[0])
+		protEntry, _ := s.store.GetProtagonistEntry(ctx, projectID)
+		if protEntry == nil {
+			protEntry = &domain.CodexEntry{
+				ID:        fmt.Sprintf("codex_%s_pro", projectID),
+				ProjectID: projectID,
+				Category:  domain.CategoryCharacter,
+				Archetype: "PROTAGONIST",
 			}
-			protEntry.Name = protName
-			protEntry.Aliases = []string{"主角", prot.NameAndLevel}
-			protEntry.Summary = fmt.Sprintf("全书主角 | 状态: %s | 动机: %s", prot.HealthStatus, prot.CoreGoal)
-			protEntry.DetailsMarkdown = fmt.Sprintf("【主角实时档案】\n- 设定/境界：%s\n- 核心长线追求：%s\n- 随身底牌与物品：%s\n- 当前状态：%s", prot.NameAndLevel, prot.CoreGoal, prot.Inventory, prot.HealthStatus)
-			protEntry.UpdatedAt = time.Now()
-			_ = s.store.SaveCodexEntry(ctx, protEntry)
 		}
-
-		jsonResponse(w, http.StatusOK, proj.Protagonist)
+		if update.Name != "" {
+			protEntry.Name = update.Name
+		}
+		if update.Realm != "" {
+			protEntry.Realm = update.Realm
+		}
+		if update.Inventory != "" {
+			protEntry.Inventory = update.Inventory
+		}
+		if update.HealthStatus != "" {
+			protEntry.HealthStatus = update.HealthStatus
+		}
+		if update.Summary != "" {
+			protEntry.Summary = update.Summary
+		}
+		if update.CoreMotivation != "" {
+			protEntry.CoreMotivation = update.CoreMotivation
+		}
+		if update.StructuredLevel != nil {
+			protEntry.StructuredLevel = update.StructuredLevel
+		}
+		if update.StructuredItems != nil {
+			protEntry.StructuredItems = update.StructuredItems
+		}
+		protEntry.Category = domain.CategoryCharacter
+		protEntry.Archetype = "PROTAGONIST"
+		protEntry.UpdatedAt = time.Now()
+		if err := s.store.SaveCodexEntry(ctx, protEntry); err != nil {
+			errorResponse(w, http.StatusInternalServerError, "save protagonist failed: "+err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, protEntry)
 	default:
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 func (s *Server) handleHookDelete(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(activity.WithSource(r.Context(), activity.SourceUIManual))
 	if r.Method != http.MethodDelete {
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -500,6 +562,8 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+	bootRunID := activity.NewRunID()
+	r = r.WithContext(activity.WithRunID(activity.WithSource(r.Context(), activity.SourceBootstrap), bootRunID))
 	var req BootstrapProjectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		errorResponse(w, http.StatusBadRequest, "invalid request: "+err.Error())
@@ -546,15 +610,9 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 		Title:          req.Title,
 		TargetPlatform: req.TargetPlatform,
 		WorldRules:     strings.TrimSpace(worldRules.String()),
-		Protagonist: domain.Protagonist{
-			NameAndLevel: fmt.Sprintf("主角 (%s)", initialRealm),
-			Inventory:    "随身物品待起草",
-			CoreGoal:     fw.ThemePremise,
-			HealthStatus: "良好",
-		},
-		Framework: fw,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		Framework:      fw,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
 	}
 
 	if err := s.store.SaveProject(r.Context(), proj); err != nil {
@@ -562,20 +620,21 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 同步主角至设定集 (Codex)
+	// 注册核心主角至设定集 (Codex)
 	protName := "主角"
-	if parts := strings.Split(proj.Protagonist.NameAndLevel, "("); len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
-		protName = strings.TrimSpace(parts[0])
-	}
 	protEntry := &domain.CodexEntry{
 		ID:              fmt.Sprintf("codex_%s_pro", projectID),
 		ProjectID:       projectID,
 		Category:        domain.CategoryCharacter,
+		Archetype:       "PROTAGONIST",
 		Name:            protName,
-		Aliases:         []string{"主角", proj.Protagonist.NameAndLevel},
-		Summary:         fmt.Sprintf("全书主角 | 初始境界: %s | 核心长线动机: %s", initialRealm, fw.ThemePremise),
-		DetailsMarkdown: fmt.Sprintf("【全书核心主角档案】\n- 初始境界：%s\n- 核心终极目标：%s\n- 随身底牌与物品：%s\n- 当前状态：%s", initialRealm, proj.Protagonist.CoreGoal, proj.Protagonist.Inventory, proj.Protagonist.HealthStatus),
-		TrackingMode:    domain.TrackingModeAutoMention,
+		Realm:           initialRealm,
+		Aliases:         []string{"主角", fmt.Sprintf("%s (%s)", protName, initialRealm)},
+		Summary:         fmt.Sprintf("全书核心主角 | 初始境界: %s | 核心长线动机: %s", initialRealm, fw.ThemePremise),
+		DetailsMarkdown: fmt.Sprintf("【全书核心主角档案】\n- 初始境界：%s\n- 核心终极目标：%s\n- 随身底牌与物品：随身物品待起草\n- 当前状态：良好", initialRealm, fw.ThemePremise),
+		Inventory:       "随身物品待起草",
+		HealthStatus:    "良好",
+		TrackingMode:    domain.TrackingModeAlwaysInject,
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
 	}
@@ -591,6 +650,8 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 			ProjectID:       projectID,
 			Category:        domain.CategoryFaction,
 			Name:            fac.Name,
+			Alignment:       fac.Alignment,
+			ThreatLevel:     fac.ThreatLevel,
 			Summary:         fmt.Sprintf("立场: %s | 威胁度: %s", fac.Alignment, fac.ThreatLevel),
 			DetailsMarkdown: fac.Doctrine,
 			TrackingMode:    domain.TrackingModeAutoMention,
@@ -666,6 +727,28 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
+
+	// Ledger aggregate marker for the bootstrap run.
+	_ = s.store.AppendEvent(r.Context(), &activity.ActivityEvent{
+		ProjectID:  projectID,
+		RunID:      bootRunID,
+		EntityType: activity.EntityFramework,
+		EntityID:   projectID,
+		EventType:  activity.EventFrameworkBoot,
+		Actor:      activity.ActorAIReasoner,
+		Source:     activity.SourceBootstrap,
+		Title:      fmt.Sprintf("创世总纲已推演《%s》", req.Title),
+		Summary: fmt.Sprintf("%d 卷 · %d 势力 · %d 关键人物 · %d 种子伏笔",
+			len(fw.VolumeArcs), len(fw.Factions), len(fw.KeyCharacters), len(fw.SeedHooks)),
+		CreatedAt: time.Now(),
+	})
+
+	// Transient seeds have been persisted to codex_entries and plot_hooks.
+	// Clean them from the macro framework to maintain a single source of truth.
+	fw.Factions = nil
+	fw.KeyCharacters = nil
+	fw.SeedHooks = nil
+	_ = s.store.SaveProject(r.Context(), proj)
 
 	jsonResponse(w, http.StatusCreated, proj)
 }

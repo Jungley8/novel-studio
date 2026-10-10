@@ -23,7 +23,7 @@ func (m *mockQualityReviewerClient) ChatCompletionWithUsage(ctx context.Context,
 func (m *mockQualityReviewerClient) ChatCompletionStream(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
 	ch := make(chan StreamChunk, 2)
 	ch <- StreamChunk{Delta: m.response}
-	ch <- StreamChunk{Done: true}
+	ch <- StreamChunk{Done: true, Usage: &TokenUsage{PromptTokens: 50, CompletionTokens: 50, TotalTokens: 100}}
 	close(ch)
 	return ch, nil
 }
@@ -43,10 +43,13 @@ func TestQualityGate_Audit(t *testing.T) {
 		Title:          "修真模拟器",
 		TargetPlatform: "番茄脑洞",
 		WorldRules:     "不可跨大境界逆伐",
-		Protagonist: domain.Protagonist{
-			NameAndLevel: "林凡 (练气一层)",
-			Inventory:    "粗布衣, 基础飞剑",
-		},
+	}
+
+	prot := &domain.CodexEntry{
+		Name:      "林凡",
+		Realm:     "练气一层",
+		Inventory: "粗布衣, 基础飞剑",
+		Archetype: "PROTAGONIST",
 	}
 
 	beats := []domain.SceneBeat{
@@ -55,7 +58,7 @@ func TestQualityGate_Audit(t *testing.T) {
 
 	// 1. Audit clean text
 	cleanDraft := "长街尽头。杀机乍现！林凡握紧飞剑。寒芒一闪，对手的护体罡气应声碎裂！"
-	report, usage, err := gate.Audit(context.Background(), "mock-reviewer", proj, 1, beats, cleanDraft)
+	report, usage, err := gate.Audit(context.Background(), "mock-reviewer", proj, prot, 1, beats, cleanDraft)
 	if err != nil {
 		t.Fatalf("Audit failed: %v", err)
 	}
@@ -71,7 +74,7 @@ func TestQualityGate_Audit(t *testing.T) {
 
 	// 2. Audit text containing cliché (must penalize and flip to REVISION_NEEDED)
 	clicheDraft := "他不由得冷笑了一声，嘴角勾起一丝嘲讽的笑意。对手一时间眼中闪过一丝慌乱。"
-	reportCliche, _, err := gate.Audit(context.Background(), "mock-reviewer", proj, 1, beats, clicheDraft)
+	reportCliche, _, err := gate.Audit(context.Background(), "mock-reviewer", proj, prot, 1, beats, clicheDraft)
 	if err != nil {
 		t.Fatalf("Audit with cliches failed: %v", err)
 	}
@@ -99,7 +102,7 @@ func TestQualityGate_Audit(t *testing.T) {
 		"issues": ["主角未持有辟毒珠却免疫尸毒，剧情逻辑出现硬伤"],
 		"suggestions": "请在上一段补充主角服用辟毒丹或借用阵法"
 	}`
-	reportRejection, _, err := gate.Audit(context.Background(), "mock-reviewer", proj, 1, beats, cleanDraft)
+	reportRejection, _, err := gate.Audit(context.Background(), "mock-reviewer", proj, prot, 1, beats, cleanDraft)
 	if err != nil {
 		t.Fatalf("Audit rejection test failed: %v", err)
 	}

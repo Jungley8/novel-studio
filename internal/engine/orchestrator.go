@@ -43,7 +43,6 @@ func (o *Orchestrator) DeriveBeats(
 		TargetChapter:    chapterIndex,
 		RollingCanonText: "(无前序历史)",
 		AllActiveHooks:   activeHooks,
-		ProtagonistState: project.Protagonist,
 		WorldRules:       project.WorldRules,
 	}
 	return o.DeriveBeatsWithHorizon(ctx, reasoningModel, horizon, coreConflict)
@@ -164,14 +163,14 @@ func (o *Orchestrator) DeriveBeatsWithHorizon(
 请推演输出严格合法的 JSON。`,
 		project.Title, project.TargetPlatform, horizon.TargetChapter,
 		horizon.WorldRules, volumeContext, powerContext,
-		horizon.ProtagonistState.NameAndLevel, horizon.ProtagonistState.Inventory, horizon.ProtagonistState.CoreGoal, codexContext,
+		protNameLevel(horizon.ProtagonistEntry), protInventory(horizon.ProtagonistEntry), protGoal(horizon.ProtagonistEntry), codexContext,
 		rollingCanon, callbacksText,
 		hooksSummary,
 		coreConflict,
 	)
 
 	ctxRole := ContextWithRole(ctx, RoleReasoner)
-	resp, usage, err := o.client.ChatCompletionWithUsage(ctxRole, reasoningModel, systemPrompt, userPrompt, 0.4)
+	resp, usage, err := SafeChatCompletionWithStreamFallback(ctxRole, o.client, reasoningModel, systemPrompt, userPrompt, 0.4, nil)
 	if err != nil {
 		return nil, fmt.Errorf("derive beats LLM call failed: %w", err)
 	}
@@ -198,10 +197,9 @@ func (o *Orchestrator) RenderScene(
 	wordsTarget int,
 ) (string, TokenUsage, error) {
 	horizon := &CanonHorizon{
-		Project:          project,
-		TargetChapter:    chapterIndex,
-		ProtagonistState: project.Protagonist,
-		WorldRules:       project.WorldRules,
+		Project:       project,
+		TargetChapter: chapterIndex,
+		WorldRules:    project.WorldRules,
 	}
 	return o.RenderSceneWithHorizon(ctx, writerModel, horizon, beats, wordsTarget)
 }
@@ -212,6 +210,17 @@ func (o *Orchestrator) RenderSceneWithHorizon(
 	horizon *CanonHorizon,
 	beats []domain.SceneBeat,
 	wordsTarget int,
+) (string, TokenUsage, error) {
+	return o.RenderSceneStream(ctx, writerModel, horizon, beats, wordsTarget, nil)
+}
+
+func (o *Orchestrator) RenderSceneStream(
+	ctx context.Context,
+	writerModel string,
+	horizon *CanonHorizon,
+	beats []domain.SceneBeat,
+	wordsTarget int,
+	onDelta func(string),
 ) (string, TokenUsage, error) {
 	if wordsTarget <= 0 {
 		wordsTarget = 2000
@@ -320,20 +329,21 @@ func (o *Orchestrator) RenderSceneWithHorizon(
 请直接输出小说正文内容，无需任何开场白或寒暄。`,
 		project.Title, chapterIndex, wordsTarget,
 		horizon.WorldRules,
-		horizon.ProtagonistState.NameAndLevel, horizon.ProtagonistState.Inventory,
+		protNameLevel(horizon.ProtagonistEntry), protInventory(horizon.ProtagonistEntry),
 		anchorSection, codexSection,
 		wordBudgetDirective,
 		string(beatsJSON),
 	)
 
 	ctxRole := ContextWithRole(ctx, RoleWriter)
-	return o.client.ChatCompletionWithUsage(ctxRole, writerModel, systemPrompt, userPrompt, 0.75)
+	return SafeChatCompletionWithStreamFallback(ctxRole, o.client, writerModel, systemPrompt, userPrompt, 0.75, onDelta)
 }
 
 func (o *Orchestrator) ReviewDraft(
 	ctx context.Context,
 	reviewerModel string,
 	project *domain.Project,
+	protagonist *domain.CodexEntry,
 	chapterIndex int,
 	beats []domain.SceneBeat,
 	draftText string,
@@ -365,13 +375,13 @@ func (o *Orchestrator) ReviewDraft(
 请给出你的审阅判决。`,
 		project.Title, chapterIndex,
 		project.WorldRules,
-		project.Protagonist.NameAndLevel, project.Protagonist.Inventory,
+		protNameLevel(protagonist), protInventory(protagonist),
 		string(beatsJSON),
 		draftText,
 	)
 
 	ctxRole := ContextWithRole(ctx, RoleReviewer)
-	resp, usage, err := o.client.ChatCompletionWithUsage(ctxRole, reviewerModel, systemPrompt, userPrompt, 0.3)
+	resp, usage, err := SafeChatCompletionWithStreamFallback(ctxRole, o.client, reviewerModel, systemPrompt, userPrompt, 0.3, nil)
 	if err != nil {
 		return nil, usage, fmt.Errorf("review draft LLM call failed: %w", err)
 	}
@@ -436,6 +446,19 @@ func (o *Orchestrator) RewriteDraftWithOptions(
 	review *domain.ReviewResult,
 	opts RewriteOptions,
 ) (string, TokenUsage, error) {
+	return o.RewriteDraftStream(ctx, writerModel, project, chapterIndex, originalDraft, review, opts, nil)
+}
+
+func (o *Orchestrator) RewriteDraftStream(
+	ctx context.Context,
+	writerModel string,
+	project *domain.Project,
+	chapterIndex int,
+	originalDraft string,
+	review *domain.ReviewResult,
+	opts RewriteOptions,
+	onDelta func(string),
+) (string, TokenUsage, error) {
 	toneDirective := buildNarrativeTonePrompt(opts.NarrativeStyle)
 
 	systemPrompt := fmt.Sprintf(`你是一名顶级网文精修专家。你的任务是根据主审的具体驳回意见，对原草稿进行定向精修与差分重构。
@@ -481,7 +504,7 @@ func (o *Orchestrator) RewriteDraftWithOptions(
 	)
 
 	ctxRole := ContextWithRole(ctx, RoleWriter)
-	return o.client.ChatCompletionWithUsage(ctxRole, writerModel, systemPrompt, userPrompt, 0.7)
+	return SafeChatCompletionWithStreamFallback(ctxRole, o.client, writerModel, systemPrompt, userPrompt, 0.7, onDelta)
 }
 
 // buildNarrativeTonePrompt returns tailored tone instructions for 5 common web novel narrative voices.
@@ -1039,10 +1062,14 @@ func (o *Orchestrator) AnalyzeProtagonistState(
 	ctx context.Context,
 	reasoningModel string,
 	project *domain.Project,
+	protagonist *domain.CodexEntry,
 	chapters []*domain.Chapter,
-) (*domain.Protagonist, TokenUsage, error) {
+) (*domain.CodexEntry, TokenUsage, error) {
 	if project == nil {
 		return nil, TokenUsage{}, errors.New("project cannot be nil")
+	}
+	if protagonist == nil {
+		return nil, TokenUsage{}, errors.New("protagonist cannot be nil")
 	}
 
 	var recentExcerpts []string
@@ -1086,10 +1113,10 @@ func (o *Orchestrator) AnalyzeProtagonistState(
 %s
 
 请推演并输出更新后的主角状态 JSON。`,
-		project.Protagonist.NameAndLevel,
-		project.Protagonist.Inventory,
-		project.Protagonist.CoreGoal,
-		project.Protagonist.HealthStatus,
+		protNameLevel(protagonist),
+		protInventory(protagonist),
+		protGoal(protagonist),
+		protHealth(protagonist),
 		strings.Join(recentExcerpts, "\n\n"),
 	)
 
@@ -1122,15 +1149,22 @@ func (o *Orchestrator) AnalyzeProtagonistState(
 		return nil, usage, fmt.Errorf("unmarshal protagonist state failed: %w", err)
 	}
 
-	updated := project.Protagonist
+	updated := *protagonist
 	if dto.NameAndLevel != "" {
-		updated.NameAndLevel = dto.NameAndLevel
+		if idx := strings.Index(dto.NameAndLevel, "("); idx != -1 && strings.HasSuffix(dto.NameAndLevel, ")") {
+			updated.Realm = strings.TrimSuffix(dto.NameAndLevel[idx+1:], ")")
+		} else if idx := strings.Index(dto.NameAndLevel, "（"); idx != -1 && strings.HasSuffix(dto.NameAndLevel, "）") {
+			updated.Realm = strings.TrimSuffix(dto.NameAndLevel[idx+len("（"):], "）")
+		} else {
+			updated.Realm = dto.NameAndLevel
+		}
 	}
 	if dto.Inventory != "" {
 		updated.Inventory = dto.Inventory
 	}
 	if dto.CoreGoal != "" {
-		updated.CoreGoal = dto.CoreGoal
+		updated.CoreMotivation = dto.CoreGoal
+		updated.Summary = dto.CoreGoal
 	}
 	if dto.HealthStatus != "" {
 		updated.HealthStatus = dto.HealthStatus
@@ -1149,7 +1183,9 @@ func (o *Orchestrator) AnalyzeProtagonistState(
 			Timestamp: time.Now(),
 		})
 		updated.StructuredLevel.Realm = dto.BreakthroughEvent.ToRealm
+		updated.Realm = dto.BreakthroughEvent.ToRealm
 	}
+	updated.UpdatedAt = time.Now()
 
 	return &updated, usage, nil
 }
@@ -1359,7 +1395,7 @@ func (o *Orchestrator) SuggestChapterConflict(
 请推演第 %d 章的核心冲突与事件爆点（纯文本直接输出）：`,
 		project.Title, project.TargetPlatform, horizon.TargetChapter,
 		horizon.WorldRules, volumeContext, powerContext,
-		horizon.ProtagonistState.NameAndLevel, horizon.ProtagonistState.Inventory, horizon.ProtagonistState.CoreGoal, codexContext,
+		protNameLevel(horizon.ProtagonistEntry), protInventory(horizon.ProtagonistEntry), protGoal(horizon.ProtagonistEntry), codexContext,
 		rollingCanon, callbacksText,
 		hooksSummary, horizon.TargetChapter,
 	)
@@ -1383,4 +1419,38 @@ func (o *Orchestrator) SuggestChapterConflict(
 	cleaned = strings.Trim(cleaned, `"'“”`)
 
 	return cleaned, usage, nil
+}
+
+func protNameLevel(e *domain.CodexEntry) string {
+	if e == nil {
+		return "未知"
+	}
+	return e.NameAndLevel()
+}
+
+func protInventory(e *domain.CodexEntry) string {
+	if e == nil || strings.TrimSpace(e.Inventory) == "" {
+		return "无"
+	}
+	return e.Inventory
+}
+
+func protGoal(e *domain.CodexEntry) string {
+	if e == nil {
+		return "暂无"
+	}
+	if strings.TrimSpace(e.CoreMotivation) != "" {
+		return e.CoreMotivation
+	}
+	if strings.TrimSpace(e.Summary) != "" {
+		return e.Summary
+	}
+	return "暂无"
+}
+
+func protHealth(e *domain.CodexEntry) string {
+	if e == nil || strings.TrimSpace(e.HealthStatus) == "" {
+		return "正常"
+	}
+	return e.HealthStatus
 }

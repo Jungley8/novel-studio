@@ -123,6 +123,7 @@ import {
   Anchor,
   Archive,
   BarChart3,
+  History,
   Network,
   Settings,
   Plus,
@@ -152,6 +153,7 @@ const navGroups = computed(() => [
     title: '成果阅览',
     items: [
       { id: 'chapters', label: '章节目录', desc: '已完稿章节的归档与浏览', icon: Archive, badge: `${state.chapters.length}章` },
+      { id: 'activity', label: '动态时间线', desc: '内容生产与变更留痕，可看全文详情', icon: History },
       { id: 'graph', label: '关系图谱', desc: '实体与势力错综关联图', icon: Network, badge: state.codexRelations.length ? `${state.codexRelations.length}条` : '' },
       { id: 'analytics', label: '全书体检', desc: '篇幅节奏、字数与走势', icon: BarChart3 },
     ]

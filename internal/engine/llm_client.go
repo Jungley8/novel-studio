@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -48,18 +49,41 @@ const (
 )
 
 type HTTPLLMClient struct {
-	mu         sync.RWMutex
-	baseURL    string
-	apiKey     string
-	sessionID  string
-	httpClient *http.Client
+	mu           sync.RWMutex
+	baseURL      string
+	apiKey       string
+	sessionID    string
+	httpClient   *http.Client
+	streamClient *http.Client
+}
+
+func newOptimizedTransport(responseHeaderTimeout time.Duration) *http.Transport {
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+	}
 }
 
 func NewHTTPLLMClient(baseURL, apiKey string) *HTTPLLMClient {
 	c := &HTTPLLMClient{
 		sessionID: fmt.Sprintf("novel-studio-%x", time.Now().UnixNano()),
 		httpClient: &http.Client{
-			Timeout: 300 * time.Second, // 300s timeout to support DeepSeek R1 and long-token reasoning
+			Transport: newOptimizedTransport(180 * time.Second),
+			Timeout:   300 * time.Second, // 300s total timeout for sync completion
+		},
+		streamClient: &http.Client{
+			Transport: newOptimizedTransport(120 * time.Second),
+			Timeout:   0, // Streaming connection lifetime is managed by ctx; no premature cutoff
 		},
 	}
 	c.UpdateCredentials(baseURL, apiKey)
@@ -235,6 +259,25 @@ func extractTokenUsage(u *struct {
 	}
 }
 
+// isTimeoutError determines whether an error stems from connection or read deadline exceeded.
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "awaiting headers") ||
+		strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "client.timeout") ||
+		strings.Contains(msg, "timeout exceeded")
+}
+
 func (c *HTTPLLMClient) ChatCompletion(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (string, error) {
 	content, _, err := c.ChatCompletionWithUsage(ctx, model, systemPrompt, userPrompt, temperature)
 	return content, err
@@ -279,49 +322,34 @@ func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 		return "", zeroUsage, fmt.Errorf("marshal request failed: %w", err)
 	}
 
-	var bodyBytes []byte
-	maxRetries := 3
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return "", zeroUsage, fmt.Errorf("create request failed: %w", err)
+	}
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
-		if err != nil {
-			return "", zeroUsage, fmt.Errorf("create request failed: %w", err)
+	c.applyHeaders(req, apiKey, endpoint)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", zeroUsage, ctx.Err()
 		}
-
-		c.applyHeaders(req, apiKey, endpoint)
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			if ctx.Err() != nil {
-				return "", zeroUsage, ctx.Err()
-			}
-			if attempt == maxRetries-1 {
-				return "", zeroUsage, fmt.Errorf("do HTTP request failed after %d attempts: %w", maxRetries, err)
-			}
-			time.Sleep(time.Duration(1<<attempt) * 500 * time.Millisecond)
-			continue
+		if isTimeoutError(err) {
+			return "", zeroUsage, fmt.Errorf("模型 [%s] 请求超时: 上游等待首字返回耗时过长 (通常由公用/免费模型并发队列拥堵或长文本推理算力不足引起，建议检查网络或切换为主力写作模型): %w", model, err)
 		}
+		return "", zeroUsage, fmt.Errorf("do HTTP request failed: %w", err)
+	}
 
-		bodyBytes, err = io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			if attempt == maxRetries-1 {
-				return "", zeroUsage, fmt.Errorf("read response body failed: %w", err)
-			}
-			time.Sleep(time.Duration(1<<attempt) * 500 * time.Millisecond)
-			continue
+	bodyBytes, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		if isTimeoutError(err) {
+			return "", zeroUsage, fmt.Errorf("模型 [%s] 读取响应超时 (连接过早中断): %w", model, err)
 		}
+		return "", zeroUsage, fmt.Errorf("read response body failed: %w", err)
+	}
 
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			break
-		}
-
-		// Retry on 429 Rate Limit or 5xx Server Error
-		if (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) && attempt < maxRetries-1 {
-			time.Sleep(time.Duration(1<<attempt) * 750 * time.Millisecond)
-			continue
-		}
-
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", zeroUsage, fmt.Errorf("LLM API returned HTTP %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -472,8 +500,16 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 	c.applyHeaders(req, apiKey, endpoint)
 	req.Header.Set("Accept", "text/event-stream")
 
-	resp, err := c.httpClient.Do(req)
+	client := c.streamClient
+	if client == nil {
+		client = c.httpClient
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
+		if isTimeoutError(err) {
+			return nil, fmt.Errorf("模型 [%s] 流式请求等待首字超时 (未在时限内收到响应头): %w", model, err)
+		}
 		return nil, fmt.Errorf("do stream HTTP request: %w", err)
 	}
 
@@ -542,11 +578,79 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 		}
 
 		if err := scanner.Err(); err != nil {
-			sendChunk(StreamChunk{Err: err})
+			if isTimeoutError(err) {
+				sendChunk(StreamChunk{Err: fmt.Errorf("模型 [%s] 流式接收中断 (连接超时): %w", model, err)})
+			} else {
+				sendChunk(StreamChunk{Err: err})
+			}
 		}
 	}()
 
 	return out, nil
+}
+
+// SafeChatCompletionWithStreamFallback executes an LLM request using streaming first to eliminate
+// 'awaiting headers' timeouts on gateways. If streaming succeeds, tokens are aggregated in memory.
+// If streaming is unsupported or encounters an upstream non-streaming error, it falls back to ChatCompletionWithUsage.
+func SafeChatCompletionWithStreamFallback(
+	ctx context.Context,
+	client LLMClient,
+	model string,
+	systemPrompt, userPrompt string,
+	temperature float64,
+	onDelta func(string),
+) (string, TokenUsage, error) {
+	if client == nil {
+		return "", TokenUsage{}, errors.New("nil llm client")
+	}
+
+	streamCh, err := client.ChatCompletionStream(ctx, model, systemPrompt, userPrompt, temperature)
+	if err == nil {
+		var sb strings.Builder
+		var finalUsage TokenUsage
+		hasUsage := false
+		streamFailed := false
+		var streamErr error
+
+		for chunk := range streamCh {
+			if chunk.Err != nil {
+				streamFailed = true
+				streamErr = chunk.Err
+				break
+			}
+			if chunk.Delta != "" {
+				sb.WriteString(chunk.Delta)
+				if onDelta != nil {
+					onDelta(chunk.Delta)
+				}
+			}
+			if chunk.Usage != nil {
+				finalUsage = *chunk.Usage
+				hasUsage = true
+			}
+		}
+
+		if !streamFailed && sb.Len() > 0 {
+			if !hasUsage {
+				pTokens := (len([]rune(systemPrompt)) + len([]rune(userPrompt))) * 3 / 2
+				cTokens := len([]rune(sb.String())) * 3 / 2
+				finalUsage = TokenUsage{
+					PromptTokens:     pTokens,
+					CompletionTokens: cTokens,
+					TotalTokens:      pTokens + cTokens,
+				}
+			}
+			return sb.String(), finalUsage, nil
+		}
+
+		// If stream was interrupted due to a real timeout error, fail fast without fallback retry storm
+		if streamFailed && isTimeoutError(streamErr) {
+			return sb.String(), finalUsage, fmt.Errorf("模型 [%s] 流式生成中断 (等待首字或长文本传输超时): %w", model, streamErr)
+		}
+	}
+
+	// Fallback to sync ChatCompletionWithUsage
+	return client.ChatCompletionWithUsage(ctx, model, systemPrompt, userPrompt, temperature)
 }
 
 type roleContextKey struct{}
@@ -651,12 +755,12 @@ func (r *LLMRouter) resolveClientAndModel(ctx context.Context, requestedModel st
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// 1. If explicit role is attached to the context, route to that role's client
+	// 1. If explicit role is attached to the context, route to that role's client and configured model
 	if role, ok := RoleFromContext(ctx); ok {
 		if cl, ok := r.clients[role]; ok && cl != nil {
-			targetModel := requestedModel
+			targetModel := r.models[role]
 			if targetModel == "" {
-				targetModel = r.models[role]
+				targetModel = requestedModel
 			}
 			return cl, targetModel
 		}

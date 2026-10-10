@@ -63,11 +63,28 @@ export function createProjectActions(state, notify, helpers, dialogs) {
     async saveFramework() {
       if (!state.currentProject) return;
       try {
+        if (state.currentProject.framework?.world_axioms?.length > 0) {
+          state.currentProject.world_rules = state.currentProject.framework.world_axioms.join('\n');
+        }
         await api.updateProject(state.currentProject);
         if (state.currentProject.framework) {
           await api.updateFramework(state.currentProject.id, state.currentProject.framework);
         }
-        notify('作品设定已保存', '篇幅风格与世界规则已同步', 'success');
+        const prot = state.codexEntries?.find(e => e.archetype === 'PROTAGONIST')
+          || state.codexEntries?.find(e => e.id?.endsWith('_pro'));
+        if (prot) {
+          await api.saveStateMachine(state.currentProject.id, prot);
+        }
+        const factions = (state.codexEntries || []).filter(e => e.category === 'FACTION');
+        for (const fac of factions) {
+          if (fac.id) {
+            if (fac.alignment || fac.threat_level) {
+              fac.summary = `立场: ${fac.alignment || '中立'} | 威胁: ${fac.threat_level || '中等'}`;
+            }
+            await api.updateCodexEntry(state.currentProject.id, fac.id, fac);
+          }
+        }
+        notify('作品设定已保存', '世界规则与势力阵营已同步至设定集与图谱', 'success');
       } catch (e) {
         notify('保存作品设定失败', e.message, 'error');
       }
@@ -102,7 +119,12 @@ export function createProjectActions(state, notify, helpers, dialogs) {
       state.isLoading = true;
       try {
         const prot = await api.analyzeStateMachine(state.currentProject.id);
-        state.currentProject.protagonist = prot;
+        const idx = state.codexEntries.findIndex(e => e.id === prot.id || e.archetype === 'PROTAGONIST');
+        if (idx >= 0) {
+          state.codexEntries[idx] = prot;
+        } else {
+          state.codexEntries.unshift(prot);
+        }
         notify('状态机分析完成', '主角最新境界与随身物品已同步更新', 'success', 4000, {
           isTask: true,
           taskType: 'statemachine',
@@ -113,6 +135,28 @@ export function createProjectActions(state, notify, helpers, dialogs) {
         });
       } catch (e) {
         notify('状态推演分析失败', e.message, 'error', 4500, { isTask: true, taskType: 'statemachine' });
+      } finally {
+        state.isLoading = false;
+      }
+    },
+
+    async saveStateMachine() {
+      if (!state.currentProject) return;
+      const prot = state.codexEntries.find(e => e.archetype === 'PROTAGONIST')
+        || state.codexEntries.find(e => e.id?.endsWith('_pro'));
+      if (!prot) return;
+      state.isLoading = true;
+      try {
+        const updated = await api.saveStateMachine(state.currentProject.id, prot);
+        const idx = state.codexEntries.findIndex(e => e.id === updated.id || e.archetype === 'PROTAGONIST');
+        if (idx >= 0) {
+          state.codexEntries[idx] = updated;
+        } else {
+          state.codexEntries.unshift(updated);
+        }
+        notify('主角状态已保存', '最新境界与底牌物品已更新至设定集', 'success');
+      } catch (e) {
+        notify('保存主角状态失败', e.message, 'error');
       } finally {
         state.isLoading = false;
       }

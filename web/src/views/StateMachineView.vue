@@ -25,7 +25,7 @@
         </button>
 
         <button 
-          @click="actions.saveCurrentProject" 
+          @click="saveState" 
           class="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-md shadow-amber-glow transition cursor-pointer">
           <Save class="w-3.5 h-3.5" />
           <span>保存状态</span>
@@ -34,42 +34,52 @@
     </div>
 
     <!-- 状态机两栏核心网格 -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6" v-if="state.currentProject.protagonist">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6" v-if="computedState.protagonistCharacter.value">
       <!-- 左栏：主角当前状态 -->
       <div class="p-5 bg-atelier-900 border border-atelier-750 rounded-xl space-y-4 shadow-atelier-sm">
         <div class="flex items-center gap-2 text-xs font-serif font-bold text-brand-amber border-b border-atelier-800 pb-2.5">
           <User class="w-4 h-4" />
-          <span>主角状态</span>
+          <span>主角状态 ({{ computedState.protagonistCharacter.value.name }})</span>
         </div>
 
         <div class="space-y-3 text-xs">
-          <div>
-            <label class="text-ink-400 font-medium">姓名与境界 / 等级：</label>
-            <input 
-              v-model="state.currentProject.protagonist.name_and_level" 
-              class="w-full mt-1.5 bg-atelier-950 border border-atelier-750 rounded-md px-3 py-1.5 text-xs text-brand-amber font-mono font-bold focus:outline-none focus:border-brand-amber/60">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-ink-400 font-medium">姓名：</label>
+              <input 
+                v-model="computedState.protagonistCharacter.value.name" 
+                class="w-full mt-1.5 bg-atelier-950 border border-atelier-750 rounded-md px-3 py-1.5 text-xs text-brand-amber font-mono font-bold focus:outline-none focus:border-brand-amber/60">
+            </div>
+            <div>
+              <label class="text-ink-400 font-medium">当前境界 / 等级：</label>
+              <input 
+                v-model="computedState.protagonistCharacter.value.realm" 
+                class="w-full mt-1.5 bg-atelier-950 border border-atelier-750 rounded-md px-3 py-1.5 text-xs text-brand-amber font-mono font-bold focus:outline-none focus:border-brand-amber/60"
+                placeholder="例如：练气六层巅峰">
+            </div>
           </div>
 
           <div>
             <label class="text-ink-400 font-medium">随身物品与道具 (Inventory)：</label>
             <textarea 
-              v-model="state.currentProject.protagonist.inventory" 
+              v-model="computedState.protagonistCharacter.value.inventory" 
               rows="4" 
               class="w-full mt-1.5 bg-atelier-950 border border-atelier-750 rounded-md p-2.5 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60 resize-none leading-relaxed" 
               placeholder="例如：洗髓丹x2, 残骨铁印x1, 玄铁匕首x1"></textarea>
           </div>
 
           <div>
-            <label class="text-ink-400 font-medium">当前目标与行事底线 (Core Goal)：</label>
+            <label class="text-ink-400 font-medium">当前目标与核心动机 (Core Motivation)：</label>
             <input 
-              v-model="state.currentProject.protagonist.core_goal" 
-              class="w-full mt-1.5 bg-atelier-950 border border-atelier-750 rounded-md px-3 py-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60">
+              v-model="computedState.protagonistCharacter.value.core_motivation" 
+              class="w-full mt-1.5 bg-atelier-950 border border-atelier-750 rounded-md px-3 py-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60"
+              placeholder="例如：在宗门小比中战胜外门大师兄">
           </div>
         </div>
 
         <!-- 结构化突破演进记录 (Level History) -->
         <div 
-          v-if="state.currentProject.protagonist.structured_level?.history?.length > 0" 
+          v-if="computedState.protagonistCharacter.value.structured_level?.history?.length > 0" 
           class="pt-3 border-t border-atelier-800 space-y-2">
           <span class="text-xs font-mono font-bold text-brand-amber flex items-center gap-1.5">
             <Zap class="w-3.5 h-3.5" />
@@ -77,7 +87,7 @@
           </span>
           <div class="space-y-1.5 max-h-40 overflow-y-auto">
             <div 
-              v-for="(trans, idx) in state.currentProject.protagonist.structured_level.history" 
+              v-for="(trans, idx) in computedState.protagonistCharacter.value.structured_level.history" 
               :key="idx" 
               class="text-[11px] flex items-center justify-between text-ink-200 font-mono bg-atelier-950 px-3 py-1.5 rounded-md border border-atelier-800">
               <span class="flex items-center gap-1.5">
@@ -273,6 +283,11 @@ async function runAIAnalyzeState() {
   } finally {
     isAnalyzing.value = false;
   }
+}
+
+async function saveState() {
+  await actions.saveStateMachine();
+  await actions.saveCurrentProject();
 }
 
 function formatArchetype(arc) {

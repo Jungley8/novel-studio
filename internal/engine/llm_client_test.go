@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -295,38 +296,98 @@ func TestHTTPLLMClient_StreamCancellationLeakPrevention(t *testing.T) {
 	}
 }
 
-func TestHTTPLLMClient_RetryOnTransientErrors(t *testing.T) {
+func TestHTTPLLMClient_StrictFailClosedWithoutBlindRetry(t *testing.T) {
 	attempts := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
-		if attempts == 1 {
-			// First attempt returns 429 Too Many Requests
-			w.WriteHeader(http.StatusTooManyRequests)
-			_, _ = w.Write([]byte(`{"error":{"message":"rate limit exceeded"}}`))
-			return
-		}
-		// Second attempt succeeds
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{
-			"choices":[{"message":{"role":"assistant","content":"重试成功：推演就绪"}}],
-			"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}
-		}`))
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"rate limit exceeded"}}`))
 	}))
 	defer ts.Close()
 
 	client := engine.NewHTTPLLMClient(ts.URL, "test-key")
-	res, usage, err := client.ChatCompletionWithUsage(context.Background(), "test-model", "sys", "user", 0.7)
+	_, _, err := client.ChatCompletionWithUsage(context.Background(), "test-model", "sys", "user", 0.7)
+	if err == nil {
+		t.Fatalf("expected error on 429 rate limit, got nil")
+	}
+	if attempts != 1 {
+		t.Fatalf("expected strictly 1 attempt (no blind retries), got %d attempts", attempts)
+	}
+}
+
+func TestHTTPLLMClient_TimeoutStopsRetryStorm(t *testing.T) {
+	var attempts atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		// Simulate severe hanging / queue congestion: sleep longer than timeout
+		time.Sleep(300 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"late"}}]}`))
+	}))
+	defer ts.Close()
+
+	client := engine.NewHTTPLLMClient(ts.URL, "test-key")
+	// Set very short timeout ctx to simulate deadline exceeded awaiting headers
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, _, err := client.ChatCompletionWithUsage(ctx, "step-5-preview-free", "sys", "user", 0.7)
+	if err == nil {
+		t.Fatalf("expected timeout error, got nil")
+	}
+
+	// Fail-Closed & Fail-Fast: must NOT perform 3 attempts on timeout
+	if attempts.Load() > 1 {
+		t.Fatalf("expected retry storm to be stopped on timeout (attempts <= 1), got %d attempts", attempts.Load())
+	}
+}
+
+func TestSafeChatCompletionWithStreamFallback(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"流式\"}}]}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"精修正文\"}}]}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":20,\"total_tokens\":30}}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer ts.Close()
+
+	client := engine.NewHTTPLLMClient(ts.URL, "test-key")
+	var deltas []string
+	content, usage, err := engine.SafeChatCompletionWithStreamFallback(
+		context.Background(),
+		client,
+		"writer-model",
+		"sys",
+		"user",
+		0.7,
+		func(d string) {
+			deltas = append(deltas, d)
+		},
+	)
 	if err != nil {
-		t.Fatalf("expected successful retry, got error: %v", err)
+		t.Fatalf("SafeChatCompletionWithStreamFallback failed: %v", err)
 	}
-	if attempts != 2 {
-		t.Fatalf("expected exactly 2 attempts, got %d", attempts)
+	if content != "流式精修正文" {
+		t.Fatalf("expected '流式精修正文', got '%s'", content)
 	}
-	if res != "重试成功：推演就绪" {
-		t.Fatalf("unexpected content: %s", res)
+	if len(deltas) != 2 {
+		t.Fatalf("expected 2 deltas, got %d", len(deltas))
 	}
 	if usage.TotalTokens != 30 {
-		t.Fatalf("unexpected tokens: %d", usage.TotalTokens)
+		t.Fatalf("expected 30 tokens, got %d", usage.TotalTokens)
 	}
 }

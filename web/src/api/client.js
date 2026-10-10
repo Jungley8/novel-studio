@@ -1,5 +1,78 @@
 // API Client for NovelStudio Go backend
 
+async function streamFetch(endpoint, data, callbacks = {}) {
+  const { onDelta, onComplete, onError } = callbacks;
+  const url = endpoint.includes('?') ? `${endpoint}&stream=true` : `${endpoint}?stream=true`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    let errorMsg = `HTTP Error ${response.status}`;
+    try {
+      const errJson = await response.json();
+      errorMsg = errJson.error || errorMsg;
+    } catch {
+      const text = await response.text();
+      if (text) errorMsg = text;
+    }
+    const err = new Error(errorMsg);
+    if (onError) onError(err);
+    throw err;
+  }
+
+  if (response.body && typeof response.body.getReader === 'function') {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let completedData = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      let currentEvent = '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('event:')) {
+          currentEvent = trimmed.replace('event:', '').trim();
+        } else if (trimmed.startsWith('data:')) {
+          const dataStr = trimmed.replace('data:', '').trim();
+          try {
+            const parsed = JSON.parse(dataStr);
+            if (currentEvent === 'delta') {
+              if (onDelta && parsed.delta) {
+                onDelta(parsed.delta);
+              }
+            } else if (currentEvent === 'complete' || currentEvent === 'done') {
+              completedData = parsed;
+              if (onComplete) onComplete(parsed);
+            } else if (currentEvent === 'error') {
+              const err = new Error(parsed.error || '流式处理异常');
+              if (onError) onError(err);
+              throw err;
+            }
+          } catch (parseErr) {
+            if (currentEvent === 'error') throw parseErr;
+          }
+        }
+      }
+    }
+    return completedData;
+  }
+
+  return response.json();
+}
+
 async function apiFetch(endpoint, options = {}) {
   const headers = {
     'Content-Type': 'application/json',
@@ -92,14 +165,18 @@ export const api = {
   scanCodex: (projectId, text) => apiFetch(`/api/projects/${projectId}/codex/scan`, { method: 'POST', body: JSON.stringify({ text }) }),
 
   // State Machine
+  getStateMachine: (projectId) => apiFetch(`/api/projects/${projectId}/statemachine`),
+  saveStateMachine: (projectId, data) => apiFetch(`/api/projects/${projectId}/statemachine`, { method: 'POST', body: JSON.stringify(data) }),
   analyzeStateMachine: (projectId) => apiFetch(`/api/projects/${projectId}/statemachine/ai-analyze`, { method: 'POST' }),
 
   // Manuscript & Workshop Actions
   suggestConflict: (projectId, data) => apiFetch(`/api/projects/${projectId}/suggest-conflict`, { method: 'POST', body: JSON.stringify(data) }),
   deriveBeats: (projectId, data) => apiFetch(`/api/projects/${projectId}/derive-beats`, { method: 'POST', body: JSON.stringify(data) }),
   renderScene: (projectId, data) => apiFetch(`/api/projects/${projectId}/render-scene`, { method: 'POST', body: JSON.stringify(data) }),
+  renderSceneStream: (projectId, data, callbacks) => streamFetch(`/api/projects/${projectId}/render-scene`, data, callbacks),
   reviewDraft: (projectId, data) => apiFetch(`/api/projects/${projectId}/review-draft`, { method: 'POST', body: JSON.stringify(data) }),
   rewriteDraft: (projectId, data) => apiFetch(`/api/projects/${projectId}/rewrite-draft`, { method: 'POST', body: JSON.stringify(data) }),
+  rewriteDraftStream: (projectId, data, callbacks) => streamFetch(`/api/projects/${projectId}/rewrite-draft`, data, callbacks),
   getCheckpoint: (projectId, chapterIndex) => apiFetch(`/api/projects/${projectId}/checkpoint?chapter_index=${chapterIndex}`),
   saveCheckpoint: (projectId, data) => apiFetch(`/api/projects/${projectId}/checkpoint`, { method: 'POST', body: JSON.stringify(data) }),
   clearCheckpoint: (projectId, chapterIndex) => apiFetch(`/api/projects/${projectId}/checkpoint?chapter_index=${chapterIndex}`, { method: 'DELETE' }),
@@ -116,6 +193,17 @@ export const api = {
   // Analytics
   getAnalyticsHeatmap: (projectId) => apiFetch(`/api/projects/${projectId}/analytics/heatmap`),
   getAnalyticsTension: (projectId) => apiFetch(`/api/projects/${projectId}/analytics/tension`),
+
+  // Activity Ledger (内容生产与变更时间线)
+  listActivity: (projectId, params = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== '') q.set(k, v);
+    }
+    const qs = q.toString();
+    return apiFetch(`/api/projects/${projectId}/activity${qs ? `?${qs}` : ''}`);
+  },
+  getActivityEvent: (projectId, eventId) => apiFetch(`/api/projects/${projectId}/activity/${encodeURIComponent(eventId)}`),
 
   // Linter & Anti-AI Harmonizer
   lintAnalyze: (text) => apiFetch('/api/linter/analyze', { method: 'POST', body: JSON.stringify({ text }) }),
