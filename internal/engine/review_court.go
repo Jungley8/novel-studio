@@ -13,8 +13,8 @@ import (
 
 // decideVerdict applies unified Fail-Closed gating logic across all review seams:
 // Passing strictly requires: LLM verdict == ACCEPTED && score >= 80 && zero banned AI cliches && non-excessive exclamations.
-func decideVerdict(llmVerdict domain.ReviewVerdict, score int, heuristic domain.LinterResult) domain.ReviewVerdict {
-	exclExcessive := strings.Contains(heuristic.Message, "感叹号过密") || (heuristic.Message == "" && heuristic.ExclamationDensity > 4.0)
+func decideVerdict(llmVerdict domain.ReviewVerdict, score int, draftText string, heuristic domain.LinterResult) domain.ReviewVerdict {
+	exclExcessive := IsExclamationExcessive(draftText, heuristic.ExclamationDensity)
 	if llmVerdict == domain.ReviewVerdictAccepted && score >= 80 && len(heuristic.HitBannedWords) == 0 && !exclExcessive {
 		return domain.ReviewVerdictAccepted
 	}
@@ -521,7 +521,7 @@ func (c *ReviewCourt) ChiefJudge(
 		finalScore = 0
 	}
 
-	finalVerdict := decideVerdict(courtLLMVerdict, finalScore, heuristic)
+	finalVerdict := decideVerdict(courtLLMVerdict, finalScore, draftText, heuristic)
 
 	// 6. Synthesize comprehensive issues
 	var allIssues []string

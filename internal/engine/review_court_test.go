@@ -365,6 +365,7 @@ func TestDecideVerdict_TableDriven(t *testing.T) {
 		name       string
 		llmVerdict domain.ReviewVerdict
 		score      int
+		draftText  string
 		heuristic  domain.LinterResult
 		expected   domain.ReviewVerdict
 	}{
@@ -372,6 +373,7 @@ func TestDecideVerdict_TableDriven(t *testing.T) {
 			name:       "All clean and passed",
 			llmVerdict: domain.ReviewVerdictAccepted,
 			score:      85,
+			draftText:  "晨曦微露，青石小径蜿蜒入山。",
 			heuristic:  domain.LinterResult{Message: "质检通过"},
 			expected:   domain.ReviewVerdictAccepted,
 		},
@@ -379,6 +381,7 @@ func TestDecideVerdict_TableDriven(t *testing.T) {
 			name:       "Score below 80 fails closed",
 			llmVerdict: domain.ReviewVerdictAccepted,
 			score:      79,
+			draftText:  "晨曦微露，青石小径蜿蜒入山。",
 			heuristic:  domain.LinterResult{Message: "质检通过"},
 			expected:   domain.ReviewVerdictRevision,
 		},
@@ -386,6 +389,7 @@ func TestDecideVerdict_TableDriven(t *testing.T) {
 			name:       "LLM rejected fails closed despite 95 score",
 			llmVerdict: domain.ReviewVerdictRevision,
 			score:      95,
+			draftText:  "晨曦微露，青石小径蜿蜒入山。",
 			heuristic:  domain.LinterResult{Message: "质检通过"},
 			expected:   domain.ReviewVerdictRevision,
 		},
@@ -393,6 +397,7 @@ func TestDecideVerdict_TableDriven(t *testing.T) {
 			name:       "Banned cliches fail closed",
 			llmVerdict: domain.ReviewVerdictAccepted,
 			score:      90,
+			draftText:  "晨曦微露，嘴角勾起一抹冷笑。",
 			heuristic:  domain.LinterResult{HitBannedWords: []string{"嘴角勾起"}},
 			expected:   domain.ReviewVerdictRevision,
 		},
@@ -400,21 +405,31 @@ func TestDecideVerdict_TableDriven(t *testing.T) {
 			name:       "Excessive exclamation fails closed",
 			llmVerdict: domain.ReviewVerdictAccepted,
 			score:      90,
-			heuristic:  domain.LinterResult{Message: "质检预警: 感叹号过密(每千字8.5个)"},
+			draftText:  "杀！斩！破！死！灭！",
+			heuristic:  domain.LinterResult{Message: "质检预警: 感叹号过密(每千字8.5个)", ExclamationDensity: 12.0},
 			expected:   domain.ReviewVerdictRevision,
 		},
 		{
 			name:       "Excessive exclamation by density without message fails closed",
 			llmVerdict: domain.ReviewVerdictAccepted,
 			score:      90,
-			heuristic:  domain.LinterResult{ExclamationDensity: 6.2},
+			draftText:  "杀！斩！破！死！灭！",
+			heuristic:  domain.LinterResult{ExclamationDensity: 12.0},
 			expected:   domain.ReviewVerdictRevision,
+		},
+		{
+			name:       "Misleading exclamation message ignored; predicate governs",
+			llmVerdict: domain.ReviewVerdictAccepted,
+			score:      90,
+			draftText:  "平静如水的叙事，没有任何感叹号。",
+			heuristic:  domain.LinterResult{Message: "质检预警: 感叹号过密(伪报警)", ExclamationDensity: 0.0},
+			expected:   domain.ReviewVerdictAccepted,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := decideVerdict(tc.llmVerdict, tc.score, tc.heuristic)
+			got := decideVerdict(tc.llmVerdict, tc.score, tc.draftText, tc.heuristic)
 			if got != tc.expected {
 				t.Errorf("decideVerdict(%s, %d, ...) = %s; want %s", tc.llmVerdict, tc.score, got, tc.expected)
 			}

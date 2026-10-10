@@ -227,7 +227,7 @@ func (q *QualityGate) AuditSingle(
 	}
 
 	// Verdict check: enforce unified Fail-Closed decideVerdict gating.
-	verdict := decideVerdict(out.Verdict, finalScore, heuristic)
+	verdict := decideVerdict(out.Verdict, finalScore, draftText, heuristic)
 
 	return &domain.AuditReport{
 		Verdict:            verdict,
