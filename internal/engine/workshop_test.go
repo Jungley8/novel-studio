@@ -12,9 +12,16 @@ type mockWorkshopLLMClient struct {
 	beatsJSON   string
 	renderDraft string
 	reviewJSON  string
+	settleJSON  string
 }
 
 func (m *mockWorkshopLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
+		if m.settleJSON != "" {
+			return m.settleJSON, nil
+		}
+		return `{"inventory_delta":"","power_delta":"","character_mutations":[],"evidence":[]}`, nil
+	}
 	if strings.Contains(systemPrompt, "总设计师") {
 		return m.beatsJSON, nil
 	}
@@ -247,9 +254,16 @@ type fakeQualityGateFailClosedLLMClient struct {
 	beatsJSON   string
 	renderDraft string
 	reviewJSON  string
+	settleJSON  string
 }
 
 func (f *fakeQualityGateFailClosedLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
+		if f.settleJSON != "" {
+			return f.settleJSON, nil
+		}
+		return `{"inventory_delta":"","power_delta":"","character_mutations":[],"evidence":[]}`, nil
+	}
 	// Review routing FIRST: division prompts (分庭总审编) contain the substring
 	// "剧情节拍" in their point-1 text, so beats matching must not take precedence.
 	if strings.Contains(systemPrompt, "分庭总审编") || strings.Contains(systemPrompt, "总编审") || strings.Contains(systemPrompt, "QualityGate") {
@@ -468,5 +482,425 @@ func TestChapterWorkshop_AutoCommit_AcceptedPassThrough(t *testing.T) {
 	}
 	if !hasCommittedEvent {
 		t.Errorf("expected PhaseCommitted progress event to be emitted")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Settler Integration Tests
+// ---------------------------------------------------------------------------
+
+// Test Case ①: 消耗未持有道具的 draft → 阻塞不归档，断点保留在 PhaseDrafted
+func TestChapterWorkshop_Settler_UnownedItemBlocked(t *testing.T) {
+	fakeClient := &fakeQualityGateFailClosedLLMClient{
+		beatsJSON: `{
+			"beats": [{"phase": "破局", "tension": 7, "action": "对敌", "expectation_broken": "反派惊讶"}],
+			"state_mutation": {"inventory_delta": "+战利品"}
+		}`,
+		renderDraft: "生死危机之下，林凡毫不犹豫咬破舌尖，吞服下救命的万年续命金丹，强行稳住心脉。",
+		reviewJSON: "```json\n" + `{
+			"verdict": "ACCEPTED",
+			"score": 90,
+			"issues": [],
+			"suggestions": "通过"
+		}` + "\n```",
+		settleJSON: `{
+			"inventory_delta": "-万年续命金丹",
+			"power_delta": "",
+			"character_mutations": [],
+			"evidence": [
+				{
+					"field": "inventory",
+					"quote": "吞服下救命的万年续命金丹，强行稳住心脉",
+					"chapter_index": 1
+				}
+			]
+		}`,
+	}
+
+	mockStore := &mockCheckpointWorkshopStore{
+		mockChronicleStore: &mockChronicleStore{
+			project: &domain.Project{
+				ID:             "p-case1",
+				Title:          "未持有道具消耗测试",
+				TargetPlatform: "番茄脑洞",
+			},
+			chapters: []*domain.Chapter{},
+			codexEntries: []*domain.CodexEntry{
+				{
+					ID:           "c-prot-1",
+					ProjectID:    "p-case1",
+					Category:     domain.CategoryCharacter,
+					Archetype:    "PROTAGONIST",
+					TrackingMode: domain.TrackingModeAlwaysInject,
+					Name:         "林凡",
+					Realm:        "练气三层",
+					Inventory:    "粗布道袍x1, 铁木剑x1", // 不持有 万年续命金丹
+				},
+			},
+		},
+	}
+
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-case1",
+		ChapterIndex:    1,
+		CoreConflict:    "绝境求生",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	// 1. Assert TechnicalBlocked is true and chapter is NOT committed
+	if !res.TechnicalBlocked {
+		t.Errorf("expected TechnicalBlocked == true for consuming unowned item, got false")
+	}
+	if res.Committed {
+		t.Errorf("expected Committed == false, got true")
+	}
+	if len(mockStore.chapters) != 0 {
+		t.Errorf("expected 0 chapters committed into store, got %d", len(mockStore.chapters))
+	}
+
+	// 2. Assert checkpoint is preserved at PhaseDrafted
+	cp, cpErr := mockStore.GetCheckpoint(context.Background(), "p-case1", 1)
+	if cpErr != nil || cp == nil {
+		t.Fatalf("expected checkpoint to be preserved at PhaseDrafted, got nil (err: %v)", cpErr)
+	}
+	if cp.Phase != domain.CheckpointPhaseDrafted {
+		t.Errorf("expected checkpoint phase %s, got %s", domain.CheckpointPhaseDrafted, cp.Phase)
+	}
+}
+
+// Test Case ②: 正文与 beats 预测矛盾时 commit 用的是结算值不是预测值（并在重写后重新结算）
+func TestChapterWorkshop_Settler_OverridesBeatsMutation_AndReSettlesOnRewrite(t *testing.T) {
+	client := &fakeRewriteSettlerClient{
+		beatsJSON: `{
+			"beats": [{"phase": "破局", "tension": 7, "action": "寻宝", "expectation_broken": "反派落空"}],
+			"state_mutation": {"inventory_delta": "+降龙木 (beats预言)"}
+		}`,
+		draft1Text: "林凡破开石门禁制，在石室角落里寻得一枚白玉灵瓶，将其收入囊中。",
+		draft1SettleJSON: `{
+			"inventory_delta": "+白玉灵瓶",
+			"power_delta": "",
+			"character_mutations": [],
+			"evidence": [
+				{
+					"field": "inventory",
+					"quote": "在石室角落里寻得一枚白玉灵瓶",
+					"chapter_index": 1
+				}
+			]
+		}`,
+		draft1ReviewJSON: "```json\n" + `{
+			"verdict": "REVISION_NEEDED",
+			"score": 70,
+			"issues": ["剧情平淡，必须采摘万年灵芝"],
+			"suggestions": "重写为采摘万年灵芝"
+		}` + "\n```",
+		draft2Text: "林凡一剑荡平妖兽，在崖壁之上采下绝品万年灵芝，香气扑鼻。",
+		draft2SettleJSON: `{
+			"inventory_delta": "+万年灵芝",
+			"power_delta": "",
+			"character_mutations": [],
+			"evidence": [
+				{
+					"field": "inventory",
+					"quote": "在崖壁之上采下绝品万年灵芝",
+					"chapter_index": 1
+				}
+			]
+		}`,
+		draft2ReviewJSON: "```json\n" + `{
+			"verdict": "ACCEPTED",
+			"score": 92,
+			"issues": [],
+			"suggestions": "合格"
+		}` + "\n```",
+	}
+
+	mockStore := &mockCheckpointWorkshopStore{
+		mockChronicleStore: &mockChronicleStore{
+			project: &domain.Project{
+				ID:             "p-case2",
+				Title:          "结算覆盖与重写再结算测试",
+				TargetPlatform: "起点仙侠",
+			},
+			chapters: []*domain.Chapter{},
+			codexEntries: []*domain.CodexEntry{
+				{
+					ID:           "c-prot-2",
+					ProjectID:    "p-case2",
+					Category:     domain.CategoryCharacter,
+					Archetype:    "PROTAGONIST",
+					TrackingMode: domain.TrackingModeAlwaysInject,
+					Name:         "林凡",
+					Realm:        "练气期",
+					Inventory:    "青灵丹x5",
+				},
+			},
+		},
+	}
+
+	orch := NewOrchestrator(client)
+	qGate := NewQualityGate(client, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-case2",
+		ChapterIndex:    1,
+		CoreConflict:    "秘境夺宝",
+		AutoCommit:      true,
+		MaxRewriteLoops: 2,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if !res.Committed {
+		t.Fatalf("expected chapter to be committed")
+	}
+	if len(mockStore.chapters) != 1 {
+		t.Fatalf("expected 1 chapter committed, got %d", len(mockStore.chapters))
+	}
+
+	committedChapter := mockStore.chapters[0]
+
+	// 1. Assert committed mutation uses settled value (+万年灵芝), NOT beats prediction (+降龙木)
+	if committedChapter.StateMutation.InventoryDelta == "+降龙木 (beats预言)" {
+		t.Errorf("committed mutation hallucinated beats prediction '+降龙木 (beats预言)' instead of settled text")
+	}
+
+	// 2. Assert committed mutation re-settled after rewrite (+万年灵芝), NOT old draft's mutation (+白玉灵瓶)
+	if committedChapter.StateMutation.InventoryDelta != "+万年灵芝" {
+		t.Errorf("expected committed mutation '+万年灵芝' (from re-settle on revised draft), got %q", committedChapter.StateMutation.InventoryDelta)
+	}
+	if res.StateMutation.InventoryDelta != "+万年灵芝" {
+		t.Errorf("expected result StateMutation '+万年灵芝', got %q", res.StateMutation.InventoryDelta)
+	}
+}
+
+type fakeRewriteSettlerClient struct {
+	beatsJSON        string
+	draft1Text       string
+	draft1SettleJSON string
+	draft1ReviewJSON string
+	draft2Text       string
+	draft2SettleJSON string
+	draft2ReviewJSON string
+}
+
+func (c *fakeRewriteSettlerClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	if strings.Contains(systemPrompt, "精修专家") {
+		return c.draft2Text, nil
+	}
+	if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") {
+		if strings.Contains(userPrompt, "万年灵芝") {
+			return c.draft2SettleJSON, nil
+		}
+		return c.draft1SettleJSON, nil
+	}
+	if strings.Contains(systemPrompt, "分庭总审编") || strings.Contains(systemPrompt, "总编审") || strings.Contains(systemPrompt, "QualityGate") {
+		if strings.Contains(userPrompt, "万年灵芝") {
+			return c.draft2ReviewJSON, nil
+		}
+		return c.draft1ReviewJSON, nil
+	}
+	if strings.Contains(systemPrompt, "总设计师") || strings.Contains(systemPrompt, "剧情节拍") {
+		return c.beatsJSON, nil
+	}
+	return c.draft1Text, nil
+}
+
+func (c *fakeRewriteSettlerClient) ChatCompletionWithUsage(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, TokenUsage, error) {
+	txt, err := c.ChatCompletion(ctx, model, systemPrompt, userPrompt, temperature)
+	return txt, TokenUsage{PromptTokens: 80, CompletionTokens: 160, TotalTokens: 240}, err
+}
+
+func (c *fakeRewriteSettlerClient) ChatCompletionStream(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
+	txt, err := c.ChatCompletion(ctx, model, systemPrompt, userPrompt, temperature)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan StreamChunk, 2)
+	ch <- StreamChunk{Delta: txt}
+	ch <- StreamChunk{Done: true, Usage: &TokenUsage{PromptTokens: 80, CompletionTokens: 160, TotalTokens: 240}}
+	close(ch)
+	return ch, nil
+}
+
+// Test Case ③: 配角名匹配失败 → unmatched_names 出现且不报错中断
+func TestChapterWorkshop_Settler_UnmatchedCharacterNames(t *testing.T) {
+	fakeClient := &fakeQualityGateFailClosedLLMClient{
+		beatsJSON: `{
+			"beats": [{"phase": "交锋", "tension": 8, "action": "击退敌人", "expectation_broken": "敌人溃败"}],
+			"state_mutation": {"inventory_delta": ""}
+		}`,
+		renderDraft: "夜战密林。李四道心受损，狂吐鲜血不止，骇然退避百丈。",
+		reviewJSON: "```json\n" + `{
+			"verdict": "ACCEPTED",
+			"score": 88,
+			"issues": [],
+			"suggestions": "合格"
+		}` + "\n```",
+		settleJSON: `{
+			"inventory_delta": "",
+			"power_delta": "",
+			"character_mutations": [
+				{
+					"name": "李四",
+					"status_delta": "道心受损，吐血倒退",
+					"relation_delta": "骇然退避"
+				}
+			],
+			"evidence": [
+				{
+					"field": "character:李四",
+					"quote": "李四道心受损，狂吐鲜血不止",
+					"chapter_index": 1
+				}
+			]
+		}`,
+	}
+
+	mockStore := &mockCheckpointWorkshopStore{
+		mockChronicleStore: &mockChronicleStore{
+			project: &domain.Project{
+				ID:             "p-case3",
+				Title:          "配角名未匹配测试",
+				TargetPlatform: "番茄脑洞",
+			},
+			chapters: []*domain.Chapter{},
+			codexEntries: []*domain.CodexEntry{
+				{
+					ID:        "c-chara-zhangsan",
+					ProjectID: "p-case3",
+					Category:  domain.CategoryCharacter,
+					Name:      "张三", // 仅有张三，没有李四
+				},
+			},
+		},
+	}
+
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-case3",
+		ChapterIndex:    1,
+		CoreConflict:    "遭遇战",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected ProduceChapter to complete without error, got: %v", err)
+	}
+
+	// 1. Assert unmatched_names contains "李四"
+	if len(res.UnmatchedNames) != 1 || res.UnmatchedNames[0] != "李四" {
+		t.Errorf("expected UnmatchedNames to contain '李四', got %v", res.UnmatchedNames)
+	}
+
+	// 2. Assert Audit Issues contains notice about unmatched name
+	hasWarning := false
+	for _, issue := range res.Audit.Issues {
+		if strings.Contains(issue, "李四") && strings.Contains(issue, "unmatched_name") {
+			hasWarning = true
+			break
+		}
+	}
+	if !hasWarning {
+		t.Errorf("expected Audit.Issues to contain warning about '李四', got: %v", res.Audit.Issues)
+	}
+
+	// 3. Assert production did NOT abort, chapter was committed successfully
+	if !res.Committed {
+		t.Errorf("expected chapter to be committed despite unmatched character name, got Committed=false")
+	}
+}
+
+// Test Case ④: Evidence 缺失的结算输出 → 拒绝归档入库
+func TestChapterWorkshop_Settler_MissingEvidenceBlocked(t *testing.T) {
+	fakeClient := &fakeQualityGateFailClosedLLMClient{
+		beatsJSON: `{
+			"beats": [{"phase": "修整", "tension": 5, "action": "打坐", "expectation_broken": "风平浪静"}],
+			"state_mutation": {"inventory_delta": "+九天息壤"}
+		}`,
+		renderDraft: "林凡盘坐调息，周身灵气汇聚如云。",
+		reviewJSON: "```json\n" + `{
+			"verdict": "ACCEPTED",
+			"score": 90,
+			"issues": [],
+			"suggestions": "通过"
+		}` + "\n```",
+		settleJSON: `{
+			"inventory_delta": "+九天息壤",
+			"power_delta": "",
+			"character_mutations": [],
+			"evidence": []
+		}`,
+	}
+
+	mockStore := &mockCheckpointWorkshopStore{
+		mockChronicleStore: &mockChronicleStore{
+			project: &domain.Project{
+				ID:             "p-case4",
+				Title:          "证据缺失拒绝测试",
+				TargetPlatform: "番茄脑洞",
+			},
+			chapters: []*domain.Chapter{},
+		},
+	}
+
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-case4",
+		ChapterIndex:    1,
+		CoreConflict:    "静室修炼",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	// 1. Assert TechnicalBlocked is true and chapter is NOT committed
+	if !res.TechnicalBlocked {
+		t.Errorf("expected TechnicalBlocked == true for missing evidence, got false")
+	}
+	if res.Committed {
+		t.Errorf("expected Committed == false, got true")
+	}
+	if len(mockStore.chapters) != 0 {
+		t.Errorf("expected 0 chapters committed, got %d", len(mockStore.chapters))
+	}
+
+	// 2. Assert checkpoint preserved at PhaseDrafted
+	cp, cpErr := mockStore.GetCheckpoint(context.Background(), "p-case4", 1)
+	if cpErr != nil || cp == nil {
+		t.Fatalf("expected checkpoint preserved, got nil (err: %v)", cpErr)
+	}
+	if cp.Phase != domain.CheckpointPhaseDrafted {
+		t.Errorf("expected checkpoint phase %s, got %s", domain.CheckpointPhaseDrafted, cp.Phase)
 	}
 }

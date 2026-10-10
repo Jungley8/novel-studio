@@ -67,20 +67,24 @@ type WorkshopProduceRequest struct {
 
 // WorkshopProduceResult represents the end-to-end outcome of a chapter workshop run.
 type WorkshopProduceResult struct {
-	ChapterIndex     int                  `json:"chapter_index"`
-	Title            string               `json:"title"`
-	CoreConflict     string               `json:"core_conflict,omitempty"`
-	Beats            []domain.SceneBeat   `json:"beats"`
-	StateMutation    domain.StateMutation `json:"state_mutation"`
-	Content          string               `json:"content"`
-	Audit            *domain.AuditReport  `json:"audit"`
-	RewriteLoops     int                  `json:"rewrite_loops"`
-	Committed        bool                 `json:"committed"`
-	TotalUsage       TokenUsage           `json:"total_usage"`
-	EstimatedCostUSD float64              `json:"estimated_cost_usd"`
-	ResumedPhase     string               `json:"resumed_phase,omitempty"`
-	UpdatedProject   *domain.Project      `json:"updated_project,omitempty"`
-	HarmonizeReport  *HarmonizeReport     `json:"harmonize_report,omitempty"`
+	ChapterIndex         int                         `json:"chapter_index"`
+	Title                string                      `json:"title"`
+	CoreConflict         string                      `json:"core_conflict,omitempty"`
+	Beats                []domain.SceneBeat          `json:"beats"`
+	StateMutation        domain.StateMutation        `json:"state_mutation"`
+	Content              string                      `json:"content"`
+	Audit                *domain.AuditReport         `json:"audit"`
+	RewriteLoops         int                         `json:"rewrite_loops"`
+	Committed            bool                        `json:"committed"`
+	TotalUsage           TokenUsage                  `json:"total_usage"`
+	EstimatedCostUSD     float64                     `json:"estimated_cost_usd"`
+	ResumedPhase         string                      `json:"resumed_phase,omitempty"`
+	UpdatedProject       *domain.Project             `json:"updated_project,omitempty"`
+	HarmonizeReport      *HarmonizeReport            `json:"harmonize_report,omitempty"`
+	TechnicalBlocked     bool                        `json:"technical_blocked,omitempty"`
+	TechnicalBlockReason string                      `json:"technical_block_reason,omitempty"`
+	UnmatchedNames       []string                    `json:"unmatched_names,omitempty"`
+	SettlementEvidence   []domain.SettlementEvidence `json:"settlement_evidence,omitempty"`
 }
 
 // ChapterWorkshop is the deep orchestration module that encapsulates the entire
@@ -331,6 +335,28 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		})
 	}
 
+	// 3.5 Settle Entity State Mutations from Draft Text
+	emit(WorkshopEvent{Phase: PhaseDrafted, Message: "正在严格依据正文白纸黑字结算角色状态变迁与证据链..."})
+	var (
+		settledMutation      domain.StateMutation
+		settleEvidences      []domain.SettlementEvidence
+		technicalBlocked     bool
+		technicalBlockReason string
+	)
+	sMut, sEvs, sUsage, sErr := SettleFromDraft(ctx, w.orch.client, req.ReasoningModel, horizon.Project, horizon.ProtagonistEntry, draftText, req.ChapterIndex)
+	addUsage(sUsage)
+	if sErr != nil {
+		technicalBlocked = true
+		technicalBlockReason = sErr.Error()
+		emit(WorkshopEvent{
+			Phase:   PhaseDrafted,
+			Message: fmt.Sprintf("状态结算技术预检未通过 (Fail-Closed): %v", sErr),
+		})
+	} else {
+		settledMutation = sMut
+		settleEvidences = sEvs
+	}
+
 	// 4. Audit via Quality Gate (with plot hooks resolution awareness)
 	if auditReport == nil {
 		emit(WorkshopEvent{Phase: PhaseAuditing, Message: "正在执行 QualityGate 算法质检与主审综合审校..."})
@@ -358,6 +384,9 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			AuditReport: auditReport,
 			TotalTokens: totalUsage.TotalTokens,
 		})
+	}
+	if auditReport != nil && technicalBlocked {
+		auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【TECHNICAL BLOCKED】状态结算失败: %s，已阻断归档入库", technicalBlockReason))
 	}
 
 	// 5. Targeted Rewrite Loop if revision needed
@@ -410,22 +439,64 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		})
 	}
 
+	// 5.5 Re-settle after rewrite loop if draft text has changed (重写后必须重新结算)
+	if currentDraft != draftText {
+		emit(WorkshopEvent{
+			Phase:   PhaseDrafted,
+			Message: "正文已发生重写变动，重新执行终审状态结算...",
+		})
+		reMut, reEvs, reUsage, reErr := SettleFromDraft(ctx, w.orch.client, req.ReasoningModel, horizon.Project, horizon.ProtagonistEntry, currentDraft, req.ChapterIndex)
+		addUsage(reUsage)
+		if reErr != nil {
+			technicalBlocked = true
+			technicalBlockReason = reErr.Error()
+			settledMutation = domain.StateMutation{}
+			settleEvidences = nil
+			if auditReport != nil {
+				auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【TECHNICAL BLOCKED】重写后状态结算失败: %s，已阻断归档入库", technicalBlockReason))
+			}
+			emit(WorkshopEvent{
+				Phase:   PhaseDrafted,
+				Message: fmt.Sprintf("重写后状态结算未通过 (Fail-Closed): %v", reErr),
+			})
+		} else {
+			technicalBlocked = false
+			technicalBlockReason = ""
+			settledMutation = reMut
+			settleEvidences = reEvs
+		}
+	}
+
+	// Collect unmatched character mutation names against Codex entries
+	unmatchedNames := w.findUnmatchedCharacterNames(ctx, req.ProjectID, settledMutation.CharacterMutations)
+	if len(unmatchedNames) > 0 {
+		for _, name := range unmatchedNames {
+			if auditReport != nil {
+				auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【配角连续性警告】正文结算出现未登记在 Codex 的配角变迁: %q (unmatched_name)，请确认是否笔误写漂", name))
+			}
+		}
+	}
+
 	// Cost estimation: ~$0.00014 per 1k prompt tokens, ~$0.00028 per 1k completion tokens
 	estimatedCostUSD := (float64(totalUsage.PromptTokens)*0.00014 + float64(totalUsage.CompletionTokens)*0.00028) / 1000.0
 
 	chapterTitle := fmt.Sprintf("第 %d 章", req.ChapterIndex)
 	result := &WorkshopProduceResult{
-		ChapterIndex:     req.ChapterIndex,
-		Title:            chapterTitle,
-		CoreConflict:     req.CoreConflict,
-		Beats:            beatsOut.Beats,
-		StateMutation:    beatsOut.StateMutation,
-		Content:          currentDraft,
-		Audit:            auditReport,
-		RewriteLoops:     rewriteLoops,
-		Committed:        false,
-		TotalUsage:       totalUsage,
-		EstimatedCostUSD: estimatedCostUSD,
+		ChapterIndex:         req.ChapterIndex,
+		Title:                chapterTitle,
+		CoreConflict:         req.CoreConflict,
+		Beats:                beatsOut.Beats,
+		StateMutation:        settledMutation,
+		Content:              currentDraft,
+		Audit:                auditReport,
+		RewriteLoops:         rewriteLoops,
+		Committed:            false,
+		TotalUsage:           totalUsage,
+		EstimatedCostUSD:     estimatedCostUSD,
+		TechnicalBlocked:     technicalBlocked,
+		TechnicalBlockReason: technicalBlockReason,
+		UnmatchedNames:       unmatchedNames,
+		SettlementEvidence:   settleEvidences,
 	}
 	if checkpointHit {
 		result.ResumedPhase = resumedPhase
@@ -438,7 +509,15 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	// 6. Optional Atomic Commitment (Strict Fail-Closed QualityGate)
 	shouldCommit := false
 	if req.AutoCommit {
-		if auditReport.Verdict == domain.ReviewVerdictAccepted {
+		if technicalBlocked {
+			// Technical blockage takes absolute precedence over semantic verdict (Fail-Closed)
+			shouldCommit = false
+			emit(WorkshopEvent{
+				Phase:       PhaseComplete,
+				Message:     fmt.Sprintf("技术阻断停线: 状态结算未通过 (%s)，拒绝自动入库", technicalBlockReason),
+				TotalTokens: totalUsage.TotalTokens,
+			})
+		} else if auditReport.Verdict == domain.ReviewVerdictAccepted {
 			shouldCommit = true
 		} else {
 			// TODO(P1): domain.AuditReport 引入 NeedsHuman 结构化字段后在此处赋值标记
@@ -451,6 +530,19 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		}
 	}
 
+	if technicalBlocked {
+		// When technical blocked, ensure checkpoint remains strictly at PhaseDrafted (do not advance or archive)
+		_ = w.store.SaveCheckpoint(activity.WithActor(ctx, activity.ActorAIWriter), &domain.ChapterCheckpoint{
+			ProjectID:     req.ProjectID,
+			ChapterIndex:  req.ChapterIndex,
+			Phase:         domain.CheckpointPhaseDrafted,
+			CoreConflict:  req.CoreConflict,
+			Beats:         beatsOut.Beats,
+			StateMutation: beatsOut.StateMutation,
+			DraftText:     currentDraft,
+		})
+	}
+
 	if shouldCommit {
 		chapter := &domain.Chapter{
 			ID:              fmt.Sprintf("ch_%s_%d", req.ProjectID, req.ChapterIndex),
@@ -459,7 +551,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			Title:           chapterTitle,
 			CoreConflict:    req.CoreConflict,
 			Beats:           beatsOut.Beats,
-			StateMutation:   beatsOut.StateMutation,
+			StateMutation:   settledMutation,
 			Content:         currentDraft,
 			WordCount:       len([]rune(currentDraft)),
 			BurstinessScore: auditReport.BurstinessScore,
@@ -512,4 +604,32 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	})
 
 	return result, nil
+}
+
+func (w *ChapterWorkshop) findUnmatchedCharacterNames(ctx context.Context, projectID string, cms []domain.CharacterMutation) []string {
+	if len(cms) == 0 {
+		return nil
+	}
+	entries, err := w.store.ListCodexEntries(ctx, projectID, "")
+	if err != nil {
+		return nil
+	}
+	knownNames := make(map[string]bool)
+	for _, e := range entries {
+		knownNames[strings.TrimSpace(e.Name)] = true
+		for _, a := range e.Aliases {
+			knownNames[strings.TrimSpace(a)] = true
+		}
+	}
+	var unmatched []string
+	seen := make(map[string]bool)
+	for _, cm := range cms {
+		name := strings.TrimSpace(cm.Name)
+		if name == "" || knownNames[name] || seen[name] {
+			continue
+		}
+		seen[name] = true
+		unmatched = append(unmatched, name)
+	}
+	return unmatched
 }
