@@ -1027,3 +1027,116 @@ func TestSQLiteStore_UncommitChapter_Chapter1GenesisRegression(t *testing.T) {
 		t.Errorf("expected hook status OPEN, got: %s", hooksAfter[0].Status)
 	}
 }
+func TestSQLiteStore_UncommitChapter_PowerDeltaGuard(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test_uncommit_power_delta_guard.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	proj := &domain.Project{
+		ID:    "proj-guard-e2e",
+		Title: "回滚PowerDelta守卫端到端测试",
+	}
+	if err := s.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	_ = s.SaveCodexEntry(ctx, &domain.CodexEntry{
+		ID:        "codex_proj-guard_pro",
+		ProjectID: proj.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "韩立",
+		Realm:     "练气一层",
+		Inventory: "粗布衣",
+	})
+
+	// Chapter 1: 归档带境界突破 (练气一层 ➔ 突破练气二层)
+	ch1 := &domain.Chapter{
+		ID:           "ch_guard_1",
+		ProjectID:    proj.ID,
+		ChapterIndex: 1,
+		Title:        "第一章 突破境界",
+		CoreConflict: "突破练气二层",
+		Content:      "天地灵气汇聚，韩立运转长春功突破...",
+		StateMutation: domain.StateMutation{
+			PowerDelta: "突破练气二层",
+		},
+	}
+	if _, err := s.CommitChapter(ctx, proj.ID, ch1); err != nil {
+		t.Fatalf("CommitChapter 1 failed: %v", err)
+	}
+
+	// Verify ch1 breakthrough applied
+	protCh1, err := s.GetProtagonistEntry(ctx, proj.ID)
+	if err != nil || protCh1 == nil {
+		t.Fatalf("GetProtagonistEntry after ch1 failed: %v", err)
+	}
+	if !strings.Contains(protCh1.Realm, "练气二层") {
+		t.Fatalf("expected protagonist realm to be 练气二层, got %s", protCh1.Realm)
+	}
+	if protCh1.StructuredLevel == nil || len(protCh1.StructuredLevel.History) != 1 {
+		t.Fatalf("expected StructuredLevel.History length 1 after ch1, got %+v", protCh1.StructuredLevel)
+	}
+
+	// Chapter 2: 归档仅道具变动 (power_delta: "")
+	ch2 := &domain.Chapter{
+		ID:           "ch_guard_2",
+		ProjectID:    proj.ID,
+		ChapterIndex: 2,
+		Title:        "第二章 仅道具变动",
+		CoreConflict: "山洞寻宝",
+		Content:      "韩立在洞府中得到一枚青凝镜...",
+		StateMutation: domain.StateMutation{
+			InventoryDelta: "获得物品: 青凝镜 (+1)",
+			PowerDelta:     "",
+		},
+	}
+	if _, err := s.CommitChapter(ctx, proj.ID, ch2); err != nil {
+		t.Fatalf("CommitChapter 2 failed: %v", err)
+	}
+
+	// Verify ch2 inventory added, realm still 练气二层
+	protCh2, err := s.GetProtagonistEntry(ctx, proj.ID)
+	if err != nil || protCh2 == nil {
+		t.Fatalf("GetProtagonistEntry after ch2 failed: %v", err)
+	}
+	if !strings.Contains(protCh2.Inventory, "青凝镜") {
+		t.Fatalf("expected 青凝镜 in inventory, got %s", protCh2.Inventory)
+	}
+	if !strings.Contains(protCh2.Realm, "练气二层") {
+		t.Fatalf("expected realm 练气二层 before uncommit, got %s", protCh2.Realm)
+	}
+	if protCh2.StructuredLevel == nil || len(protCh2.StructuredLevel.History) != 1 {
+		t.Fatalf("expected StructuredLevel.History length 1 before uncommit, got %+v", protCh2.StructuredLevel)
+	}
+
+	// Uncommit Chapter 2
+	cp, p, err := s.UncommitChapter(ctx, proj.ID, 2)
+	if err != nil {
+		t.Fatalf("UncommitChapter 2 failed: %v", err)
+	}
+	if cp == nil || p == nil {
+		t.Fatalf("expected non-nil checkpoint and project, got cp=%v, p=%v", cp, p)
+	}
+
+	// Assert: Protagonist Realm remains ch1 breakthrough realm, StructuredLevel.History length unchanged, inventory reverted
+	protAfter, err := s.GetProtagonistEntry(ctx, proj.ID)
+	if err != nil || protAfter == nil {
+		t.Fatalf("GetProtagonistEntry after uncommit failed: %v", err)
+	}
+	if !strings.Contains(protAfter.Realm, "练气二层") {
+		t.Errorf("expected protagonist realm to remain 练气二层 after uncommitting ch2 (no power delta), got %s", protAfter.Realm)
+	}
+	if protAfter.StructuredLevel == nil || len(protAfter.StructuredLevel.History) != 1 {
+		t.Errorf("expected StructuredLevel.History length to remain 1 after uncommitting ch2, got %+v", protAfter.StructuredLevel)
+	}
+	if strings.Contains(protAfter.Inventory, "青凝镜") {
+		t.Errorf("expected 青凝镜 removed from inventory after uncommitting ch2, got %s", protAfter.Inventory)
+	}
+}

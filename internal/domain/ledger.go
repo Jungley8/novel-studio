@@ -204,7 +204,7 @@ func RollbackStateMutation(e *CodexEntry, mutation StateMutation) ([]string, err
 	}
 
 	// 2. Rollback Power progression
-	if e.StructuredLevel != nil && len(e.StructuredLevel.History) > 0 {
+	if strings.TrimSpace(mutation.PowerDelta) != "" && e.StructuredLevel != nil && len(e.StructuredLevel.History) > 0 {
 		lastIdx := len(e.StructuredLevel.History) - 1
 		lastHist := e.StructuredLevel.History[lastIdx]
 		e.StructuredLevel.Realm = lastHist.FromRealm
