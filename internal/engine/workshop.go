@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -172,6 +173,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		auditReport   *domain.AuditReport
 		checkpointHit bool
 		rewriteLoops  int
+		rhythmWarning string
 	)
 
 	if req.ResumeCheckpoint {
@@ -267,14 +269,163 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 
 	// 2. Derive Scene Beats (Skip if recovered from checkpoint or provided in request)
 	if beatsOut == nil {
-		bOut, bErr := w.orch.DeriveBeatsWithHorizon(ctx, req.ReasoningModel, horizon, req.CoreConflict)
+		// 2.1 Retrieve recent chapters and classify recent types
+		var recentTypes []domain.ChapterType
+		var lastChapterHook string
+		if chapters, lErr := w.store.ListChapters(ctx, req.ProjectID); lErr == nil && len(chapters) > 0 {
+			var preceding []*domain.Chapter
+			for _, ch := range chapters {
+				if ch != nil && ch.ChapterIndex < req.ChapterIndex {
+					preceding = append(preceding, ch)
+				}
+			}
+			sort.Slice(preceding, func(i, j int) bool {
+				return preceding[i].ChapterIndex < preceding[j].ChapterIndex
+			})
+			startIdx := 0
+			if len(preceding) > 5 {
+				startIdx = len(preceding) - 5
+			}
+			recentChs := preceding[startIdx:]
+			for _, ch := range recentChs {
+				if len(ch.Beats) > 0 {
+					recentTypes = append(recentTypes, domain.ClassifyChapterType(ch.Beats))
+				}
+			}
+			if len(preceding) > 0 {
+				lastCh := preceding[len(preceding)-1]
+				if len(lastCh.Beats) > 0 {
+					lastChapterHook = strings.TrimSpace(lastCh.Beats[len(lastCh.Beats)-1].HookType)
+				}
+			}
+		}
+
+		// 2.2 Determine planned chapter type for this chapter
+		var planned []domain.ChapterType
+		if horizon != nil && horizon.CurrentVolume != nil {
+			planned = domain.PlanVolumeRhythm(horizon.CurrentVolume, recentTypes, 8)
+		}
+		targetType := domain.ChapterTypeEscalation
+		foundNonConflict := false
+		for _, pt := range planned {
+			consec := 1
+			for i := len(recentTypes) - 1; i >= 0; i-- {
+				if recentTypes[i] == pt {
+					consec++
+				} else {
+					break
+				}
+			}
+			if consec < 4 {
+				targetType = pt
+				foundNonConflict = true
+				break
+			}
+		}
+		if !foundNonConflict {
+			candidates := []domain.ChapterType{
+				domain.ChapterTypeEscalation,
+				domain.ChapterTypeClimax,
+				domain.ChapterTypeAftermath,
+				domain.ChapterTypeSetup,
+				domain.ChapterTypeInterlude,
+			}
+			for _, c := range candidates {
+				consec := 1
+				for i := len(recentTypes) - 1; i >= 0; i-- {
+					if recentTypes[i] == c {
+						consec++
+					} else {
+						break
+					}
+				}
+				if consec < 4 {
+					targetType = c
+					break
+				}
+			}
+		}
+
+		// 2.3 Derive beats with chosen chapter type
+		bOut, bErr := w.orch.DeriveBeatsForChapterType(ctx, req.ReasoningModel, horizon, req.CoreConflict, targetType)
 		if bErr != nil {
 			return nil, fmt.Errorf("derive beats failed: %w", bErr)
 		}
 		beatsOut = bOut
 		addUsage(bOut.Usage)
 
-		// Save Checkpoint after beats derivation
+		// 2.4 Check rhythm repetition: consecutive same type >= 4 OR same HookType as previous chapter
+		actualType := domain.ClassifyChapterType(beatsOut.Beats)
+		consecCount := 1
+		for i := len(recentTypes) - 1; i >= 0; i-- {
+			if recentTypes[i] == actualType {
+				consecCount++
+			} else {
+				break
+			}
+		}
+		actualHook := ""
+		if len(beatsOut.Beats) > 0 {
+			actualHook = strings.TrimSpace(beatsOut.Beats[len(beatsOut.Beats)-1].HookType)
+		}
+		isSameHook := lastChapterHook != "" && actualHook != "" && strings.EqualFold(lastChapterHook, actualHook)
+		isConsec4 := consecCount >= 4
+
+		// Retry at most once if repetition detected
+		if isConsec4 || isSameHook {
+			altCandidates := []domain.ChapterType{
+				domain.ChapterTypeClimax,
+				domain.ChapterTypeAftermath,
+				domain.ChapterTypeSetup,
+				domain.ChapterTypeInterlude,
+				domain.ChapterTypeEscalation,
+			}
+			altType := domain.ChapterTypeEscalation
+			for _, c := range altCandidates {
+				if c != actualType && c != targetType {
+					consec := 1
+					for i := len(recentTypes) - 1; i >= 0; i-- {
+						if recentTypes[i] == c {
+							consec++
+						} else {
+							break
+						}
+					}
+					if consec < 4 {
+						altType = c
+						break
+					}
+				}
+			}
+			if altType == "" {
+				if actualType == domain.ChapterTypeEscalation {
+					altType = domain.ChapterTypeSetup
+				} else {
+					altType = domain.ChapterTypeEscalation
+				}
+			}
+
+			altOut, altErr := w.orch.DeriveBeatsForChapterType(ctx, req.ReasoningModel, horizon, req.CoreConflict, altType)
+			if altErr == nil {
+				beatsOut = altOut
+				addUsage(altOut.Usage)
+				actualType = domain.ClassifyChapterType(beatsOut.Beats)
+				consecCount = 1
+				for i := len(recentTypes) - 1; i >= 0; i-- {
+					if recentTypes[i] == actualType {
+						consecCount++
+					} else {
+						break
+					}
+				}
+			}
+		}
+
+		if consecCount >= 4 {
+			rhythmWarning = fmt.Sprintf("【节奏提示】连续同型%d章", consecCount)
+		}
+
+		// Save Checkpoint after beats derivation (must persist final beats)
 		_ = w.store.SaveCheckpoint(activity.WithActor(ctx, activity.ActorAIReasoner), &domain.ChapterCheckpoint{
 			ProjectID:     req.ProjectID,
 			ChapterIndex:  req.ChapterIndex,
@@ -283,9 +434,13 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			Beats:         beatsOut.Beats,
 			StateMutation: beatsOut.StateMutation,
 		})
+		msg := fmt.Sprintf("节拍推演完成 (%d个张力节拍与状态变迁生成)", len(beatsOut.Beats))
+		if rhythmWarning != "" {
+			msg += " " + rhythmWarning
+		}
 		emit(WorkshopEvent{
 			Phase:       PhaseBeats,
-			Message:     "节拍推演完成 (4个张力节拍与状态变迁生成)",
+			Message:     msg,
 			Beats:       beatsOut.Beats,
 			TotalTokens: totalUsage.TotalTokens,
 		})
@@ -388,6 +543,9 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	if auditReport != nil && technicalBlocked {
 		auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【TECHNICAL BLOCKED】状态结算失败: %s，已阻断归档入库", technicalBlockReason))
 	}
+	if auditReport != nil && rhythmWarning != "" {
+		auditReport.Issues = append(auditReport.Issues, rhythmWarning)
+	}
 
 	// 5. Targeted Rewrite Loop if revision needed
 	currentDraft := draftText
@@ -474,6 +632,18 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			if auditReport != nil {
 				auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【配角连续性警告】正文结算出现未登记在 Codex 的配角变迁: %q (unmatched_name)，请确认是否笔误写漂", name))
 			}
+		}
+	}
+	if auditReport != nil && rhythmWarning != "" {
+		hasWarn := false
+		for _, iss := range auditReport.Issues {
+			if iss == rhythmWarning {
+				hasWarn = true
+				break
+			}
+		}
+		if !hasWarn {
+			auditReport.Issues = append(auditReport.Issues, rhythmWarning)
 		}
 	}
 
