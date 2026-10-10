@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -558,5 +559,471 @@ func TestSQLiteStore_UncommitChapter_RollbackFailure(t *testing.T) {
 	storedCp, _ := s.GetCheckpoint(ctx, proj.ID, 1)
 	if storedCp != nil && storedCp.Phase == domain.CheckpointPhaseDrafted {
 		t.Errorf("unexpected draft checkpoint committed despite rollback failure: %+v", storedCp)
+	}
+}
+
+// Case ⑤: commit 3 章（含道具增减 mutation + 一条被第 3 章回收的 hook + 跨 3 章的 FERMENTING 钩子）
+// → uncommit 第 3 章 → 主角 Inventory/StructuredItems 与 GetChapterStateSnapshot(2) 的 protagonist_json 逐字段相等，
+// hooks status 与快照(2) 逐条相等（跑通"精确还原"主张）
+func TestSQLiteStore_UncommitChapter_SnapshotExactRestore(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test_snapshot_exact_restore.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	proj := &domain.Project{
+		ID:    "proj-snap-exact",
+		Title: "快照精确还原测试",
+	}
+	if err := s.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	// 初始主角：林动，拥有石符
+	protInitial := &domain.CodexEntry{
+		ID:        "codex_snap_pro",
+		ProjectID: proj.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "林动",
+		Realm:     "地元境初期",
+		Inventory: "石符x1",
+		StructuredItems: []domain.InventoryItem{
+			{Name: "石符", Quantity: 1, Quality: "神物", AcquiredAt: 0},
+		},
+	}
+	if err := s.SaveCodexEntry(ctx, protInitial); err != nil {
+		t.Fatalf("SaveCodexEntry failed: %v", err)
+	}
+
+	// Hook 1: 跨 3 章的 FERMENTING 钩子（target_chapter = 1，第 1 章归档后即进入 FERMENTING 并跨越全部 3 章）
+	hookFermenting := &domain.PlotHook{
+		ID:            "hook-snap-ferment",
+		ProjectID:     proj.ID,
+		Title:         "大荒古碑封印松动",
+		Details:       "封印异动，魔气隐现",
+		TargetChapter: 1,
+		Status:        domain.HookStatusOpen,
+	}
+	if err := s.SavePlotHook(ctx, hookFermenting); err != nil {
+		t.Fatalf("SavePlotHook fermenting failed: %v", err)
+	}
+
+	// Hook 2: 被第 3 章回收的 hook（target_chapter = 3，前两章为 OPEN，第 3 章 review 回收为 RESOLVED）
+	hookResolved := &domain.PlotHook{
+		ID:            "hook-snap-resolved",
+		ProjectID:     proj.ID,
+		Title:         "天鳞古戟争夺",
+		Details:       "古墓府核心秘宝",
+		TargetChapter: 3,
+		Status:        domain.HookStatusOpen,
+	}
+	if err := s.SavePlotHook(ctx, hookResolved); err != nil {
+		t.Fatalf("SavePlotHook resolved failed: %v", err)
+	}
+
+	// Commit 第 1 章：获得 纯元丹 (+10)
+	ch1 := &domain.Chapter{
+		ID:           "ch_snap_1",
+		ProjectID:    proj.ID,
+		ChapterIndex: 1,
+		Title:        "第一章 初识石符",
+		CoreConflict: "淬炼灵药",
+		Content:      "林动握紧石符，温润之感自掌心传开...",
+		StateMutation: domain.StateMutation{
+			InventoryDelta: "获得物品: 纯元丹 (+10)",
+		},
+	}
+	if _, err := s.CommitChapter(ctx, proj.ID, ch1); err != nil {
+		t.Fatalf("CommitChapter 1 failed: %v", err)
+	}
+
+	// Commit 第 2 章：获得 天鳞古戟 (+1)
+	ch2 := &domain.Chapter{
+		ID:           "ch_snap_2",
+		ProjectID:    proj.ID,
+		ChapterIndex: 2,
+		Title:        "第二章 墓府探幽",
+		CoreConflict: "突破地元境后期",
+		Content:      "墓府深处，戟芒吞吐如龙...",
+		StateMutation: domain.StateMutation{
+			InventoryDelta: "获得物品: 天鳞古戟 (+1)",
+		},
+	}
+	if _, err := s.CommitChapter(ctx, proj.ID, ch2); err != nil {
+		t.Fatalf("CommitChapter 2 failed: %v", err)
+	}
+
+	// 获取第 2 章快照作为基准预期
+	snap2, err := s.GetChapterStateSnapshot(ctx, proj.ID, 2)
+	if err != nil || snap2 == nil {
+		t.Fatalf("GetChapterStateSnapshot(2) failed: %v, snap: %v", err, snap2)
+	}
+	var snap2Prot domain.CodexEntry
+	if err := json.Unmarshal([]byte(snap2.ProtagonistJSON), &snap2Prot); err != nil {
+		t.Fatalf("unmarshal snap2 protagonist failed: %v", err)
+	}
+	var snap2Hooks []*domain.PlotHook
+	if err := json.Unmarshal([]byte(snap2.HooksJSON), &snap2Hooks); err != nil {
+		t.Fatalf("unmarshal snap2 hooks failed: %v", err)
+	}
+
+	// Commit 第 3 章：消耗纯元丹 (-5)、获得涅槃丹 (+1)、回收 hook-snap-resolved
+	ch3 := &domain.Chapter{
+		ID:           "ch_snap_3",
+		ProjectID:    proj.ID,
+		ChapterIndex: 3,
+		Title:        "第三章 戟化金龙",
+		CoreConflict: "血战强敌",
+		Content:      "金龙呼啸，天鳞古戟横扫千军，强敌尽伏...",
+		StateMutation: domain.StateMutation{
+			InventoryDelta: "消耗物品: 纯元丹 (-5); 获得物品: 涅槃丹 (+1)",
+		},
+		Review: &domain.ReviewResult{
+			Verdict:         domain.ReviewVerdictAccepted,
+			Score:           95,
+			ResolvedHookIDs: []string{"hook-snap-resolved"},
+		},
+	}
+	if _, err := s.CommitChapter(ctx, proj.ID, ch3); err != nil {
+		t.Fatalf("CommitChapter 3 failed: %v", err)
+	}
+
+	// 确认第 3 章 commit 后状态已改变
+	protMid, err := s.GetProtagonistEntry(ctx, proj.ID)
+	if err != nil {
+		t.Fatalf("GetProtagonistEntry mid failed: %v", err)
+	}
+	if !strings.Contains(protMid.Inventory, "涅槃丹") {
+		t.Fatalf("expected protagonist to have 涅槃丹 in ch3, got: %s", protMid.Inventory)
+	}
+	hooksMid, err := s.ListPlotHooks(ctx, proj.ID)
+	if err != nil {
+		t.Fatalf("ListPlotHooks mid failed: %v", err)
+	}
+	midResolved := false
+	for _, h := range hooksMid {
+		if h.ID == "hook-snap-resolved" && h.Status == domain.HookStatusResolved {
+			midResolved = true
+		}
+	}
+	if !midResolved {
+		t.Fatalf("expected hook-snap-resolved to be RESOLVED in ch3")
+	}
+
+	// Uncommit 第 3 章
+	cp, p, err := s.UncommitChapter(ctx, proj.ID, 3)
+	if err != nil {
+		t.Fatalf("UncommitChapter 3 failed: %v", err)
+	}
+	if cp == nil || p == nil {
+		t.Fatalf("expected non-nil checkpoint and project, got cp=%v, p=%v", cp, p)
+	}
+
+	// 验证主角状态：Inventory 与 StructuredItems 以及各项字段与快照(2)逐字段严格相等
+	protAfter, err := s.GetProtagonistEntry(ctx, proj.ID)
+	if err != nil {
+		t.Fatalf("GetProtagonistEntry after failed: %v", err)
+	}
+	if protAfter.Inventory != snap2Prot.Inventory {
+		t.Errorf("protagonist Inventory mismatch: got %q, expected snap2 %q", protAfter.Inventory, snap2Prot.Inventory)
+	}
+	if len(protAfter.StructuredItems) != len(snap2Prot.StructuredItems) {
+		t.Errorf("protagonist StructuredItems length mismatch: got %d, expected %d", len(protAfter.StructuredItems), len(snap2Prot.StructuredItems))
+	} else {
+		for i := range protAfter.StructuredItems {
+			if protAfter.StructuredItems[i] != snap2Prot.StructuredItems[i] {
+				t.Errorf("protagonist StructuredItems[%d] mismatch: got %+v, expected %+v", i, protAfter.StructuredItems[i], snap2Prot.StructuredItems[i])
+			}
+		}
+	}
+	if protAfter.Realm != snap2Prot.Realm {
+		t.Errorf("protagonist Realm mismatch: got %q, expected snap2 %q", protAfter.Realm, snap2Prot.Realm)
+	}
+	if protAfter.CurrentDisposition != snap2Prot.CurrentDisposition {
+		t.Errorf("protagonist CurrentDisposition mismatch: got %q, expected snap2 %q", protAfter.CurrentDisposition, snap2Prot.CurrentDisposition)
+	}
+
+	// 验证伏笔状态：hooks status 与快照(2)逐条严格相等
+	hooksAfter, err := s.ListPlotHooks(ctx, proj.ID)
+	if err != nil {
+		t.Fatalf("ListPlotHooks after failed: %v", err)
+	}
+	snapHooksMap := make(map[string]domain.HookStatus)
+	for _, h := range snap2Hooks {
+		snapHooksMap[h.ID] = h.Status
+	}
+	if len(hooksAfter) != len(snap2Hooks) {
+		t.Errorf("hooks count mismatch: got %d, expected %d", len(hooksAfter), len(snap2Hooks))
+	}
+	for _, h := range hooksAfter {
+		expectedStatus, ok := snapHooksMap[h.ID]
+		if !ok {
+			t.Errorf("unexpected hook ID %s in database", h.ID)
+			continue
+		}
+		if h.Status != expectedStatus {
+			t.Errorf("hook %s status mismatch: got %s, expected snap2 %s", h.ID, h.Status, expectedStatus)
+		}
+	}
+}
+
+// Case ⑥: 手工删掉快照(2) 行 → uncommit 第 3 章 → 返回错误且包含 "snapshot" 字样，
+// 且库里章节/主角/hooks 均未变（fail-closed 原子性）
+func TestSQLiteStore_UncommitChapter_MissingSnapshotFailClosed(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test_snapshot_fail_closed.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	proj := &domain.Project{
+		ID:    "proj-snap-failclosed",
+		Title: "快照缺失Fail-Closed测试",
+	}
+	if err := s.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	prot := &domain.CodexEntry{
+		ID:        "codex_snap_fc_pro",
+		ProjectID: proj.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "牧尘",
+		Realm:     "灵动境初期",
+		Inventory: "大须弥魔柱",
+	}
+	if err := s.SaveCodexEntry(ctx, prot); err != nil {
+		t.Fatalf("SaveCodexEntry failed: %v", err)
+	}
+
+	hook := &domain.PlotHook{
+		ID:            "hook-fc-1",
+		ProjectID:     proj.ID,
+		Title:         "北苍灵院考核",
+		TargetChapter: 3,
+		Status:        domain.HookStatusOpen,
+	}
+	if err := s.SavePlotHook(ctx, hook); err != nil {
+		t.Fatalf("SavePlotHook failed: %v", err)
+	}
+
+	// Commit 3 chapters
+	ch1 := &domain.Chapter{
+		ID:           "ch_fc_1",
+		ProjectID:    proj.ID,
+		ChapterIndex: 1,
+		Title:        "第一章 北灵之乱",
+		Content:      "灵路归来的少年...",
+	}
+	if _, err := s.CommitChapter(ctx, proj.ID, ch1); err != nil {
+		t.Fatalf("CommitChapter 1 failed: %v", err)
+	}
+
+	ch2 := &domain.Chapter{
+		ID:           "ch_fc_2",
+		ProjectID:    proj.ID,
+		ChapterIndex: 2,
+		Title:        "第二章 灵路相逢",
+		Content:      "洛璃持剑而立...",
+		StateMutation: domain.StateMutation{
+			InventoryDelta: "获得物品: 洛神剑意 (+1)",
+		},
+	}
+	if _, err := s.CommitChapter(ctx, proj.ID, ch2); err != nil {
+		t.Fatalf("CommitChapter 2 failed: %v", err)
+	}
+
+	ch3 := &domain.Chapter{
+		ID:           "ch_fc_3",
+		ProjectID:    proj.ID,
+		ChapterIndex: 3,
+		Title:        "第三章 考核过关",
+		Content:      "灵力光幕冲天而起...",
+		StateMutation: domain.StateMutation{
+			InventoryDelta: "获得物品: 灵值牌 (+1)",
+		},
+		Review: &domain.ReviewResult{
+			Verdict:         domain.ReviewVerdictAccepted,
+			Score:           90,
+			ResolvedHookIDs: []string{"hook-fc-1"},
+		},
+	}
+	if _, err := s.CommitChapter(ctx, proj.ID, ch3); err != nil {
+		t.Fatalf("CommitChapter 3 failed: %v", err)
+	}
+
+	// 记录 uncommit 前的库内完整状态
+	ch3Before, err := s.GetChapter(ctx, proj.ID, 3)
+	if err != nil || ch3Before == nil {
+		t.Fatalf("GetChapter 3 before failed: %v", err)
+	}
+	protBefore, err := s.GetProtagonistEntry(ctx, proj.ID)
+	if err != nil || protBefore == nil {
+		t.Fatalf("GetProtagonistEntry before failed: %v", err)
+	}
+	hooksBefore, err := s.ListPlotHooks(ctx, proj.ID)
+	if err != nil {
+		t.Fatalf("ListPlotHooks before failed: %v", err)
+	}
+
+	// 手工删掉快照(2)行
+	res, err := s.db.Exec(`DELETE FROM chapter_state_snapshots WHERE project_id = ? AND chapter_index = 2`, proj.ID)
+	if err != nil {
+		t.Fatalf("delete snapshot 2 failed: %v", err)
+	}
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		t.Fatalf("expected at least 1 snapshot row deleted, got 0")
+	}
+
+	// Attempt uncommit 第 3 章
+	cp, p, err := s.UncommitChapter(ctx, proj.ID, 3)
+	if err == nil {
+		t.Fatalf("expected UncommitChapter to fail due to missing snapshot, got success cp=%v, p=%v", cp, p)
+	}
+
+	// 返回错误且包含 "snapshot" 字样
+	if !strings.Contains(err.Error(), "snapshot") {
+		t.Errorf("expected error message to contain 'snapshot', got: %v", err)
+	}
+
+	// 库里章节纹丝不动：第 3 章依然存在且内容不变
+	ch3After, err := s.GetChapter(ctx, proj.ID, 3)
+	if err != nil || ch3After == nil {
+		t.Fatalf("expected chapter 3 to still exist in DB, err: %v", err)
+	}
+	if ch3After.Content != ch3Before.Content {
+		t.Errorf("chapter 3 content altered despite snapshot failure")
+	}
+
+	// 库里主角状态纹丝不动
+	protAfter, err := s.GetProtagonistEntry(ctx, proj.ID)
+	if err != nil {
+		t.Fatalf("GetProtagonistEntry after failed: %v", err)
+	}
+	if protAfter.Inventory != protBefore.Inventory || protAfter.Realm != protBefore.Realm {
+		t.Errorf("protagonist altered: before inv=%s, after inv=%s", protBefore.Inventory, protAfter.Inventory)
+	}
+
+	// 库里 hooks 纹丝不动
+	hooksAfter, err := s.ListPlotHooks(ctx, proj.ID)
+	if err != nil {
+		t.Fatalf("ListPlotHooks after failed: %v", err)
+	}
+	if len(hooksAfter) != len(hooksBefore) {
+		t.Errorf("hooks count changed: before=%d, after=%d", len(hooksBefore), len(hooksAfter))
+	} else {
+		for i := range hooksAfter {
+			if hooksAfter[i].Status != hooksBefore[i].Status {
+				t.Errorf("hook[%d] status altered: before=%s, after=%s", i, hooksBefore[i].Status, hooksAfter[i].Status)
+			}
+		}
+	}
+
+	// Checkpoint 表中未生成草稿
+	storedCp, _ := s.GetCheckpoint(ctx, proj.ID, 3)
+	if storedCp != nil && storedCp.Phase == domain.CheckpointPhaseDrafted {
+		t.Errorf("unexpected draft checkpoint committed despite fail-closed error: %+v", storedCp)
+	}
+}
+
+// Case ⑦: 第 1 章 uncommit 路径回归测试（创世状态回滚 + FERMENTING 全部归为 OPEN）
+func TestSQLiteStore_UncommitChapter_Chapter1GenesisRegression(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test_ch1_regression.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	proj := &domain.Project{
+		ID:    "proj-ch1-reg",
+		Title: "第1章创世回退回归",
+	}
+	if err := s.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	prot := &domain.CodexEntry{
+		ID:        "codex_ch1_pro",
+		ProjectID: proj.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "孟浩",
+		Realm:     "凝气一层",
+		Inventory: "布衣",
+	}
+	if err := s.SaveCodexEntry(ctx, prot); err != nil {
+		t.Fatalf("SaveCodexEntry failed: %v", err)
+	}
+
+	hook := &domain.PlotHook{
+		ID:            "hook-ch1-1",
+		ProjectID:     proj.ID,
+		Title:         "靠山宗秘宝",
+		TargetChapter: 1,
+		Status:        domain.HookStatusOpen,
+	}
+	if err := s.SavePlotHook(ctx, hook); err != nil {
+		t.Fatalf("SavePlotHook failed: %v", err)
+	}
+
+	ch1 := &domain.Chapter{
+		ID:           "ch_reg_1",
+		ProjectID:    proj.ID,
+		ChapterIndex: 1,
+		Title:        "第一章 读书人孟浩",
+		Content:      "大青山下，书生远眺...",
+		StateMutation: domain.StateMutation{
+			InventoryDelta: "获得物品: 铜镜 (+1)",
+		},
+		Review: &domain.ReviewResult{
+			Verdict:         domain.ReviewVerdictAccepted,
+			Score:           88,
+			ResolvedHookIDs: []string{"hook-ch1-1"},
+		},
+	}
+	if _, err := s.CommitChapter(ctx, proj.ID, ch1); err != nil {
+		t.Fatalf("CommitChapter failed: %v", err)
+	}
+
+	cp, p, err := s.UncommitChapter(ctx, proj.ID, 1)
+	if err != nil {
+		t.Fatalf("UncommitChapter 1 failed: %v", err)
+	}
+	if cp == nil || p == nil {
+		t.Fatalf("expected non-nil checkpoint and project")
+	}
+
+	// 确认主角物品铜镜被逆运算移除
+	protAfter, err := s.GetProtagonistEntry(ctx, proj.ID)
+	if err != nil {
+		t.Fatalf("GetProtagonistEntry failed: %v", err)
+	}
+	if strings.Contains(protAfter.Inventory, "铜镜") {
+		t.Errorf("expected 铜镜 removed by inverse mutation, got: %s", protAfter.Inventory)
+	}
+
+	// 确认伏笔在 maxRemaining=0 时重算为 OPEN
+	hooksAfter, err := s.ListPlotHooks(ctx, proj.ID)
+	if err != nil || len(hooksAfter) == 0 {
+		t.Fatalf("ListPlotHooks failed: %v", err)
+	}
+	if hooksAfter[0].Status != domain.HookStatusOpen {
+		t.Errorf("expected hook status OPEN, got: %s", hooksAfter[0].Status)
 	}
 }
