@@ -2156,3 +2156,96 @@ func TestBuildChapterIntentPromptBlock(t *testing.T) {
 		}
 	})
 }
+
+func TestChapterWorkshop_TechnicalBlocked_SetsNeedsHuman(t *testing.T) {
+	beatsResp := `{
+		"beats": [
+			{"phase": "蓄力压迫", "tension": 6, "action": "反派带队堵截主角洞府", "expectation_broken": "反派预料主角会求饶"},
+			{"phase": "绝地反转", "tension": 9, "action": "主角引动护山大阵反扣杀", "expectation_broken": "反派全部被镇压"}
+		],
+		"state_mutation": {
+			"inventory_delta": "",
+			"power_delta": ""
+		}
+	}`
+
+	reviewResp := `{
+		"verdict": "ACCEPTED",
+		"score": 90,
+		"issues": [],
+		"suggestions": "质量达标"
+	}`
+
+	mockClient := &mockWorkshopLLMClient{
+		beatsJSON:   beatsResp,
+		renderDraft: "夜幕低垂。三名黑衣修士逼近洞府门前。林凡指尖轻扣石壁。阵纹骤亮，雷光咆哮如龙！",
+		reviewJSON:  reviewResp,
+		settleJSON:  "{unparseable-json-response",
+	}
+
+	mockStore := &mockCheckpointWorkshopStore{
+		mockChronicleStore: &mockChronicleStore{
+			project: &domain.Project{
+				ID:             "p-tech-halt",
+				Title:          "技术阻断停线测试",
+				TargetPlatform: "番茄脑洞",
+			},
+			chapters: []*domain.Chapter{},
+			codexEntries: []*domain.CodexEntry{
+				{
+					ID:           "c-prot-1",
+					ProjectID:    "p-tech-halt",
+					Category:     domain.CategoryCharacter,
+					Archetype:    "PROTAGONIST",
+					TrackingMode: domain.TrackingModeAlwaysInject,
+					Name:         "林凡",
+					Realm:        "练气圆满",
+					Inventory:    "青玉短剑",
+				},
+			},
+		},
+	}
+
+	orch := NewOrchestrator(mockClient)
+	qGate := NewQualityGate(mockClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-tech-halt",
+		ChapterIndex:    1,
+		CoreConflict:    "宗门反派夜袭抢夺古经",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if !res.TechnicalBlocked {
+		t.Fatalf("expected TechnicalBlocked == true, got false")
+	}
+	if res.Committed {
+		t.Errorf("expected Committed == false, got true")
+	}
+	if res.Audit == nil || !res.Audit.NeedsHuman {
+		t.Fatalf("expected res.Audit.NeedsHuman == true on technical block, got %v", res.Audit)
+	}
+
+	hasHaltMarker := false
+	for _, issue := range res.Audit.Issues {
+		if strings.Contains(issue, "技术阻断停线") {
+			hasHaltMarker = true
+			break
+		}
+	}
+	if !hasHaltMarker {
+		t.Errorf("expected audit issues to contain '技术阻断停线', got %v", res.Audit.Issues)
+	}
+
+	if len(mockStore.chapters) != 0 {
+		t.Errorf("expected 0 chapters committed into store, got %d", len(mockStore.chapters))
+	}
+}

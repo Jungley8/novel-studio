@@ -811,6 +811,12 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		if technicalBlocked {
 			// Technical blockage takes absolute precedence over semantic verdict (Fail-Closed)
 			shouldCommit = false
+			if auditReport == nil {
+				auditReport = &domain.AuditReport{}
+				result.Audit = auditReport
+			}
+			auditReport.NeedsHuman = true
+			auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【ESCALATED】技术阻断停线：状态结算未通过（%s），拒绝自动入库，需人工处理", technicalBlockReason))
 			emit(WorkshopEvent{
 				Phase:       PhaseComplete,
 				Message:     fmt.Sprintf("技术阻断停线: 状态结算未通过 (%s)，拒绝自动入库", technicalBlockReason),
