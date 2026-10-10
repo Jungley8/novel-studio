@@ -527,3 +527,180 @@ func TestSQLiteStore_GetActivePlan_DivergedDetection(t *testing.T) {
 		t.Error("expected non-empty warning message for author when diverged")
 	}
 }
+
+// Case ⑤: ListForecasts 不再与单连接池发生自死锁（死锁修复与状态刷新验证）
+func TestListForecasts_NoDeadlockAfterChapterCommit(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test_list_forecasts_deadlock.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	projID := "proj_deadlock_test"
+	if err := s.SaveProject(ctx, &domain.Project{ID: projID, Title: "死锁修复验证"}); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	ch1 := &domain.Chapter{
+		ID:           "ch_dl_1",
+		ProjectID:    projID,
+		ChapterIndex: 1,
+		Title:        "第一章",
+		Content:      "初始正史",
+		CreatedAt:    time.Now().Add(-1 * time.Hour),
+	}
+	if _, err := s.CommitChapter(ctx, projID, ch1); err != nil {
+		t.Fatalf("CommitChapter 1 failed: %v", err)
+	}
+
+	fc := &domain.Forecast{
+		ID:          "fc_dl_1",
+		ProjectID:   projID,
+		BaseChapter: "1",
+		Divergence:  "分歧测试",
+		BranchCount: 2,
+		Horizon:     3,
+		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Status:      domain.ForecastStatusActive,
+		Branches: []domain.ForecastBranch{
+			{ID: "b1", BeatsSummary: "节拍1"},
+			{ID: "b2", BeatsSummary: "节拍2"},
+		},
+		CreatedAt: time.Now(),
+	}
+	if err := s.SaveForecast(ctx, fc); err != nil {
+		t.Fatalf("SaveForecast failed: %v", err)
+	}
+
+	if _, err := s.SelectBranch(ctx, projID, fc.ID, "b1"); err != nil {
+		t.Fatalf("SelectBranch failed: %v", err)
+	}
+
+	// 追加一章（使指纹变化）
+	ch2 := &domain.Chapter{
+		ID:           "ch_dl_2",
+		ProjectID:    projID,
+		ChapterIndex: 2,
+		Title:        "第二章正史归档",
+		Content:      "正史已推进",
+		CreatedAt:    time.Now(),
+	}
+	if _, err := s.CommitChapter(ctx, projID, ch2); err != nil {
+		t.Fatalf("CommitChapter 2 failed: %v", err)
+	}
+
+	// 以 context.WithTimeout(3*time.Second) 调 ListForecasts
+	listCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	list, err := s.ListForecasts(listCtx, projID)
+	if err != nil {
+		t.Fatalf("ListForecasts failed: %v", err)
+	}
+	if listCtx.Err() != nil {
+		t.Fatalf("ListForecasts exceeded timeout deadline: %v", listCtx.Err())
+	}
+
+	if len(list) != 1 {
+		t.Fatalf("expected 1 forecast, got %d", len(list))
+	}
+	if list[0].Status != domain.ForecastStatusStale {
+		t.Fatalf("expected forecast status to be 'stale', got '%s'", list[0].Status)
+	}
+
+	// 确认数据库中 project_active_plan 确实被更新为 stale
+	var dbPlanStatus string
+	if err := s.db.QueryRow(`SELECT status FROM project_active_plan WHERE project_id = ?`, projID).Scan(&dbPlanStatus); err != nil {
+		t.Fatalf("query db plan status failed: %v", err)
+	}
+	if dbPlanStatus != string(domain.PlanStatusStale) {
+		t.Fatalf("expected project_active_plan in db to be 'stale', got '%s'", dbPlanStatus)
+	}
+
+	// 断言关联 active plan 变 stale
+	activePlan, err := s.GetActivePlan(ctx, projID)
+	if err != nil {
+		t.Fatalf("GetActivePlan failed: %v", err)
+	}
+	if activePlan == nil {
+		t.Fatal("expected non-nil active plan")
+	}
+	if activePlan.Status != domain.PlanStatusStale {
+		t.Fatalf("expected active plan status to be 'stale', got '%s'", activePlan.Status)
+	}
+}
+
+// Case ⑥: CleanProject 无 stale 场景正常快速返回
+func TestListForecasts_CleanProject(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test_list_forecasts_clean.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	projID := "proj_clean_test"
+	if err := s.SaveProject(ctx, &domain.Project{ID: projID, Title: "干净项目测试"}); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	// 1. 无 forecast 项目
+	listCtx1, cancel1 := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel1()
+	list1, err := s.ListForecasts(listCtx1, projID)
+	if err != nil {
+		t.Fatalf("ListForecasts on empty project failed: %v", err)
+	}
+	if len(list1) != 0 {
+		t.Fatalf("expected 0 forecasts, got %d", len(list1))
+	}
+
+	// 2. 有 active forecast 且指纹匹配（无 stale）
+	ch1 := &domain.Chapter{
+		ID:           "ch_clean_1",
+		ProjectID:    projID,
+		ChapterIndex: 1,
+		Title:        "第一章",
+		Content:      "干净正史内容",
+		CreatedAt:    time.Now(),
+	}
+	if _, err := s.CommitChapter(ctx, projID, ch1); err != nil {
+		t.Fatalf("CommitChapter failed: %v", err)
+	}
+
+	fc := &domain.Forecast{
+		ID:          "fc_clean_1",
+		ProjectID:   projID,
+		BaseChapter: "1",
+		Divergence:  "无偏离",
+		BranchCount: 1,
+		Horizon:     1,
+		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Status:      domain.ForecastStatusActive,
+		Branches: []domain.ForecastBranch{
+			{ID: "b1", BeatsSummary: "干净节拍"},
+		},
+		CreatedAt: time.Now(),
+	}
+	if err := s.SaveForecast(ctx, fc); err != nil {
+		t.Fatalf("SaveForecast failed: %v", err)
+	}
+
+	listCtx2, cancel2 := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel2()
+	list2, err := s.ListForecasts(listCtx2, projID)
+	if err != nil {
+		t.Fatalf("ListForecasts with matching fingerprint failed: %v", err)
+	}
+	if len(list2) != 1 {
+		t.Fatalf("expected 1 forecast, got %d", len(list2))
+	}
+	if list2[0].Status != domain.ForecastStatusActive {
+		t.Fatalf("expected forecast status to be 'active', got '%s'", list2[0].Status)
+	}
+}

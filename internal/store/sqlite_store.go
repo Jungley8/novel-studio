@@ -3562,8 +3562,8 @@ func (s *SQLiteStore) ListForecasts(ctx context.Context, projectID string) ([]*d
 	}
 	defer rows.Close()
 
-	currFP := s.ComputeFingerprint(ctx, projectID)
 	var list []*domain.Forecast
+	var hasActive bool
 
 	for rows.Next() {
 		var f domain.Forecast
@@ -3576,16 +3576,8 @@ func (s *SQLiteStore) ListForecasts(ctx context.Context, projectID string) ([]*d
 		if branchesJSON != "" {
 			_ = json.Unmarshal([]byte(branchesJSON), &f.Branches)
 		}
-
-		if f.Status == domain.ForecastStatusActive && f.Fingerprint != currFP {
-			f.Status = domain.ForecastStatusStale
-			_, _ = s.db.ExecContext(ctx, `UPDATE narrative_forecasts SET status = ? WHERE id = ?`, domain.ForecastStatusStale, f.ID)
-			_, _ = s.db.ExecContext(ctx, `
-				UPDATE project_active_plan 
-				SET status = ?, updated_at = ? 
-				WHERE project_id = ? AND forecast_id = ? AND status = ?`,
-				domain.PlanStatusStale, time.Now(), projectID, f.ID, domain.PlanStatusActive,
-			)
+		if f.Status == domain.ForecastStatusActive {
+			hasActive = true
 		}
 
 		list = append(list, &f)
@@ -3594,6 +3586,25 @@ func (s *SQLiteStore) ListForecasts(ctx context.Context, projectID string) ([]*d
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	_ = rows.Close()
+
+	if hasActive {
+		currFP := s.ComputeFingerprint(ctx, projectID)
+		now := time.Now()
+		for _, f := range list {
+			if f.Status == domain.ForecastStatusActive && f.Fingerprint != currFP {
+				f.Status = domain.ForecastStatusStale
+				_, _ = s.db.ExecContext(ctx, `UPDATE narrative_forecasts SET status = ? WHERE id = ?`, domain.ForecastStatusStale, f.ID)
+				_, _ = s.db.ExecContext(ctx, `
+					UPDATE project_active_plan 
+					SET status = ?, updated_at = ? 
+					WHERE project_id = ? AND forecast_id = ? AND status = ?`,
+					domain.PlanStatusStale, now, projectID, f.ID, domain.PlanStatusActive,
+				)
+			}
+		}
+	}
+
 	if list == nil {
 		list = []*domain.Forecast{}
 	}
