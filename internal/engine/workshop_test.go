@@ -250,11 +250,13 @@ type fakeQualityGateFailClosedLLMClient struct {
 }
 
 func (f *fakeQualityGateFailClosedLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	// Review routing FIRST: division prompts (分庭总审编) contain the substring
+	// "剧情节拍" in their point-1 text, so beats matching must not take precedence.
+	if strings.Contains(systemPrompt, "分庭总审编") || strings.Contains(systemPrompt, "总编审") || strings.Contains(systemPrompt, "QualityGate") {
+		return f.reviewJSON, nil
+	}
 	if strings.Contains(systemPrompt, "总设计师") || strings.Contains(systemPrompt, "剧情节拍") || strings.Contains(systemPrompt, "Beats") {
 		return f.beatsJSON, nil
-	}
-	if strings.Contains(systemPrompt, "总审编") || strings.Contains(systemPrompt, "总编审") || strings.Contains(systemPrompt, "QualityGate") {
-		return f.reviewJSON, nil
 	}
 	return f.renderDraft, nil
 }

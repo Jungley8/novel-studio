@@ -63,7 +63,7 @@ func (q *QualityGate) AuditWithHooks(
 	activeHooks []*domain.PlotHook,
 	draftText string,
 ) (*domain.AuditReport, TokenUsage, error) {
-	courtReport, usage, err := q.court.ChiefJudge(ctx, reviewerModel, project, chapterIndex, beats, activeHooks, draftText)
+	courtReport, usage, err := q.court.ChiefJudge(ctx, reviewerModel, project, protagonist, chapterIndex, beats, activeHooks, draftText)
 	if err != nil {
 		return nil, usage, err
 	}
@@ -75,6 +75,7 @@ func (q *QualityGate) AuditSingle(
 	ctx context.Context,
 	reviewerModel string,
 	project *domain.Project,
+	protagonist *domain.CodexEntry,
 	chapterIndex int,
 	beats []domain.SceneBeat,
 	activeHooks []*domain.PlotHook,

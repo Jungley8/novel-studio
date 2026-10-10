@@ -123,6 +123,7 @@ func (c *ReviewCourt) recordDeliberation(rec CourtRecord) {
 func (c *ReviewCourt) LogicDivision(
 	ctx context.Context,
 	model string,
+	protagonist *domain.CodexEntry,
 	beats []domain.SceneBeat,
 	hooks []*domain.PlotHook,
 	draftText string,
@@ -152,7 +153,17 @@ func (c *ReviewCourt) LogicDivision(
 		hooksContext = strings.Join(hList, "\n")
 	}
 
+	protName := "未知"
+	protInv := "无"
+	if protagonist != nil {
+		protName = protagonist.NameAndLevel()
+		if protagonist.Inventory != "" {
+			protInv = protagonist.Inventory
+		}
+	}
+
 	userPrompt := fmt.Sprintf(`【审查分庭】逻辑庭 (LogicDivision)
+【主角当前状态】%s | 物品栏: %s
 【要求履行的节拍】%s
 【参考开放伏笔】
 %s
@@ -161,13 +172,14 @@ func (c *ReviewCourt) LogicDivision(
 %s
 
 请给出逻辑庭审阅判决。`,
+		protName, protInv,
 		string(beatsJSON),
 		hooksContext,
 		draftText,
 	)
 
 	ctxRole := ContextWithRole(ctx, RoleReviewer)
-	resp, usage, err := c.client.ChatCompletionWithUsage(ctxRole, model, systemPrompt, userPrompt, 0.3)
+	resp, usage, err := SafeChatCompletionWithStreamFallback(ctxRole, c.client, model, systemPrompt, userPrompt, 0.3, nil)
 	if err != nil {
 		return nil, usage, fmt.Errorf("logic division LLM review failed: %w", err)
 	}
@@ -253,7 +265,7 @@ func (c *ReviewCourt) StyleDivision(
 	)
 
 	ctxRole := ContextWithRole(ctx, RoleReviewer)
-	resp, usage, err := c.client.ChatCompletionWithUsage(ctxRole, model, systemPrompt, userPrompt, 0.3)
+	resp, usage, err := SafeChatCompletionWithStreamFallback(ctxRole, c.client, model, systemPrompt, userPrompt, 0.3, nil)
 	if err != nil {
 		return nil, usage, fmt.Errorf("style division LLM review failed: %w", err)
 	}
@@ -320,7 +332,7 @@ func (c *ReviewCourt) ContinuityDivision(
 	)
 
 	ctxRole := ContextWithRole(ctx, RoleReviewer)
-	resp, usage, err := c.client.ChatCompletionWithUsage(ctxRole, model, systemPrompt, userPrompt, 0.3)
+	resp, usage, err := SafeChatCompletionWithStreamFallback(ctxRole, c.client, model, systemPrompt, userPrompt, 0.3, nil)
 	if err != nil {
 		return nil, usage, fmt.Errorf("continuity division LLM review failed: %w", err)
 	}
@@ -363,6 +375,7 @@ func (c *ReviewCourt) ChiefJudge(
 	ctx context.Context,
 	reviewerModel string,
 	project *domain.Project,
+	protagonist *domain.CodexEntry,
 	chapterIndex int,
 	beats []domain.SceneBeat,
 	activeHooks []*domain.PlotHook,
@@ -377,7 +390,7 @@ func (c *ReviewCourt) ChiefJudge(
 	if len(opts) > 0 && opts[0].HorizonSummary != "" {
 		horizonSummary = opts[0].HorizonSummary
 	} else {
-		horizonSummary = buildDefaultHorizonSummary(project, chapterIndex, activeHooks)
+		horizonSummary = buildDefaultHorizonSummary(project, protagonist, chapterIndex, activeHooks)
 	}
 	if len(opts) > 0 && opts[0].TailAnchor != "" {
 		horizonSummary += fmt.Sprintf("\n【上章末尾文风锚定 (TailAnchor)】\n%s", opts[0].TailAnchor)
@@ -407,7 +420,7 @@ func (c *ReviewCourt) ChiefJudge(
 	g.Go(func() error {
 		divCtx, cancel := context.WithTimeout(gCtx, timeout)
 		defer cancel()
-		res, usage, err := c.LogicDivision(divCtx, reviewerModel, beats, activeHooks, draftText)
+		res, usage, err := c.LogicDivision(divCtx, reviewerModel, protagonist, beats, activeHooks, draftText)
 		if err != nil {
 			return fmt.Errorf("logic division failed: %w", err)
 		}
@@ -598,7 +611,7 @@ func (c *ReviewCourt) ChiefJudge(
 	return courtReport, totalUsage, nil
 }
 
-func buildDefaultHorizonSummary(project *domain.Project, chapterIndex int, hooks []*domain.PlotHook) string {
+func buildDefaultHorizonSummary(project *domain.Project, protagonist *domain.CodexEntry, chapterIndex int, hooks []*domain.PlotHook) string {
 	if project == nil {
 		return "无正史视界摘要"
 	}
@@ -610,8 +623,8 @@ func buildDefaultHorizonSummary(project *domain.Project, chapterIndex int, hooks
 	if project.WorldRules != "" {
 		sb.WriteString(fmt.Sprintf("世界法则公理: %s\n", project.WorldRules))
 	}
-	if project.Protagonist.NameAndLevel != "" {
-		sb.WriteString(fmt.Sprintf("主角当前状态: %s | 物品栏: %s\n", project.Protagonist.NameAndLevel, project.Protagonist.Inventory))
+	if protagonist != nil && protagonist.NameAndLevel() != "" {
+		sb.WriteString(fmt.Sprintf("主角当前状态: %s | 物品栏: %s\n", protagonist.NameAndLevel(), protagonist.Inventory))
 	}
 	if len(hooks) > 0 {
 		sb.WriteString("当前活跃伏笔:\n")

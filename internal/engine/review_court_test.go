@@ -84,7 +84,7 @@ func TestReviewCourt_ChiefJudge_FailClosedGuard(t *testing.T) {
 	hooks := []*domain.PlotHook{{ID: "hook-101", Title: "残铁伏笔"}}
 	draft := "长街风冷。林玄按住剑柄，剑光骤然暴起，撕裂长空！"
 
-	report, usage, err := court.ChiefJudge(context.Background(), "mock-reviewer", proj, 1, beats, hooks, draft)
+	report, usage, err := court.ChiefJudge(context.Background(), "mock-reviewer", proj, nil, 1, beats, hooks, draft)
 	if err != nil {
 		t.Fatalf("ChiefJudge failed: %v", err)
 	}
@@ -117,9 +117,11 @@ func TestReviewCourt_ChiefJudge_FailClosedGuard(t *testing.T) {
 		t.Errorf("expected dissent from Logic and Continuity divisions, got %v", report.Dissent)
 	}
 
-	// 4. Token usage must sum across all three divisions
-	if usage.TotalTokens != 300 {
-		t.Errorf("expected total tokens 300 (3*100), got %d", usage.TotalTokens)
+	// 4. Token usage must be positive and internally consistent (prompt+completion==total).
+	// Divisions go through SafeChatCompletionWithStreamFallback, which estimates
+	// tokens from text length when the stream carries no usage payload.
+	if usage.TotalTokens <= 0 || usage.PromptTokens+usage.CompletionTokens != usage.TotalTokens {
+		t.Errorf("inconsistent token accounting: %+v", usage)
 	}
 
 	// 5. Hook resolution preserved from LogicDivision
@@ -157,7 +159,7 @@ func TestReviewCourt_ChiefJudge_UnanimousAccept(t *testing.T) {
 	proj := &domain.Project{Title: "万古天帝"}
 	draft := "风雷阵阵。陆青立于山巅之上，俯瞰万丈深渊，指尖雷光游走。"
 
-	report, usage, err := court.ChiefJudge(context.Background(), "mock-reviewer", proj, 2, nil, nil, draft)
+	report, usage, err := court.ChiefJudge(context.Background(), "mock-reviewer", proj, nil, 2, nil, nil, draft)
 	if err != nil {
 		t.Fatalf("ChiefJudge failed: %v", err)
 	}
@@ -171,8 +173,8 @@ func TestReviewCourt_ChiefJudge_UnanimousAccept(t *testing.T) {
 	if len(report.Dissent) != 0 {
 		t.Errorf("expected empty dissent on unanimous accept, got %v", report.Dissent)
 	}
-	if usage.TotalTokens != 300 {
-		t.Errorf("expected 300 tokens, got %d", usage.TotalTokens)
+	if usage.TotalTokens <= 0 || usage.PromptTokens+usage.CompletionTokens != usage.TotalTokens {
+		t.Errorf("inconsistent token accounting: %+v", usage)
 	}
 }
 
@@ -190,7 +192,7 @@ func TestReviewCourt_ChiefJudge_HeuristicBannedWordsVeto(t *testing.T) {
 	// Text containing banned cliches
 	clicheDraft := "他不由得冷笑了一声，嘴角勾起一丝嘲讽的笑意。"
 
-	report, _, err := court.ChiefJudge(context.Background(), "mock-reviewer", proj, 1, nil, nil, clicheDraft)
+	report, _, err := court.ChiefJudge(context.Background(), "mock-reviewer", proj, nil, 1, nil, nil, clicheDraft)
 	if err != nil {
 		t.Fatalf("ChiefJudge failed: %v", err)
 	}
@@ -215,7 +217,7 @@ func TestReviewCourt_ChiefJudge_ScoreUnder80Veto(t *testing.T) {
 	court := NewReviewCourt(mock, nil)
 	draft := "长夜漫漫，寒星孤悬。道人闭目盘坐，静候天明。"
 
-	report, _, err := court.ChiefJudge(context.Background(), "mock-reviewer", nil, 1, nil, nil, draft)
+	report, _, err := court.ChiefJudge(context.Background(), "mock-reviewer", nil, nil, 1, nil, nil, draft)
 	if err != nil {
 		t.Fatalf("ChiefJudge failed: %v", err)
 	}
@@ -241,7 +243,7 @@ func TestReviewCourt_PlaybackHistory(t *testing.T) {
 	proj := &domain.Project{Title: "遮天蔽日"}
 	draft := "风云激荡。林凡傲立长空。"
 
-	_, _, err := court.ChiefJudge(context.Background(), "mock-reviewer", proj, 5, nil, nil, draft)
+	_, _, err := court.ChiefJudge(context.Background(), "mock-reviewer", proj, nil, 5, nil, nil, draft)
 	if err != nil {
 		t.Fatalf("ChiefJudge failed: %v", err)
 	}
@@ -300,7 +302,7 @@ func TestReviewCourt_IndividualDivisions(t *testing.T) {
 	ctx := context.Background()
 
 	// LogicDivision
-	lRes, lUsage, err := court.LogicDivision(ctx, "mock", nil, nil, "草稿文本...")
+	lRes, lUsage, err := court.LogicDivision(ctx, "mock", nil, nil, nil, "草稿文本...")
 	if err != nil {
 		t.Fatalf("LogicDivision failed: %v", err)
 	}
@@ -310,8 +312,8 @@ func TestReviewCourt_IndividualDivisions(t *testing.T) {
 	if len(lRes.ResolvedHookIDs) != 1 || lRes.ResolvedHookIDs[0] != "h1" {
 		t.Errorf("unexpected resolved hooks: %v", lRes.ResolvedHookIDs)
 	}
-	if lUsage.TotalTokens != 100 {
-		t.Errorf("expected 100 tokens, got %d", lUsage.TotalTokens)
+	if lUsage.TotalTokens <= 0 || lUsage.PromptTokens+lUsage.CompletionTokens != lUsage.TotalTokens {
+		t.Errorf("inconsistent logic division token accounting: %+v", lUsage)
 	}
 
 	// StyleDivision
@@ -322,8 +324,8 @@ func TestReviewCourt_IndividualDivisions(t *testing.T) {
 	if sRes.DivisionName != DivisionStyle || sRes.Verdict != domain.ReviewVerdictAccepted || sRes.Score != 85 {
 		t.Errorf("unexpected StyleDivision result: %+v", sRes)
 	}
-	if sUsage.TotalTokens != 100 {
-		t.Errorf("expected 100 tokens, got %d", sUsage.TotalTokens)
+	if sUsage.TotalTokens <= 0 || sUsage.PromptTokens+sUsage.CompletionTokens != sUsage.TotalTokens {
+		t.Errorf("inconsistent style division token accounting: %+v", sUsage)
 	}
 
 	// ContinuityDivision
@@ -334,8 +336,8 @@ func TestReviewCourt_IndividualDivisions(t *testing.T) {
 	if cRes.DivisionName != DivisionContinuity || cRes.Verdict != domain.ReviewVerdictAccepted || cRes.Score != 90 {
 		t.Errorf("unexpected ContinuityDivision result: %+v", cRes)
 	}
-	if cUsage.TotalTokens != 100 {
-		t.Errorf("expected 100 tokens, got %d", cUsage.TotalTokens)
+	if cUsage.TotalTokens <= 0 || cUsage.PromptTokens+cUsage.CompletionTokens != cUsage.TotalTokens {
+		t.Errorf("inconsistent continuity division token accounting: %+v", cUsage)
 	}
 }
 
@@ -351,7 +353,7 @@ func TestReviewCourt_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	_, _, err := court.ChiefJudge(ctx, "mock", nil, 1, nil, nil, "正文...")
+	_, _, err := court.ChiefJudge(ctx, "mock", nil, nil, 1, nil, nil, "正文...")
 	if err == nil {
 		t.Fatalf("expected error on cancelled context, got nil")
 	}
