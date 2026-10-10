@@ -229,6 +229,11 @@ type mockCheckpointWorkshopStore struct {
 	cp *domain.ChapterCheckpoint
 }
 
+func (m *mockCheckpointWorkshopStore) SaveCheckpoint(ctx context.Context, checkpoint *domain.ChapterCheckpoint) error {
+	m.cp = checkpoint
+	return nil
+}
+
 func (m *mockCheckpointWorkshopStore) GetCheckpoint(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, error) {
 	return m.cp, nil
 }
@@ -238,34 +243,85 @@ func (m *mockCheckpointWorkshopStore) ClearCheckpoint(ctx context.Context, proje
 	return nil
 }
 
-func TestChapterWorkshop_AutoCommit_TolerantAdmitWhenMaxLoopsReached(t *testing.T) {
-	mockClient := &mockWorkshopLLMClient{
-		beatsJSON:   `{"beats": [{"phase": "破局", "action": "反杀"}], "state_mutation": {}}`,
-		renderDraft: "刀光一闪，敌人应声倒地。",
-		reviewJSON:  `{"verdict": "REVISION", "score": 75, "issues": ["字数略少"]}`,
+type fakeQualityGateFailClosedLLMClient struct {
+	beatsJSON   string
+	renderDraft string
+	reviewJSON  string
+}
+
+func (f *fakeQualityGateFailClosedLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	if strings.Contains(systemPrompt, "总设计师") || strings.Contains(systemPrompt, "剧情节拍") || strings.Contains(systemPrompt, "Beats") {
+		return f.beatsJSON, nil
+	}
+	if strings.Contains(systemPrompt, "总审编") || strings.Contains(systemPrompt, "总编审") || strings.Contains(systemPrompt, "QualityGate") {
+		return f.reviewJSON, nil
+	}
+	return f.renderDraft, nil
+}
+
+func (f *fakeQualityGateFailClosedLLMClient) ChatCompletionWithUsage(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, TokenUsage, error) {
+	txt, err := f.ChatCompletion(ctx, model, systemPrompt, userPrompt, temperature)
+	return txt, TokenUsage{PromptTokens: 80, CompletionTokens: 160, TotalTokens: 240}, err
+}
+
+func (f *fakeQualityGateFailClosedLLMClient) ChatCompletionStream(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
+	txt, err := f.ChatCompletion(ctx, model, systemPrompt, userPrompt, temperature)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan StreamChunk, 2)
+	ch <- StreamChunk{Delta: txt}
+	ch <- StreamChunk{Done: true, Usage: &TokenUsage{PromptTokens: 80, CompletionTokens: 160, TotalTokens: 240}}
+	close(ch)
+	return ch, nil
+}
+
+func TestChapterWorkshop_AutoCommit_FailClosedHaltWhenRevisionNeeded(t *testing.T) {
+	// Fake client that constantly returns REVISION_NEEDED 75 points wrapped in Markdown code fence
+	// to exercise ExtractAndCleanJSON.
+	revisionJSON := "```json\n" + `{
+		"verdict": "REVISION_NEEDED",
+		"score": 75,
+		"issues": ["主线冲突推进偏软，反转张力未达及格标准"],
+		"suggestions": "加强断章悬念与正面交锋"
+	}` + "\n```"
+
+	fakeClient := &fakeQualityGateFailClosedLLMClient{
+		beatsJSON: `{
+			"beats": [{"phase": "破局", "tension": 7, "action": "反杀", "expectation_broken": "反派未料主角有底牌"}],
+			"state_mutation": {"inventory_delta": "+密令"}
+		}`,
+		renderDraft: "夜色渐深，冷风呼啸。林凡拔出青玉长剑，一剑断去黑衣人退路。",
+		reviewJSON:  revisionJSON,
 	}
 
-	orch := NewOrchestrator(mockClient)
-	qGate := NewQualityGate(mockClient, nil)
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
 
-	mockStore := &mockChronicleStore{
-		project: &domain.Project{
-			ID:    "p-tolerant",
-			Title: "柔性自愈测试",
+	mockStore := &mockCheckpointWorkshopStore{
+		mockChronicleStore: &mockChronicleStore{
+			project: &domain.Project{
+				ID:             "p-failclosed",
+				Title:          "停线自卫测试",
+				TargetPlatform: "番茄脑洞",
+			},
+			chapters: []*domain.Chapter{},
 		},
-		chapters: []*domain.Chapter{},
 	}
 
 	chronicle := NewCanonChronicle(mockStore)
 	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
 
-	// Scenario 1: Score 75 (>= 70) with AutoCommit=true should be auto-admitted after MaxRewriteLoops
+	var progressEvents []WorkshopEvent
 	req := WorkshopProduceRequest{
-		ProjectID:       "p-tolerant",
+		ProjectID:       "p-failclosed",
 		ChapterIndex:    1,
 		CoreConflict:    "初入险境",
 		AutoCommit:      true,
 		MaxRewriteLoops: 1,
+		OnProgress: func(ev WorkshopEvent) {
+			progressEvents = append(progressEvents, ev)
+		},
 	}
 
 	res, err := workshop.ProduceChapter(context.Background(), req)
@@ -273,51 +329,142 @@ func TestChapterWorkshop_AutoCommit_TolerantAdmitWhenMaxLoopsReached(t *testing.
 		t.Fatalf("ProduceChapter failed: %v", err)
 	}
 
-	if !res.Committed {
-		t.Errorf("expected chapter to be auto-committed via tolerant admission (score: 75), got committed: false")
+	// 1. Assert chapter is NOT committed to repository
+	if res.Committed {
+		t.Errorf("expected Committed == false when verdict is REVISION_NEEDED (score: 75), got true")
 	}
-	if res.Audit.Verdict != domain.ReviewVerdictAccepted {
-		t.Errorf("expected verdict to be ACCEPTED after tolerant admission, got %s", res.Audit.Verdict)
+	if len(mockStore.chapters) != 0 {
+		t.Errorf("expected 0 chapters committed into store, got %d", len(mockStore.chapters))
+	}
+
+	// 2. Assert verdict and score are strictly preserved without soft-flipping
+	if res.Audit.Verdict != domain.ReviewVerdictRevision {
+		t.Errorf("expected verdict REVISION_NEEDED, got %s", res.Audit.Verdict)
+	}
+	if res.Audit.Score != 75 {
+		t.Errorf("expected score 75, got %d", res.Audit.Score)
+	}
+	if res.RewriteLoops != 1 {
+		t.Errorf("expected RewriteLoops 1, got %d", res.RewriteLoops)
+	}
+
+	// 3. Assert machine-readable escalation marker is appended to Issues
+	const expectedMarker = "【ESCALATED】已达最大重写轮次仍未通过，已停线待人工，拒绝自动入库"
+	hasMarker := false
+	for _, issue := range res.Audit.Issues {
+		if strings.Contains(issue, expectedMarker) {
+			hasMarker = true
+			break
+		}
+	}
+	if !hasMarker {
+		t.Errorf("expected machine-readable marker %q in audit issues, got: %v", expectedMarker, res.Audit.Issues)
+	}
+
+	// 4. Assert checkpoint is preserved for human intervention (Fail-Closed)
+	cp, cpErr := mockStore.GetCheckpoint(context.Background(), "p-failclosed", 1)
+	if cpErr != nil || cp == nil {
+		t.Fatalf("expected checkpoint to be preserved for human pickup, got nil (err: %v)", cpErr)
+	}
+	if cp.ChapterIndex != 1 {
+		t.Errorf("expected checkpoint chapter index 1, got %d", cp.ChapterIndex)
+	}
+
+	// 5. Assert OnProgress emitted PhaseComplete with "停线待人工" and valid TotalTokens
+	var haltEvent *WorkshopEvent
+	for _, ev := range progressEvents {
+		if ev.Phase == PhaseComplete && strings.Contains(ev.Message, "停线待人工") {
+			haltEvent = &ev
+			break
+		}
+	}
+	if haltEvent == nil {
+		t.Errorf("expected OnProgress to emit PhaseComplete event containing '停线待人工', events: %+v", progressEvents)
+	} else if haltEvent.TotalTokens <= 0 {
+		t.Errorf("expected halt event to report non-zero TotalTokens, got %d", haltEvent.TotalTokens)
+	}
+}
+
+func TestChapterWorkshop_AutoCommit_AcceptedPassThrough(t *testing.T) {
+	// Fake client that returns ACCEPTED 90 points wrapped in Markdown code fence
+	acceptedJSON := "```json\n" + `{
+		"verdict": "ACCEPTED",
+		"score": 90,
+		"issues": [],
+		"suggestions": "节奏明快，文风契合"
+	}` + "\n```"
+
+	fakeClient := &fakeQualityGateFailClosedLLMClient{
+		beatsJSON: `{
+			"beats": [{"phase": "破局", "tension": 8, "action": "反杀", "expectation_broken": "反派溃败"}],
+			"state_mutation": {"inventory_delta": "+战利品"}
+		}`,
+		renderDraft: "夜幕降临，剑光纵横。林凡手起剑落，击退来犯之敌。",
+		reviewJSON:  acceptedJSON,
+	}
+
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+
+	mockStore := &mockCheckpointWorkshopStore{
+		mockChronicleStore: &mockChronicleStore{
+			project: &domain.Project{
+				ID:             "p-accepted",
+				Title:          "通过入库测试",
+				TargetPlatform: "番茄脑洞",
+			},
+			chapters: []*domain.Chapter{},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	var progressEvents []WorkshopEvent
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-accepted",
+		ChapterIndex:    1,
+		CoreConflict:    "初入险境",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+		OnProgress: func(ev WorkshopEvent) {
+			progressEvents = append(progressEvents, ev)
+		},
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	// 1. Assert chapter is committed
+	if !res.Committed {
+		t.Errorf("expected Committed == true when verdict is ACCEPTED, got false")
 	}
 	if len(mockStore.chapters) != 1 {
 		t.Errorf("expected 1 chapter committed into store, got %d", len(mockStore.chapters))
 	}
 
-	// Scenario 2: Score 50 (< 70) should NOT be auto-admitted
-	mockClientFail := &mockWorkshopLLMClient{
-		beatsJSON:   `{"beats": [{"phase": "破局", "action": "反杀"}], "state_mutation": {}}`,
-		renderDraft: "刀光一闪，敌人应声倒地。",
-		reviewJSON:  `{"verdict": "REVISION", "score": 50, "issues": ["情节断裂严重"]}`,
-	}
-	orchFail := NewOrchestrator(mockClientFail)
-	qGateFail := NewQualityGate(mockClientFail, nil)
-	mockStoreFail := &mockChronicleStore{
-		project: &domain.Project{
-			ID:    "p-fail",
-			Title: "不及格测试",
-		},
-		chapters: []*domain.Chapter{},
-	}
-	chronicleFail := NewCanonChronicle(mockStoreFail)
-	workshopFail := NewChapterWorkshop(orchFail, chronicleFail, qGateFail, mockStoreFail)
-
-	reqFail := WorkshopProduceRequest{
-		ProjectID:       "p-fail",
-		ChapterIndex:    1,
-		CoreConflict:    "初入险境",
-		AutoCommit:      true,
-		MaxRewriteLoops: 1,
+	// 2. Assert verdict is ACCEPTED
+	if res.Audit.Verdict != domain.ReviewVerdictAccepted {
+		t.Errorf("expected verdict ACCEPTED, got %s", res.Audit.Verdict)
 	}
 
-	resFail, err := workshopFail.ProduceChapter(context.Background(), reqFail)
-	if err != nil {
-		t.Fatalf("ProduceChapter failed: %v", err)
+	// 3. Assert checkpoint is cleared after successful commit
+	cp, _ := mockStore.GetCheckpoint(context.Background(), "p-accepted", 1)
+	if cp != nil {
+		t.Errorf("expected checkpoint to be cleared after commit, got %v", cp)
 	}
 
-	if resFail.Committed {
-		t.Errorf("expected chapter NOT to be auto-committed when score is 50 (<70)")
+	// 4. Assert PhaseCommitted was emitted
+	hasCommittedEvent := false
+	for _, ev := range progressEvents {
+		if ev.Phase == PhaseCommitted {
+			hasCommittedEvent = true
+			break
+		}
 	}
-	if resFail.Audit.Verdict == domain.ReviewVerdictAccepted {
-		t.Errorf("expected verdict NOT to be ACCEPTED when score is 50")
+	if !hasCommittedEvent {
+		t.Errorf("expected PhaseCommitted progress event to be emitted")
 	}
 }
