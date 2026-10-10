@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
@@ -9,11 +10,13 @@ import (
 )
 
 type mockLLMClient struct {
-	response string
-	err      error
+	response           string
+	err                error
+	capturedUserPrompt string
 }
 
 func (m *mockLLMClient) ChatCompletion(ctx context.Context, model string, systemPrompt, userPrompt string, temp float64) (string, error) {
+	m.capturedUserPrompt = userPrompt
 	if m.err != nil {
 		return "", m.err
 	}
@@ -21,6 +24,7 @@ func (m *mockLLMClient) ChatCompletion(ctx context.Context, model string, system
 }
 
 func (m *mockLLMClient) ChatCompletionWithUsage(ctx context.Context, model string, systemPrompt, userPrompt string, temp float64) (string, engine.TokenUsage, error) {
+	m.capturedUserPrompt = userPrompt
 	if m.err != nil {
 		return "", engine.TokenUsage{}, m.err
 	}
@@ -28,6 +32,7 @@ func (m *mockLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 }
 
 func (m *mockLLMClient) ChatCompletionStream(ctx context.Context, model string, systemPrompt, userPrompt string, temp float64) (<-chan engine.StreamChunk, error) {
+	m.capturedUserPrompt = userPrompt
 	ch := make(chan engine.StreamChunk, 2)
 	ch <- engine.StreamChunk{Delta: m.response}
 	ch <- engine.StreamChunk{Done: true, Usage: &engine.TokenUsage{PromptTokens: 100, CompletionTokens: 200, TotalTokens: 300}}
@@ -572,5 +577,61 @@ func TestOrchestrator_DeriveBeatsForChapterType(t *testing.T) {
 	}
 	if len(outDefault.Beats) != 2 {
 		t.Errorf("expected 2 beats from DeriveBeatsWithHorizon, got %d", len(outDefault.Beats))
+	}
+}
+
+func TestOrchestrator_DeriveBeatsForChapterType_PlanInjection(t *testing.T) {
+	mockJSON := `{
+		"beats": [
+			{"phase": "蓄力压迫", "tension": 5, "action": "反派拦路叫嚣", "expectation_broken": "主角面色平静", "reader_emotion": "紧张压抑", "info_gap": "反派不知主角已突破"}
+		],
+		"state_mutation": {}
+	}`
+
+	// 1. Non-empty SelectedPlanText: prompt should contain candidate plan header and plan text
+	mock := &mockLLMClient{response: mockJSON}
+	orch := engine.NewOrchestrator(mock)
+	horizon := &engine.CanonHorizon{
+		TargetChapter:    2,
+		SelectedPlanText: "主角暗中联络丹堂长老，借灵火设局反杀",
+	}
+	out, err := orch.DeriveBeatsForChapterType(context.Background(), "mock-model", horizon, "丹堂考核", domain.ChapterTypeEscalation)
+	if err != nil {
+		t.Fatalf("DeriveBeatsForChapterType failed: %v", err)
+	}
+	if len(out.Beats) != 1 {
+		t.Errorf("expected 1 beat, got %d", len(out.Beats))
+	}
+	if !strings.Contains(mock.capturedUserPrompt, "【作者选定的发展路线（剧情树候选计划，非正史）】") {
+		t.Errorf("expected prompt to contain candidate plan header, got: %s", mock.capturedUserPrompt)
+	}
+	if !strings.Contains(mock.capturedUserPrompt, "主角暗中联络丹堂长老，借灵火设局反杀") {
+		t.Errorf("expected prompt to contain candidate plan text, got: %s", mock.capturedUserPrompt)
+	}
+
+	// 2. Empty SelectedPlanText: prompt should NOT contain candidate plan header
+	mockEmpty := &mockLLMClient{response: mockJSON}
+	orchEmpty := engine.NewOrchestrator(mockEmpty)
+	horizonEmpty := &engine.CanonHorizon{
+		TargetChapter:    2,
+		SelectedPlanText: "",
+	}
+	_, err = orchEmpty.DeriveBeatsForChapterType(context.Background(), "mock-model", horizonEmpty, "丹堂考核", domain.ChapterTypeEscalation)
+	if err != nil {
+		t.Fatalf("DeriveBeatsForChapterType failed: %v", err)
+	}
+	if strings.Contains(mockEmpty.capturedUserPrompt, "【作者选定的发展路线（剧情树候选计划，非正史）】") {
+		t.Errorf("expected prompt NOT to contain candidate plan header when plan is empty, got: %s", mockEmpty.capturedUserPrompt)
+	}
+
+	// 3. Nil horizon: should not panic and prompt should NOT contain candidate plan header
+	mockNil := &mockLLMClient{response: mockJSON}
+	orchNil := engine.NewOrchestrator(mockNil)
+	_, err = orchNil.DeriveBeatsForChapterType(context.Background(), "mock-model", nil, "丹堂考核", domain.ChapterTypeEscalation)
+	if err != nil {
+		t.Fatalf("DeriveBeatsForChapterType with nil horizon failed: %v", err)
+	}
+	if strings.Contains(mockNil.capturedUserPrompt, "【作者选定的发展路线（剧情树候选计划，非正史）】") {
+		t.Errorf("expected prompt NOT to contain candidate plan header when horizon is nil, got: %s", mockNil.capturedUserPrompt)
 	}
 }

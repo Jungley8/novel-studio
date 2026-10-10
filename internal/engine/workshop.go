@@ -167,13 +167,14 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 
 	// 0. Checkpoint Inspection & Resumption
 	var (
-		resumedPhase  string
-		beatsOut      *DeriveBeatsOutput
-		draftText     string
-		auditReport   *domain.AuditReport
-		checkpointHit bool
-		rewriteLoops  int
-		rhythmWarning string
+		resumedPhase      string
+		beatsOut          *DeriveBeatsOutput
+		draftText         string
+		auditReport       *domain.AuditReport
+		checkpointHit     bool
+		rewriteLoops      int
+		rhythmWarning     string
+		planInjectWarning string
 	)
 
 	if req.ResumeCheckpoint {
@@ -248,6 +249,24 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	if req.NarrativeStyle != "" {
 		horizon.NarrativeTone = req.NarrativeStyle
 	}
+
+	// 1.1 Inject Active Narrative Tree Plan (if available)
+	// 取活跃剧情树计划（若从 checkpoint 恢复且已有 beats，虽重取计划注入 horizon，但因 beats 已存在会跳过 DeriveBeats 推演，自然跳过再次影响）
+	if ps, ok := w.store.(interface {
+		GetActivePlan(ctx context.Context, projectID string) (*domain.ActivePlan, error)
+	}); ok {
+		plan, pErr := ps.GetActivePlan(ctx, req.ProjectID)
+		if pErr != nil {
+			planInjectWarning = fmt.Sprintf("【计划注入警告】获取活跃计划失败: %v", pErr)
+		} else if plan != nil && plan.Status == domain.PlanStatusActive && strings.TrimSpace(plan.PlanText) != "" {
+			horizon.SelectedPlanText = plan.PlanText
+			emit(WorkshopEvent{
+				Phase:   PhaseHorizon,
+				Message: "已注入作者选定的发展路线（剧情树计划），本章节拍将向该方向对齐",
+			})
+		}
+	}
+
 	emit(WorkshopEvent{Phase: PhaseHorizon, Message: "正史视界组装完成 (3章密封正史与开放伏笔已就绪)"})
 
 	// 1.5 Establish High-Tension Chapter Conflict
@@ -546,6 +565,9 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	if auditReport != nil && rhythmWarning != "" {
 		auditReport.Issues = append(auditReport.Issues, rhythmWarning)
 	}
+	if auditReport != nil && planInjectWarning != "" {
+		auditReport.Issues = append(auditReport.Issues, planInjectWarning)
+	}
 
 	// 5. Targeted Rewrite Loop if revision needed
 	currentDraft := draftText
@@ -704,6 +726,18 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		}
 		if !hasWarn {
 			auditReport.Issues = append(auditReport.Issues, rhythmWarning)
+		}
+	}
+	if auditReport != nil && planInjectWarning != "" {
+		hasWarn := false
+		for _, iss := range auditReport.Issues {
+			if iss == planInjectWarning {
+				hasWarn = true
+				break
+			}
+		}
+		if !hasWarn {
+			auditReport.Issues = append(auditReport.Issues, planInjectWarning)
 		}
 	}
 

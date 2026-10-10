@@ -50,6 +50,7 @@ type CanonHorizon struct {
 	CodexContextText    string                  `json:"codex_context_text,omitempty"`
 	NarrativeTone       string                  `json:"narrative_tone,omitempty"`
 	StyleVaultAnchor    string                  `json:"style_vault_anchor,omitempty"`
+	SelectedPlanText    string                  `json:"selected_plan_text,omitempty"`
 	EchoWarnings        []string                `json:"echo_warnings,omitempty"`
 }
 

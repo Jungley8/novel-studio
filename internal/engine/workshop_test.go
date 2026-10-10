@@ -12,10 +12,11 @@ import (
 )
 
 type mockWorkshopLLMClient struct {
-	beatsJSON   string
-	renderDraft string
-	reviewJSON  string
-	settleJSON  string
+	beatsJSON           string
+	renderDraft         string
+	reviewJSON          string
+	settleJSON          string
+	capturedBeatsPrompt string
 }
 
 func (m *mockWorkshopLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
@@ -26,6 +27,7 @@ func (m *mockWorkshopLLMClient) ChatCompletion(ctx context.Context, model, syste
 		return `{"inventory_delta":"","power_delta":"","character_mutations":[],"evidence":[]}`, nil
 	}
 	if strings.Contains(systemPrompt, "总设计师") {
+		m.capturedBeatsPrompt = userPrompt
 		return m.beatsJSON, nil
 	}
 	if strings.Contains(systemPrompt, "总审编") || strings.Contains(systemPrompt, "总编审") {
@@ -236,7 +238,9 @@ func TestChapterWorkshop_ResumeCheckpoint(t *testing.T) {
 
 type mockCheckpointWorkshopStore struct {
 	*mockChronicleStore
-	cp *domain.ChapterCheckpoint
+	cp            *domain.ChapterCheckpoint
+	activePlan    *domain.ActivePlan
+	activePlanErr error
 }
 
 func (m *mockCheckpointWorkshopStore) SaveCheckpoint(ctx context.Context, checkpoint *domain.ChapterCheckpoint) error {
@@ -251,6 +255,13 @@ func (m *mockCheckpointWorkshopStore) GetCheckpoint(ctx context.Context, project
 func (m *mockCheckpointWorkshopStore) ClearCheckpoint(ctx context.Context, projectID string, chapterIndex int) error {
 	m.cp = nil
 	return nil
+}
+
+func (m *mockCheckpointWorkshopStore) GetActivePlan(ctx context.Context, projectID string) (*domain.ActivePlan, error) {
+	if m.activePlanErr != nil {
+		return nil, m.activePlanErr
+	}
+	return m.activePlan, nil
 }
 
 type fakeQualityGateFailClosedLLMClient struct {
@@ -1652,4 +1663,181 @@ func TestChapterWorkshop_CrossChapterEcho_ListChaptersErrorAppendsWarning(t *tes
 	if !hasListWarning {
 		t.Errorf("expected Audit.Issues to contain '【回声警告】检测失败', got: %v", res.Audit.Issues)
 	}
+}
+
+func TestChapterWorkshop_PlanInjection(t *testing.T) {
+	beatsResp := `{
+		"beats": [
+			{"phase": "蓄力压迫", "tension": 6, "action": "反派带队堵截主角洞府", "expectation_broken": "反派预料主角会求饶"},
+			{"phase": "绝地反转", "tension": 9, "action": "主角引动护山大阵反扣杀", "expectation_broken": "反派全部被镇压"}
+		],
+		"state_mutation": {
+			"inventory_delta": "+战利品储物袋",
+			"power_delta": "威名初显"
+		}
+	}`
+
+	reviewResp := `{
+		"verdict": "ACCEPTED",
+		"score": 90,
+		"issues": [],
+		"suggestions": "节奏明快，表现良好"
+	}`
+
+	setupWorkshop := func(plan *domain.ActivePlan, planErr error) (*ChapterWorkshop, *mockWorkshopLLMClient, *[]WorkshopEvent) {
+		mockClient := &mockWorkshopLLMClient{
+			beatsJSON:   beatsResp,
+			renderDraft: "夜幕低垂。三名黑衣修士逼近洞府门前。林凡指尖轻扣石壁。阵纹骤亮，雷光咆哮如龙！",
+			reviewJSON:  reviewResp,
+		}
+		orch := NewOrchestrator(mockClient)
+		qGate := NewQualityGate(mockClient, nil)
+		mockStore := &mockCheckpointWorkshopStore{
+			mockChronicleStore: &mockChronicleStore{
+				project: &domain.Project{
+					ID:             "p-plan-inj",
+					Title:          "万域封神",
+					TargetPlatform: "番茄脑洞",
+					WorldRules:     "杀生夺灵，因果必报",
+				},
+				codexEntries: []*domain.CodexEntry{
+					{
+						ID:        "codex_p-plan-inj_pro",
+						ProjectID: "p-plan-inj",
+						Category:  domain.CategoryCharacter,
+						Archetype: "PROTAGONIST",
+						Name:      "林凡",
+						Realm:     "练气圆满",
+						Inventory: "青玉短剑",
+					},
+				},
+				chapters: []*domain.Chapter{},
+				hooks:    []*domain.PlotHook{},
+			},
+			activePlan:    plan,
+			activePlanErr: planErr,
+		}
+		chronicle := NewCanonChronicle(mockStore)
+		workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+		var events []WorkshopEvent
+		return workshop, mockClient, &events
+	}
+
+	baseReq := func(events *[]WorkshopEvent) WorkshopProduceRequest {
+		return WorkshopProduceRequest{
+			ProjectID:       "p-plan-inj",
+			ChapterIndex:    1,
+			CoreConflict:    "宗门反派夜袭抢夺古经",
+			ReasoningModel:  "mock-r1",
+			WriterModel:     "mock-v3",
+			ReviewerModel:   "mock-reviewer",
+			WordsTarget:     2000,
+			AutoCommit:      false,
+			MaxRewriteLoops: 1,
+			OnProgress: func(ev WorkshopEvent) {
+				*events = append(*events, ev)
+			},
+		}
+	}
+
+	t.Run("case1_active_with_plantext", func(t *testing.T) {
+		plan := &domain.ActivePlan{
+			ProjectID: "p-plan-inj",
+			Status:    domain.PlanStatusActive,
+			PlanText:  "计划：主角假意投降魔教，实则借雷劫暗算魔尊",
+		}
+		ws, client, events := setupWorkshop(plan, nil)
+		res, err := ws.ProduceChapter(context.Background(), baseReq(events))
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+		if res.Audit == nil {
+			t.Fatalf("expected non-nil Audit report")
+		}
+		if !strings.Contains(client.capturedBeatsPrompt, "作者选定的发展路线") {
+			t.Errorf("expected beats userPrompt to contain '作者选定的发展路线', got: %s", client.capturedBeatsPrompt)
+		}
+		if !strings.Contains(client.capturedBeatsPrompt, "计划：主角假意投降魔教，实则借雷劫暗算魔尊") {
+			t.Errorf("expected beats userPrompt to contain plan text, got: %s", client.capturedBeatsPrompt)
+		}
+		foundEvent := false
+		for _, ev := range *events {
+			if strings.Contains(ev.Message, "已注入作者选定的发展路线") {
+				foundEvent = true
+				break
+			}
+		}
+		if !foundEvent {
+			t.Errorf("expected progress event about plan injection to be emitted")
+		}
+	})
+
+	t.Run("case2_nil_plan", func(t *testing.T) {
+		ws, client, events := setupWorkshop(nil, nil)
+		res, err := ws.ProduceChapter(context.Background(), baseReq(events))
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+		if res.Audit == nil {
+			t.Fatalf("expected non-nil Audit report")
+		}
+		if strings.Contains(client.capturedBeatsPrompt, "作者选定的发展路线") {
+			t.Errorf("expected beats userPrompt NOT to contain candidate plan when plan is nil, got: %s", client.capturedBeatsPrompt)
+		}
+	})
+
+	t.Run("case3_stale_or_consumed_plan", func(t *testing.T) {
+		planStale := &domain.ActivePlan{
+			ProjectID: "p-plan-inj",
+			Status:    domain.PlanStatusStale,
+			PlanText:  "已过期计划内容",
+		}
+		ws, client, events := setupWorkshop(planStale, nil)
+		_, err := ws.ProduceChapter(context.Background(), baseReq(events))
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+		if strings.Contains(client.capturedBeatsPrompt, "作者选定的发展路线") {
+			t.Errorf("expected beats userPrompt NOT to contain stale plan, got: %s", client.capturedBeatsPrompt)
+		}
+
+		planConsumed := &domain.ActivePlan{
+			ProjectID: "p-plan-inj",
+			Status:    domain.PlanStatusConsumed,
+			PlanText:  "已消费计划内容",
+		}
+		ws2, client2, events2 := setupWorkshop(planConsumed, nil)
+		_, err = ws2.ProduceChapter(context.Background(), baseReq(events2))
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+		if strings.Contains(client2.capturedBeatsPrompt, "作者选定的发展路线") {
+			t.Errorf("expected beats userPrompt NOT to contain consumed plan, got: %s", client2.capturedBeatsPrompt)
+		}
+	})
+
+	t.Run("case4_getactiveplan_error", func(t *testing.T) {
+		planErr := errors.New("simulated store disk failure")
+		ws, client, events := setupWorkshop(nil, planErr)
+		res, err := ws.ProduceChapter(context.Background(), baseReq(events))
+		if err != nil {
+			t.Fatalf("ProduceChapter must succeed when GetActivePlan fails, got err: %v", err)
+		}
+		if res.Audit == nil {
+			t.Fatalf("expected non-nil Audit report")
+		}
+		if strings.Contains(client.capturedBeatsPrompt, "作者选定的发展路线") {
+			t.Errorf("expected beats userPrompt NOT to contain plan when store errored, got: %s", client.capturedBeatsPrompt)
+		}
+		hasWarning := false
+		for _, issue := range res.Audit.Issues {
+			if strings.Contains(issue, "【计划注入警告】") && strings.Contains(issue, "simulated store disk failure") {
+				hasWarning = true
+				break
+			}
+		}
+		if !hasWarning {
+			t.Errorf("expected Audit.Issues to contain plan injection warning, got: %v", res.Audit.Issues)
+		}
+	})
 }
