@@ -395,7 +395,12 @@ func (o *Orchestrator) RenderSceneStream(
 	)
 
 	var anchorSection string
-	if horizon.TailAnchor != "" {
+	if horizon.StyleVaultAnchor != "" {
+		anchorSection = fmt.Sprintf("\n【主文风锚定】\n%s\n", horizon.StyleVaultAnchor)
+		if horizon.TailAnchor != "" {
+			anchorSection += fmt.Sprintf("\n【辅·上章收尾文风锚定 (最后200字，请严格承接此腔调与视角)】\n%s\n", horizon.TailAnchor)
+		}
+	} else if horizon.TailAnchor != "" {
 		anchorSection = fmt.Sprintf("\n【上章收尾文风锚定 (最后200字，请严格承接此腔调与视角)】\n%s\n", horizon.TailAnchor)
 	}
 
