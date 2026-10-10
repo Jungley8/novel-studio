@@ -108,6 +108,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/scenes/", s.handleSceneRoutes)
 	s.mux.HandleFunc("/api/workshop/inline-action", s.handleInlineAction)
 	s.mux.HandleFunc("/api/hooks/", s.handleHookDelete)
+	s.mux.HandleFunc("/api/volumes/", s.handleVolumeRoutes)
 	s.mux.HandleFunc("/api/studio/library", s.handleStudioLibrary)
 	s.mux.HandleFunc("/api/studio/chat", s.handleStudioChat)
 
