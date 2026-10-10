@@ -85,9 +85,16 @@ export function createCodexActions(state, notify, dialogs) {
       try {
         const newRels = await api.extractCodexRelations(state.currentProject.id);
         await this.loadCodexRelations();
-        notify('关系图谱推演完成', `已智能识别并更新 ${newRels.length} 条实体关系`, 'success');
+        notify('关系图谱推演完成', `已智能识别并更新 ${newRels.length} 条实体关系`, 'success', 4000, {
+          isTask: true,
+          taskType: 'graph',
+          primaryAction: {
+            label: '前往关系图谱',
+            targetTab: 'graph',
+          },
+        });
       } catch (e) {
-        notify('AI 推演关系失败', e.message, 'error');
+        notify('AI 推演关系失败', e.message, 'error', 4500, { isTask: true, taskType: 'graph' });
       } finally {
         state.isLoading = false;
       }

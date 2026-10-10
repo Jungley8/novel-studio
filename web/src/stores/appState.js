@@ -304,9 +304,11 @@ export function sendSystemNotification(title, body = '') {
   }
 }
 
-// Toast & Message Center Notifications Helper
+// Toast & Task Center Notifications Helper
 export function notify(title, message = '', type = 'info', duration = 3500, meta = {}) {
   const id = 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+
+  // 1. 瞬态浮层反馈 (Toast)
   if (duration > 0) {
     state.toasts.push({ id, title, message, type });
     setTimeout(() => {
@@ -314,27 +316,30 @@ export function notify(title, message = '', type = 'info', duration = 3500, meta
     }, duration);
   }
 
-  // Record in persistent Message Center
-  const newMsg = {
-    id,
-    title,
-    message: typeof message === 'string' ? message : JSON.stringify(message),
-    type,
-    timestamp: new Date().toISOString(),
-    read: false,
-    ...meta,
-  };
-  state.messages.unshift(newMsg);
-  if (state.messages.length > 100) {
-    state.messages.pop();
-  }
-  try {
-    localStorage.setItem('novel_studio_notifications', JSON.stringify(state.messages.slice(0, 50)));
-  } catch (_) {}
+  // 2. 任务中心分流：仅异步长任务、具备后续跳转或异常告警才沉淀至历史记录
+  const isTaskEvent = Boolean(meta.isTask || meta.taskType || meta.primaryAction || type === 'error');
+  if (isTaskEvent) {
+    const newMsg = {
+      id,
+      title,
+      message: typeof message === 'string' ? message : JSON.stringify(message),
+      type,
+      timestamp: new Date().toISOString(),
+      read: false,
+      ...meta,
+    };
+    state.messages.unshift(newMsg);
+    if (state.messages.length > 100) {
+      state.messages.pop();
+    }
+    try {
+      localStorage.setItem('novel_studio_notifications', JSON.stringify(state.messages.slice(0, 50)));
+    } catch (_) {}
 
-  // Trigger Native Desktop Notification on task completion or failure
-  if (type === 'success' || type === 'error' || type === 'warning') {
-    sendSystemNotification(title, typeof message === 'string' ? message : '');
+    // 仅异步长任务完成或发生严重异常时向桌面发送原生通知
+    if ((type === 'success' || type === 'error') && state.enableSystemNotifications) {
+      sendSystemNotification(title, typeof message === 'string' ? message : '');
+    }
   }
 }
 

@@ -82,9 +82,16 @@ export function createProjectActions(state, notify, helpers, dialogs) {
         state.currentProject.framework = res.framework || res;
         if (actionHelpers.loadCodexEntries) await actionHelpers.loadCodexEntries();
         if (actionHelpers.loadCodexRelations) await actionHelpers.loadCodexRelations();
-        notify('设定推演完成', '世界规则、战力阶梯与分卷大纲已构建', 'success');
+        notify('设定推演完成', '世界规则、战力阶梯与分卷大纲已构建', 'success', 4000, {
+          isTask: true,
+          taskType: 'framework',
+          primaryAction: {
+            label: '查看设定',
+            targetTab: 'framework',
+          },
+        });
       } catch (e) {
-        notify('推演设定失败', e.message, 'error');
+        notify('推演设定失败', e.message, 'error', 4500, { isTask: true, taskType: 'framework' });
       } finally {
         state.isLoading = false;
       }
@@ -96,9 +103,16 @@ export function createProjectActions(state, notify, helpers, dialogs) {
       try {
         const prot = await api.analyzeStateMachine(state.currentProject.id);
         state.currentProject.protagonist = prot;
-        notify('状态机分析完成', '主角最新境界与随身物品已同步更新', 'success');
+        notify('状态机分析完成', '主角最新境界与随身物品已同步更新', 'success', 4000, {
+          isTask: true,
+          taskType: 'statemachine',
+          primaryAction: {
+            label: '查看主角状态',
+            targetTab: 'statemachine',
+          },
+        });
       } catch (e) {
-        notify('状态推演分析失败', e.message, 'error');
+        notify('状态推演分析失败', e.message, 'error', 4500, { isTask: true, taskType: 'statemachine' });
       } finally {
         state.isLoading = false;
       }
@@ -110,9 +124,16 @@ export function createProjectActions(state, notify, helpers, dialogs) {
       try {
         const newHooks = await api.extractPlotHooks(state.currentProject.id);
         state.hooks = await api.listHooks(state.currentProject.id);
-        notify('伏笔挖掘完成', `AI 已从剧情中提炼出 ${newHooks.length} 条长线伏笔`, 'success');
+        notify('伏笔挖掘完成', `AI 已从剧情中提炼出 ${newHooks.length} 条长线伏笔`, 'success', 4000, {
+          isTask: true,
+          taskType: 'hooks',
+          primaryAction: {
+            label: '查看伏笔簿',
+            targetTab: 'hooks',
+          },
+        });
       } catch (e) {
-        notify('AI 挖掘伏笔失败', e.message, 'error');
+        notify('AI 挖掘伏笔失败', e.message, 'error', 4500, { isTask: true, taskType: 'hooks' });
       } finally {
         state.isLoading = false;
       }

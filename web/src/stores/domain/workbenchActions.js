@@ -220,7 +220,14 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
           state.pipelineState.message = `第 ${completedResult.chapter_index} 章已完成并保存至章节目录！`;
           state.pipelineState.justCommitted = true;
           state.pipelineState.lastCommittedChapter = completedResult.chapter_index;
-          notify(`第 ${completedResult.chapter_index} 章已完成`, '本章手稿已成功定稿存入目录', 'success');
+          notify(`第 ${completedResult.chapter_index} 章已完成`, '本章手稿已成功定稿存入目录', 'success', 4500, {
+            isTask: true,
+            taskType: 'autonomous_pipeline',
+            primaryAction: {
+              label: '查看已归档章节',
+              targetTab: 'chapters',
+            },
+          });
 
           if (helpers && helpers.selectProject) {
             await helpers.selectProject(state.currentProject.id);
@@ -239,7 +246,18 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
           notify(
             '体检未达标',
             `得分: ${score}分，手稿已保留在工作台，可直接精修`,
-            'warning'
+            'warning',
+            5000,
+            {
+              isTask: true,
+              taskType: 'autonomous_pipeline',
+              primaryAction: {
+                label: '前往精修',
+                targetTab: 'workbench',
+                chapterIndex: nextIndex,
+                step: 5,
+              },
+            }
           );
 
           // 保持在当前章节工坊编辑状态，严禁清除 editingChapterIndex 或关闭工坊
@@ -252,7 +270,10 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
         state.pipelineState.lastFinished = true;
       } catch (err) {
         console.error('runAutonomousPipeline error:', err);
-        notify('生成中断', err.message, 'error');
+        notify('生成中断', err.message, 'error', 5000, {
+          isTask: true,
+          taskType: 'autonomous_pipeline',
+        });
         state.pipelineState.message = '生成失败: ' + err.message;
         state.editingChapterIndex = nextIndex;
       } finally {

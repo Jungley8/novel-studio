@@ -15,14 +15,14 @@
           </div>
           <div>
             <div class="flex items-center gap-2">
-              <h3 class="text-sm font-bold font-serif text-ink-100">消息中心</h3>
+              <h3 class="text-sm font-bold font-serif text-ink-100">任务与通知中心</h3>
               <span 
                 v-if="computedState.unreadMessageCount.value > 0"
                 class="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-brand-rose text-white">
                 {{ computedState.unreadMessageCount.value }} 未读
               </span>
             </div>
-            <p class="text-[10px] text-ink-400">查看任务进度与通知记录。</p>
+            <p class="text-[10px] text-ink-400">查看异步任务进度与可行动项。</p>
           </div>
         </div>
 
@@ -166,6 +166,17 @@
                   <p class="text-[11px] text-ink-300 mt-1 leading-relaxed whitespace-pre-wrap select-text font-sans">
                     {{ msg.message }}
                   </p>
+
+                  <!-- 闭环下一步行动按钮 -->
+                  <div v-if="msg.primaryAction" class="mt-2.5 pt-2 border-t border-atelier-800/80 flex items-center justify-between">
+                    <button 
+                      @click.stop="executePrimaryAction(msg)"
+                      class="px-2.5 py-1 rounded bg-brand-amber/15 hover:bg-brand-amber/25 text-brand-amber border border-brand-amber/35 text-[11px] font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-atelier-sm">
+                      <span>{{ msg.primaryAction.label || '前往查看' }}</span>
+                      <ArrowRight class="w-3 h-3" />
+                    </button>
+                    <span v-if="msg.taskType" class="text-[10px] font-mono text-ink-500 uppercase">{{ msg.taskType }}</span>
+                  </div>
                 </div>
               </div>
 
@@ -243,7 +254,8 @@ import {
   AlertTriangle, 
   Info, 
   Inbox,
-  Copy
+  Copy,
+  ArrowRight
 } from 'lucide-vue-next';
 
 const currentFilter = ref('all');
@@ -310,6 +322,22 @@ function copyMessageText(msg) {
   const text = `${msg.title}\n${msg.message || ''}`;
   navigator.clipboard.writeText(text);
   notify('已复制到剪贴板', text.slice(0, 40) + '...', 'info', 1500);
+}
+
+function executePrimaryAction(msg) {
+  if (!msg.primaryAction) return;
+  const { targetTab, chapterIndex, step } = msg.primaryAction;
+  if (targetTab) {
+    actions.selectTab ? actions.selectTab(targetTab) : (state.activeTab = targetTab);
+  }
+  if (chapterIndex !== undefined && chapterIndex !== null) {
+    state.editingChapterIndex = chapterIndex;
+  }
+  if (step !== undefined && step !== null) {
+    state.activeStep = step;
+  }
+  actions.markMessageRead(msg.id);
+  state.showMessageCenterModal = false;
 }
 
 function formatTime(isoStr) {
