@@ -214,6 +214,7 @@ type AuditReport struct {
 	ParagraphVariance  int           `json:"paragraph_variance,omitempty"`
 	TopRepeatedNgrams  []string      `json:"top_repeated_ngrams,omitempty"`
 	ExclamationDensity float64       `json:"exclamation_density,omitempty"`
+	NeedsHuman         bool          `json:"needs_human,omitempty"`
 	Issues             []string      `json:"issues"`
 	Suggestions        string        `json:"suggestions"`
 	ResolvedHookIDs    []string      `json:"resolved_hook_ids,omitempty"`

@@ -441,7 +441,8 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		if auditReport.Verdict == domain.ReviewVerdictAccepted {
 			shouldCommit = true
 		} else {
-			// TODO(P1): domain.AuditReport 引入 NeedsHuman 结构化字段后在此处赋值标记
+			// TODO: Downstream callers (Frontend, CLI, batch production orchestrator) consume NeedsHuman directly instead of matching Issues text.
+			auditReport.NeedsHuman = true
 			auditReport.Issues = append(auditReport.Issues, "【ESCALATED】已达最大重写轮次仍未通过，已停线待人工，拒绝自动入库")
 			emit(WorkshopEvent{
 				Phase:       PhaseComplete,
