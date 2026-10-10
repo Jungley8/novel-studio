@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/engine"
+	"github.com/Jungley8/novel-studio/internal/store"
 )
 
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -274,6 +276,10 @@ func (s *Server) handleProjectChapterSub(w http.ResponseWriter, r *http.Request,
 		}
 		cp, updatedProj, err := s.store.UncommitChapter(ctx, projectID, chapterIndex)
 		if err != nil {
+			if errors.Is(err, store.ErrNonLatestChapter) {
+				errorResponse(w, http.StatusConflict, err.Error())
+				return
+			}
 			errorResponse(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -302,6 +308,10 @@ func (s *Server) handleProjectChapterSub(w http.ResponseWriter, r *http.Request,
 		if toDraft {
 			cp, updatedProj, err := s.store.UncommitChapter(ctx, projectID, chapterIndex)
 			if err != nil {
+				if errors.Is(err, store.ErrNonLatestChapter) {
+					errorResponse(w, http.StatusConflict, err.Error())
+					return
+				}
 				errorResponse(w, http.StatusBadRequest, err.Error())
 				return
 			}

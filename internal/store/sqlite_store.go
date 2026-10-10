@@ -1236,6 +1236,33 @@ func (s *SQLiteStore) ListChapters(ctx context.Context, projectID string) ([]*do
 	return list, rows.Err()
 }
 
+// ErrNonLatestChapter is returned when uncommitting a chapter that is not the latest committed chapter.
+var ErrNonLatestChapter = errors.New("cannot uncommit non-latest chapter")
+
+// NonLatestChapterError records details when attempting to uncommit a non-latest chapter.
+type NonLatestChapterError struct {
+	ChapterIndex int
+	MaxChapter   int
+	Downstream   []int
+}
+
+func (e *NonLatestChapterError) Error() string {
+	var downstreamStr string
+	if len(e.Downstream) == 1 {
+		downstreamStr = fmt.Sprintf("%d", e.Downstream[0])
+	} else if len(e.Downstream) > 1 {
+		downstreamStr = fmt.Sprintf("%d..%d", e.Downstream[0], e.Downstream[len(e.Downstream)-1])
+	}
+	return fmt.Sprintf("cannot uncommit chapter %d: chapters %s exist; uncommit chapter %d first or rewrite from latest",
+		e.ChapterIndex, downstreamStr, e.MaxChapter)
+}
+
+func (e *NonLatestChapterError) Unwrap() error {
+	return ErrNonLatestChapter
+}
+
+var rollbackStateMutation = domain.RollbackStateMutation
+
 func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, *domain.Project, error) {
 	if projectID == "" {
 		return nil, nil, errors.New("projectID cannot be empty")
@@ -1253,6 +1280,36 @@ func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, cha
 			_ = tx.Rollback()
 		}
 	}()
+
+	// 0. Guard: only the latest chapter can be uncommitted
+	var maxChapter int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(chapter_index), 0) FROM chapters WHERE project_id = ?`, projectID).Scan(&maxChapter); err != nil {
+		return nil, nil, fmt.Errorf("query max chapter: %w", err)
+	}
+	if chapterIndex < maxChapter {
+		rows, err := tx.QueryContext(ctx, `SELECT chapter_index FROM chapters WHERE project_id = ? AND chapter_index > ? ORDER BY chapter_index ASC`, projectID, chapterIndex)
+		if err != nil {
+			return nil, nil, fmt.Errorf("query downstream chapters: %w", err)
+		}
+		var downstream []int
+		for rows.Next() {
+			var idx int
+			if err := rows.Scan(&idx); err != nil {
+				rows.Close()
+				return nil, nil, fmt.Errorf("scan downstream chapter: %w", err)
+			}
+			downstream = append(downstream, idx)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, nil, fmt.Errorf("downstream chapters rows: %w", err)
+		}
+		return nil, nil, &NonLatestChapterError{
+			ChapterIndex: chapterIndex,
+			MaxChapter:   maxChapter,
+			Downstream:   downstream,
+		}
+	}
 
 	// 1. Fetch the chapter
 	query := `
@@ -1349,7 +1406,9 @@ func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, cha
 	// 5. Rollback protagonist mutations
 	protagonist, _ := s.getProtagonistTx(ctx, tx, projectID)
 	if protagonist != nil {
-		_, _ = domain.RollbackStateMutation(protagonist, c.StateMutation)
+		if _, err := rollbackStateMutation(protagonist, c.StateMutation); err != nil {
+			return nil, nil, fmt.Errorf("rollback protagonist mutation: %w", err)
+		}
 		protagonist.UpdatedAt = time.Now()
 		var levelJSON, itemsJSON string
 		if protagonist.StructuredLevel != nil {
@@ -1362,10 +1421,12 @@ func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, cha
 				itemsJSON = string(ib)
 			}
 		}
-		_, _ = tx.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE codex_entries SET realm = ?, inventory = ?, structured_level_json = ?, structured_items_json = ?, updated_at = ? WHERE id = ?`,
 			protagonist.Realm, protagonist.Inventory, levelJSON, itemsJSON, protagonist.UpdatedAt, protagonist.ID,
-		)
+		); err != nil {
+			return nil, nil, fmt.Errorf("update protagonist codex entry: %w", err)
+		}
 	}
 
 	// 6. Revert resolved plot hooks if any were resolved in this chapter
@@ -1373,12 +1434,31 @@ func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, cha
 		for _, hid := range c.Review.ResolvedHookIDs {
 			hid = strings.TrimSpace(hid)
 			if hid != "" {
-				_, _ = tx.ExecContext(ctx,
+				if _, err := tx.ExecContext(ctx,
 					`UPDATE plot_hooks SET status = 'OPEN' WHERE project_id = ? AND (id = ? OR title = ?)`,
 					projectID, hid, hid,
-				)
+				); err != nil {
+					return nil, nil, fmt.Errorf("revert resolved hook in tx: %w", err)
+				}
 			}
 		}
+	}
+
+	// 6b. Recalculate FERMENTING vs OPEN hooks for this project based on remaining committed chapters
+	var maxRemaining int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(chapter_index), 0) FROM chapters WHERE project_id = ?`, projectID).Scan(&maxRemaining); err != nil {
+		return nil, nil, fmt.Errorf("query max remaining chapter: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE plot_hooks 
+		SET status = CASE 
+			WHEN target_chapter <= ? THEN 'FERMENTING' 
+			ELSE 'OPEN' 
+		END 
+		WHERE project_id = ? AND status IN ('OPEN', 'FERMENTING')
+	`, maxRemaining, projectID); err != nil {
+		return nil, nil, fmt.Errorf("recalculate plot hooks in tx: %w", err)
 	}
 
 	// 7. Delete any codex progressions triggered from this chapter
