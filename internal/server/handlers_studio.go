@@ -58,8 +58,11 @@ func (s *Server) handleStudioLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Gather all projects, chapters, and hooks; determine global max archived chapter (全库最大已归档章)
-	globalMaxArchivedChapter := 0
+	// 1. Gather all projects, chapters, and hooks.
+	// Overdue is evaluated per project: a hook is overdue only when its OWN
+	// project's progress has passed the hook's target chapter. A global max
+	// across projects would wrongly mark a slow project's hooks overdue
+	// just because another project is further along.
 
 	type projectSnapshot struct {
 		project  *domain.Project
@@ -72,11 +75,6 @@ func (s *Server) handleStudioLibrary(w http.ResponseWriter, r *http.Request) {
 		chapters, err := s.store.ListChapters(ctx, p.ID)
 		if err != nil {
 			chapters = []*domain.Chapter{}
-		}
-		for _, ch := range chapters {
-			if ch.ChapterIndex > globalMaxArchivedChapter {
-				globalMaxArchivedChapter = ch.ChapterIndex
-			}
 		}
 
 		hooks, err := s.store.ListPlotHooks(ctx, p.ID)
@@ -94,12 +92,18 @@ func (s *Server) handleStudioLibrary(w http.ResponseWriter, r *http.Request) {
 	// 2. Aggregate per-project metrics
 	items := make([]StudioLibraryItem, 0, len(snapshots))
 	for _, snap := range snapshots {
+		projMaxChapter := 0
+		for _, ch := range snap.chapters {
+			if ch.ChapterIndex > projMaxChapter {
+				projMaxChapter = ch.ChapterIndex
+			}
+		}
 		openHooks := 0
 		overdueHooks := 0
 		for _, h := range snap.hooks {
 			if h.Status == domain.HookStatusOpen {
 				openHooks++
-				if globalMaxArchivedChapter > 0 && h.TargetChapter < globalMaxArchivedChapter {
+				if projMaxChapter > 0 && h.TargetChapter < projMaxChapter {
 					overdueHooks++
 				}
 			}

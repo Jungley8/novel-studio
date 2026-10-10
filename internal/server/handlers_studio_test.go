@@ -123,7 +123,7 @@ func TestStudioLibrary_MultiProject(t *testing.T) {
 		CreatedChapter: 1,
 	})
 
-	// 2. Project 2: 5 chapters (sets global max archived chapter to 5), 1 open hook (target chapter 8 - not overdue)
+	// 2. Project 2: 5 chapters, 1 open hook (target chapter 8 - not overdue: 8 >= own max 5)
 	p2 := &domain.Project{
 		ID:             "proj-lib-2",
 		Title:          "星界求生",
@@ -153,6 +153,34 @@ func TestStudioLibrary_MultiProject(t *testing.T) {
 		CreatedChapter: 3,
 	})
 
+	// 3. Project 3: 1 chapter, 1 open hook targeting chapter 3.
+	// Distinguishes per-project overdue from global-max overdue: under a
+	// global max (5, set by project 2) this hook would count overdue (3 < 5),
+	// but against its own progress (max 1) it must NOT.
+	p3 := &domain.Project{
+		ID:             "proj-lib-3",
+		Title:          "慢热种田文",
+		TargetPlatform: "通用网文",
+	}
+	_ = s.SaveProject(ctx, p3)
+	_ = s.SaveChapter(ctx, &domain.Chapter{
+		ID:           "ch-3-1",
+		ProjectID:    p3.ID,
+		ChapterIndex: 1,
+		Title:        "开篇",
+		Content:      "种田正文...",
+		WordCount:    2000,
+		LinterPassed: true,
+	})
+	_ = s.SavePlotHook(ctx, &domain.PlotHook{
+		ID:             "hook-4",
+		ProjectID:      p3.ID,
+		Title:          "远期灌溉渠伏线",
+		TargetChapter:  3,
+		Status:         domain.HookStatusOpen,
+		CreatedChapter: 1,
+	})
+
 	// 3. Request GET /api/studio/library
 	req := httptest.NewRequest(http.MethodGet, "/api/studio/library", nil)
 	w := httptest.NewRecorder()
@@ -167,8 +195,8 @@ func TestStudioLibrary_MultiProject(t *testing.T) {
 		t.Fatalf("unmarshal error: %v", err)
 	}
 
-	if len(items) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(items))
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(items))
 	}
 
 	itemMap := make(map[string]server.StudioLibraryItem)
@@ -187,7 +215,7 @@ func TestStudioLibrary_MultiProject(t *testing.T) {
 		t.Errorf("project 1 open_hooks = %d, want 1", it1.OpenHooks)
 	}
 	if it1.OverdueHooks != 1 {
-		t.Errorf("project 1 overdue_hooks = %d, want 1 (target chapter 2 < global max 5)", it1.OverdueHooks)
+		t.Errorf("project 1 overdue_hooks = %d, want 1 (target chapter 2 < own max 3)", it1.OverdueHooks)
 	}
 
 	it2, ok := itemMap[p2.ID]
@@ -201,7 +229,21 @@ func TestStudioLibrary_MultiProject(t *testing.T) {
 		t.Errorf("project 2 open_hooks = %d, want 1", it2.OpenHooks)
 	}
 	if it2.OverdueHooks != 0 {
-		t.Errorf("project 2 overdue_hooks = %d, want 0 (target chapter 8 >= global max 5)", it2.OverdueHooks)
+		t.Errorf("project 2 overdue_hooks = %d, want 0 (target chapter 8 >= own max 5)", it2.OverdueHooks)
+	}
+
+	it3, ok := itemMap[p3.ID]
+	if !ok {
+		t.Fatalf("project 3 not found in response")
+	}
+	if it3.ArchivedChapters != 1 {
+		t.Errorf("project 3 archived_chapters = %d, want 1", it3.ArchivedChapters)
+	}
+	if it3.OpenHooks != 1 {
+		t.Errorf("project 3 open_hooks = %d, want 1", it3.OpenHooks)
+	}
+	if it3.OverdueHooks != 0 {
+		t.Errorf("project 3 overdue_hooks = %d, want 0 (target 3 >= own max 1; must not leak project 2's progress)", it3.OverdueHooks)
 	}
 }
 
