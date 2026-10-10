@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
+	"github.com/Jungley8/novel-studio/internal/engine"
 )
 
 func (s *Server) handleProjectIntents(w http.ResponseWriter, r *http.Request, projectID string, subParts []string) {
@@ -40,7 +41,97 @@ func (s *Server) handleProjectIntents(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 
-	// 2. /api/projects/{id}/intents/{chapter}
+	// 2. POST /api/projects/{id}/intents/generate (批量推演)
+	if len(subParts) == 1 && subParts[0] == "generate" {
+		if r.Method != http.MethodPost {
+			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+
+		var req struct {
+			VolumeIndex int `json:"volume_index"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			errorResponse(w, http.StatusBadRequest, "invalid json: "+err.Error())
+			return
+		}
+		if req.VolumeIndex <= 0 {
+			errorResponse(w, http.StatusBadRequest, "volume_index must be positive")
+			return
+		}
+
+		proj, err := s.store.GetProject(ctx, projectID)
+		if err != nil || proj == nil {
+			errorResponse(w, http.StatusNotFound, "project not found")
+			return
+		}
+
+		if proj.Framework == nil {
+			errorResponse(w, http.StatusBadRequest, "framework not bootstrapped")
+			return
+		}
+
+		arcs := engine.BackfillVolumeArcs(proj.Framework.VolumeArcs)
+		var targetArc *domain.VolumeArc
+		for _, arc := range arcs {
+			if arc.VolumeIndex == req.VolumeIndex {
+				targetArc = &arc
+				break
+			}
+		}
+		if targetArc == nil {
+			errorResponse(w, http.StatusNotFound, "volume arc not found")
+			return
+		}
+
+		existingList, err := s.store.ListChapterIntents(ctx, projectID, req.VolumeIndex)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		existing := make(map[int]bool, len(existingList))
+		for _, item := range existingList {
+			if item != nil {
+				existing[item.ChapterIndex] = true
+			}
+		}
+
+		if s.orch == nil {
+			errorResponse(w, http.StatusInternalServerError, "orchestrator not initialized")
+			return
+		}
+
+		reasoningModel := ""
+		if s.cfg != nil {
+			reasoningModel = s.cfg.ReasoningModel
+		}
+
+		intents, tokens, err := s.orch.GenerateVolumeIntents(ctx, reasoningModel, proj, *targetArc, existing)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		for i := range intents {
+			if err := s.store.SaveChapterIntent(ctx, &intents[i]); err != nil {
+				errorResponse(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+
+		if intents == nil {
+			intents = []domain.ChapterIntent{}
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"created": len(intents),
+			"intents": intents,
+			"tokens":  tokens,
+		})
+		return
+	}
+
+	// 3. /api/projects/{id}/intents/{chapter}
 	if len(subParts) == 1 {
 		chapterIndex, err := strconv.Atoi(subParts[0])
 		if err != nil || chapterIndex <= 0 {

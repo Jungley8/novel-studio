@@ -544,6 +544,36 @@ func (s *Server) handleProjectCodex(w http.ResponseWriter, r *http.Request, proj
 	errorResponse(w, http.StatusNotFound, "route not found")
 }
 
+func appendIntentConstraints(prompt string, intent *domain.ChapterIntent) string {
+	if intent == nil {
+		return prompt
+	}
+	var constraints []string
+	if strings.TrimSpace(intent.POV) != "" {
+		constraints = append(constraints, fmt.Sprintf("视角人物(POV): %s", strings.TrimSpace(intent.POV)))
+	}
+	if len(intent.EmotionCurve) > 0 {
+		constraints = append(constraints, fmt.Sprintf("情绪曲线: %s", strings.Join(intent.EmotionCurve, " -> ")))
+	}
+	if intent.TensionTarget > 0 {
+		constraints = append(constraints, fmt.Sprintf("张力目标: %d/10", intent.TensionTarget))
+	}
+	if len(intent.HookPlants) > 0 {
+		constraints = append(constraints, fmt.Sprintf("埋设伏笔/钩子: %s", strings.Join(intent.HookPlants, "、")))
+	}
+	if len(intent.HookPayoffs) > 0 {
+		constraints = append(constraints, fmt.Sprintf("回收伏笔/钩子: %s", strings.Join(intent.HookPayoffs, "、")))
+	}
+	if len(constraints) == 0 {
+		return prompt
+	}
+	block := "【章节意图约束】\n" + strings.Join(constraints, "\n")
+	if strings.TrimSpace(prompt) == "" {
+		return block
+	}
+	return strings.TrimSpace(prompt) + "\n\n" + block
+}
+
 func (s *Server) handleProjectMatrix(w http.ResponseWriter, r *http.Request, projectID string, subParts []string) {
 	ctx := r.Context()
 	if len(subParts) > 0 && subParts[0] == "ai-generate" {
@@ -557,11 +587,30 @@ func (s *Server) handleProjectMatrix(w http.ResponseWriter, r *http.Request, pro
 			return
 		}
 		proj, err := s.store.GetProject(ctx, projectID)
-		if err != nil {
+		if err != nil || proj == nil {
 			errorResponse(w, http.StatusNotFound, "project not found")
 			return
 		}
-		scenes, _, err := s.orch.GenerateMatrixScenes(ctx, s.cfg.ReasoningModel, proj, req)
+
+		intent, _ := s.store.GetChapterIntent(ctx, projectID, req.ChapterIndex)
+		if intent != nil {
+			if strings.TrimSpace(req.CoreConflict) == "" && strings.TrimSpace(intent.Conflict) != "" {
+				req.CoreConflict = intent.Conflict
+			}
+			req.Prompt = appendIntentConstraints(req.Prompt, intent)
+		}
+
+		if s.orch == nil {
+			errorResponse(w, http.StatusInternalServerError, "orchestrator not initialized")
+			return
+		}
+
+		reasoningModel := ""
+		if s.cfg != nil {
+			reasoningModel = s.cfg.ReasoningModel
+		}
+
+		scenes, _, err := s.orch.GenerateMatrixScenes(ctx, reasoningModel, proj, req)
 		if err != nil {
 			errorResponse(w, http.StatusInternalServerError, "generate matrix scenes failed: "+err.Error())
 			return
@@ -574,15 +623,154 @@ func (s *Server) handleProjectMatrix(w http.ResponseWriter, r *http.Request, pro
 				break
 			}
 		}
+
+		intentID := ""
+		if intent != nil {
+			if strings.TrimSpace(intent.ID) != "" {
+				intentID = intent.ID
+			} else {
+				intentID = fmt.Sprintf("intent_%s_%d", projectID, req.ChapterIndex)
+			}
+		}
+
 		for i := range scenes {
 			if chapterID != "" {
 				scenes[i].ChapterID = chapterID
 			} else {
 				scenes[i].ChapterID = fmt.Sprintf("ch_%d", req.ChapterIndex)
 			}
+			scenes[i].ChapterIntentID = intentID
 			_ = s.store.SaveScene(ctx, &scenes[i])
 		}
 		jsonResponse(w, http.StatusOK, scenes)
+		return
+	}
+
+	if len(subParts) > 0 && subParts[0] == "generate-from-intents" {
+		if r.Method != http.MethodPost {
+			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var req struct {
+			VolumeIndex int `json:"volume_index"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			errorResponse(w, http.StatusBadRequest, "invalid json: "+err.Error())
+			return
+		}
+		if req.VolumeIndex <= 0 {
+			errorResponse(w, http.StatusBadRequest, "volume_index must be positive")
+			return
+		}
+		proj, err := s.store.GetProject(ctx, projectID)
+		if err != nil || proj == nil {
+			errorResponse(w, http.StatusNotFound, "project not found")
+			return
+		}
+
+		intents, err := s.store.ListChapterIntents(ctx, projectID, req.VolumeIndex)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if len(intents) == 0 {
+			errorResponse(w, http.StatusBadRequest, "该卷暂无意图卡，请先推演")
+			return
+		}
+
+		chapters, _ := s.store.ListChapters(ctx, projectID)
+		chapterIDMap := make(map[int]string)
+		for _, ch := range chapters {
+			if ch != nil {
+				chapterIDMap[ch.ChapterIndex] = ch.ID
+			}
+		}
+
+		type resultItem struct {
+			ChapterIndex  int    `json:"chapter_index"`
+			OK            bool   `json:"ok"`
+			ScenesCreated int    `json:"scenes_created"`
+			Error         string `json:"error"`
+		}
+
+		results := make([]resultItem, 0, len(intents))
+		totalScenes := 0
+
+		reasoningModel := ""
+		if s.cfg != nil {
+			reasoningModel = s.cfg.ReasoningModel
+		}
+
+		for _, intent := range intents {
+			if intent == nil || strings.TrimSpace(intent.Conflict) == "" {
+				continue
+			}
+
+			prompt := appendIntentConstraints("", intent)
+			sceneReq := engine.MatrixSceneGenerateRequest{
+				VolumeIndex:  req.VolumeIndex,
+				ChapterIndex: intent.ChapterIndex,
+				ChapterTitle: fmt.Sprintf("第 %d 章", intent.ChapterIndex),
+				CoreConflict: intent.Conflict,
+				Prompt:       prompt,
+			}
+
+			if s.orch == nil {
+				results = append(results, resultItem{
+					ChapterIndex:  intent.ChapterIndex,
+					OK:            false,
+					ScenesCreated: 0,
+					Error:         "orchestrator not initialized",
+				})
+				continue
+			}
+
+			scenes, _, genErr := s.orch.GenerateMatrixScenes(ctx, reasoningModel, proj, sceneReq)
+			if genErr != nil {
+				results = append(results, resultItem{
+					ChapterIndex:  intent.ChapterIndex,
+					OK:            false,
+					ScenesCreated: 0,
+					Error:         genErr.Error(),
+				})
+				continue
+			}
+
+			chID := chapterIDMap[intent.ChapterIndex]
+			if chID == "" {
+				chID = fmt.Sprintf("ch_%d", intent.ChapterIndex)
+			}
+
+			intentID := intent.ID
+			if strings.TrimSpace(intentID) == "" {
+				intentID = fmt.Sprintf("intent_%s_%d", projectID, intent.ChapterIndex)
+			}
+
+			for i := range scenes {
+				scenes[i].ChapterID = chID
+				scenes[i].ChapterIntentID = intentID
+				_ = s.store.SaveScene(ctx, &scenes[i])
+			}
+
+			totalScenes += len(scenes)
+			results = append(results, resultItem{
+				ChapterIndex:  intent.ChapterIndex,
+				OK:            true,
+				ScenesCreated: len(scenes),
+				Error:         "",
+			})
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"volume_index": req.VolumeIndex,
+			"total_scenes": totalScenes,
+			"results":      results,
+		})
+		return
+	}
+
+	if len(subParts) > 0 {
+		errorResponse(w, http.StatusNotFound, "route not found")
 		return
 	}
 
