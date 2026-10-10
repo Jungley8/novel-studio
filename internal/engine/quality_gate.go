@@ -11,17 +11,25 @@ import (
 )
 
 // QualityGate unifies algorithmic statistical linting and semantic LLM review
-// into a single cohesive auditing seam.
+// into a single cohesive auditing seam, powered by the multi-agent ReviewCourt.
 type QualityGate struct {
 	linter *Linter
 	client LLMClient
+	court  *ReviewCourt
 }
 
 func NewQualityGate(client LLMClient, customBanned []string) *QualityGate {
+	linter := NewLinter(customBanned)
 	return &QualityGate{
-		linter: NewLinter(customBanned),
+		linter: linter,
 		client: client,
+		court:  NewReviewCourt(client, linter),
 	}
+}
+
+// ReviewCourt returns the underlying multi-agent judicial review court.
+func (q *QualityGate) ReviewCourt() *ReviewCourt {
+	return q.court
 }
 
 // FastAnalyze provides 0ms algorithmic quality analysis (burstiness & cliché detection).
@@ -42,8 +50,26 @@ func (q *QualityGate) Audit(
 	return q.AuditWithHooks(ctx, reviewerModel, project, chapterIndex, beats, nil, draftText)
 }
 
-// AuditWithHooks extends Audit with open plot hook awareness to verify hook payoffs and resolutions.
+// AuditWithHooks extends Audit with open plot hook awareness to verify hook payoffs and resolutions,
+// delegating to the three-division ReviewCourt under Fail-Closed ChiefJudge.
 func (q *QualityGate) AuditWithHooks(
+	ctx context.Context,
+	reviewerModel string,
+	project *domain.Project,
+	chapterIndex int,
+	beats []domain.SceneBeat,
+	activeHooks []*domain.PlotHook,
+	draftText string,
+) (*domain.AuditReport, TokenUsage, error) {
+	courtReport, usage, err := q.court.ChiefJudge(ctx, reviewerModel, project, chapterIndex, beats, activeHooks, draftText)
+	if err != nil {
+		return nil, usage, err
+	}
+	return courtReport.AuditReport, usage, nil
+}
+
+// AuditSingle runs a single-reviewer audit pass using decideVerdict for fail-closed gating.
+func (q *QualityGate) AuditSingle(
 	ctx context.Context,
 	reviewerModel string,
 	project *domain.Project,
@@ -188,14 +214,8 @@ func (q *QualityGate) AuditWithHooks(
 		finalScore = 0
 	}
 
-	// Verdict check: if LLM rejected or score < 80 or cliches/exclamation exist, enforce REVISION_NEEDED.
-	// Semantic reviewer veto is fail-closed and cannot be overridden by score.
-	verdict := out.Verdict
-	if out.Verdict == domain.ReviewVerdictAccepted && finalScore >= 80 && len(heuristic.HitBannedWords) == 0 && !exclExcessive {
-		verdict = domain.ReviewVerdictAccepted
-	} else {
-		verdict = domain.ReviewVerdictRevision
-	}
+	// Verdict check: enforce unified Fail-Closed decideVerdict gating.
+	verdict := decideVerdict(out.Verdict, finalScore, heuristic)
 
 	return &domain.AuditReport{
 		Verdict:            verdict,

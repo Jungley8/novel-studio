@@ -65,8 +65,8 @@ func TestQualityGate_Audit(t *testing.T) {
 	if report.Score != 88 {
 		t.Errorf("expected score 88, got %d", report.Score)
 	}
-	if usage.TotalTokens != 100 {
-		t.Errorf("expected usage 100 tokens, got %d", usage.TotalTokens)
+	if usage.TotalTokens != 300 {
+		t.Errorf("expected usage 300 tokens (3 divisions * 100), got %d", usage.TotalTokens)
 	}
 
 	// 2. Audit text containing cliché (must penalize and flip to REVISION_NEEDED)

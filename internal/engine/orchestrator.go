@@ -392,17 +392,25 @@ func (o *Orchestrator) ReviewDraft(
 		return nil, usage, fmt.Errorf("parse review JSON failed (raw: %s): %w", resp, err)
 	}
 
-	if out.Verdict != domain.ReviewVerdictAccepted && out.Verdict != domain.ReviewVerdictRevision {
-		if out.Score >= 80 {
-			out.Verdict = domain.ReviewVerdictAccepted
-		} else {
-			out.Verdict = domain.ReviewVerdictRevision
-		}
+	heuristic := NewLinter(nil).Analyze(draftText)
+	finalScore := out.Score
+	if len(heuristic.HitBannedWords) > 0 {
+		finalScore -= len(heuristic.HitBannedWords) * 4
 	}
+	if IsExclamationExcessive(draftText, heuristic.ExclamationDensity) {
+		finalScore -= 6
+	}
+	if len(heuristic.TopRepeatedNgrams) >= 3 {
+		finalScore -= 4
+	}
+	if finalScore < 0 {
+		finalScore = 0
+	}
+	out.Verdict = decideVerdict(out.Verdict, finalScore, heuristic)
 
 	return &domain.ReviewResult{
 		Verdict:         out.Verdict,
-		Score:           out.Score,
+		Score:           finalScore,
 		Issues:          out.Issues,
 		Suggestions:     out.Suggestions,
 		ResolvedHookIDs: out.ResolvedHookIDs,
