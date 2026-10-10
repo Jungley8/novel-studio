@@ -190,9 +190,10 @@ export const api = {
   updateFramework: (projectId, data) => apiFetch(`/api/projects/${projectId}/framework`, { method: 'PUT', body: JSON.stringify(data) }),
   bootstrapFramework: (projectId, concept) => apiFetch(`/api/projects/${projectId}/framework/bootstrap`, { method: 'POST', body: JSON.stringify({ concept }) }),
 
-  // Analytics
+  // Analytics & Quality Bench
   getAnalyticsHeatmap: (projectId) => apiFetch(`/api/projects/${projectId}/analytics/heatmap`),
   getAnalyticsTension: (projectId) => apiFetch(`/api/projects/${projectId}/analytics/tension`),
+  getBenchReport: (projectId) => apiFetch(`/api/projects/${projectId}/bench`),
 
   // Activity Ledger (内容生产与变更时间线)
   listActivity: (projectId, params = {}) => {
