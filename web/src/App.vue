@@ -12,6 +12,7 @@
       <div class="flex-1 flex flex-col min-h-0 overflow-hidden relative">
         <WorkbenchView v-show="state.activeTab === 'workbench'" />
         <MatrixView v-show="state.activeTab === 'matrix'" />
+        <IntentsView v-show="state.activeTab === 'intents'" />
         <CodexView v-show="state.activeTab === 'codex'" />
         <FrameworkView v-show="state.activeTab === 'framework'" />
         <StateMachineView v-show="state.activeTab === 'statemachine'" />
@@ -68,6 +69,7 @@ import GlobalDialogModal from './components/common/GlobalDialogModal.vue';
 // 10 大业务功能视图
 import WorkbenchView from './views/WorkbenchView.vue';
 import MatrixView from './views/MatrixView.vue';
+import IntentsView from './views/IntentsView.vue';
 import CodexView from './views/CodexView.vue';
 import FrameworkView from './views/FrameworkView.vue';
 import StateMachineView from './views/StateMachineView.vue';

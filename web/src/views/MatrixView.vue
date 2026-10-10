@@ -28,6 +28,13 @@
           <RefreshCw class="w-3.5 h-3.5 text-ink-400" />
           <span>刷新</span>
         </button>
+        <button 
+          @click="openBatchSplitModal" 
+          class="flex items-center gap-1.5 px-3 py-1.5 bg-brand-amber/15 hover:bg-brand-amber/25 text-brand-amber text-xs font-semibold rounded-md border border-brand-amber/40 shadow-amber-glow transition cursor-pointer"
+          title="根据章节意图卡批量拆解生成戏剧场次">
+          <Sparkles class="w-3.5 h-3.5" />
+          <span>按意图批量拆场</span>
+        </button>
       </div>
     </div>
 
@@ -101,15 +108,23 @@
                     <span class="text-xs font-mono font-bold text-ink-400 shrink-0">场 {{ sc.scene_index }}:</span>
                     <span class="text-xs font-semibold text-ink-100 truncate">{{ sc.title || '未命名场景' }}</span>
                   </div>
-                  <span 
-                    class="text-[10px] px-2 py-0.5 rounded font-mono font-bold shrink-0" 
-                    :class="sc.tension_level >= 8 
-                      ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30' 
-                      : (sc.tension_level >= 5 
-                        ? 'bg-brand-amber/15 text-brand-amber border border-brand-amber/30' 
-                        : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30')">
-                    张力 {{ sc.tension_level }}
-                  </span>
+                  <div class="flex items-center gap-1.5 shrink-0">
+                    <span 
+                      v-if="sc.chapter_intent_id"
+                      class="text-[9px] px-1.5 py-0.5 rounded font-mono font-medium bg-brand-amber/15 text-brand-amber border border-brand-amber/30"
+                      title="关联章节意图卡">
+                      意图联动
+                    </span>
+                    <span 
+                      class="text-[10px] px-2 py-0.5 rounded font-mono font-bold" 
+                      :class="sc.tension_level >= 8 
+                        ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30' 
+                        : (sc.tension_level >= 5 
+                          ? 'bg-brand-amber/15 text-brand-amber border border-brand-amber/30' 
+                          : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30')">
+                      张力 {{ sc.tension_level }}
+                    </span>
+                  </div>
                 </div>
 
                 <div class="text-[11px] text-ink-300 space-y-1">
@@ -213,12 +228,67 @@
         </div>
       </div>
     </div>
+
+    <!-- 按意图批量拆场弹窗 -->
+    <div 
+      v-if="showBatchSplitModal" 
+      class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+      <div class="bg-atelier-900 border border-atelier-750 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl animate-fade-in">
+        <div class="flex items-center justify-between border-b border-atelier-750 pb-3">
+          <div class="flex items-center gap-2">
+            <Sparkles class="w-4 h-4 text-brand-amber" />
+            <h3 class="text-sm font-serif font-bold text-ink-50">按意图批量拆场</h3>
+          </div>
+          <button 
+            @click="showBatchSplitModal = false" 
+            class="text-ink-400 hover:text-ink-100 p-1 rounded transition cursor-pointer">
+            <X class="w-4 h-4" />
+          </button>
+        </div>
+
+        <div class="space-y-3 text-xs">
+          <p class="text-ink-300 leading-relaxed">
+            系统将根据选定分卷中已推演的章节意图卡（冲突、视角与情绪张力），批量为各章生成细分戏剧场次。
+          </p>
+
+          <div>
+            <label class="text-[11px] text-ink-400 block mb-1">选择目标分卷：</label>
+            <select 
+              v-model.number="batchSplitVolume" 
+              class="w-full bg-atelier-950 border border-atelier-750 rounded-lg p-2.5 text-xs text-ink-100 font-medium focus:outline-none focus:border-brand-amber/60 cursor-pointer">
+              <option 
+                v-for="v in availableVolumes" 
+                :key="v.volume_index" 
+                :value="v.volume_index">
+                第 {{ v.volume_index }} 卷 · {{ v.title || '未命名卷' }}
+              </option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-2 border-t border-atelier-750">
+          <button 
+            @click="showBatchSplitModal = false" 
+            class="px-3.5 py-1.5 bg-atelier-850 hover:bg-atelier-800 text-ink-300 text-xs rounded-lg transition cursor-pointer">
+            取消
+          </button>
+          <button 
+            @click="submitBatchSplitScenes" 
+            :disabled="isBatchSplitting"
+            class="px-4 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-lg shadow-amber-glow transition disabled:opacity-50 cursor-pointer flex items-center gap-1.5">
+            <Sparkles class="w-3.5 h-3.5" :class="{ 'animate-spin': isBatchSplitting }" />
+            <span>{{ isBatchSplitting ? '拆场中...' : '开始批量拆场' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue';
-import { state, actions } from '../stores/appState';
+import { ref, computed } from 'vue';
+import { state, actions, notify } from '../stores/appState';
+import { api } from '../api/client';
 import { 
   LayoutGrid, 
   RefreshCw, 
@@ -271,5 +341,60 @@ function openSceneMarkers(scene) {
   state.activeSceneForMarkers = scene;
   state.sceneMarkersList = scene.markers || [];
   state.showMarkersModal = true;
+}
+
+// 按意图批量拆场逻辑
+const showBatchSplitModal = ref(false);
+const isBatchSplitting = ref(false);
+const batchSplitVolume = ref(1);
+
+const availableVolumes = computed(() => {
+  if (state.matrixOverview?.volumes?.length) {
+    return state.matrixOverview.volumes;
+  }
+  if (state.currentProject?.framework?.volume_arcs?.length) {
+    return state.currentProject.framework.volume_arcs.map((a, idx) => ({
+      volume_index: a.volume_index || (idx + 1),
+      title: a.title || a.name || '未命名卷',
+    }));
+  }
+  return [{ volume_index: 1, title: '第 1 卷' }];
+});
+
+function openBatchSplitModal() {
+  if (availableVolumes.value.length > 0) {
+    batchSplitVolume.value = availableVolumes.value[0].volume_index || 1;
+  }
+  showBatchSplitModal.value = true;
+}
+
+async function submitBatchSplitScenes() {
+  if (!state.currentProject) return;
+  isBatchSplitting.value = true;
+  try {
+    const res = await api.generateMatrixFromIntents(state.currentProject.id, {
+      volume_index: Number(batchSplitVolume.value) || 1,
+    });
+    const totalScenes = res?.total_scenes ?? 0;
+    const errors = (res?.results || [])
+      .filter(r => !r.ok && r.error)
+      .map(r => `第${r.chapter_index}章: ${r.error}`);
+
+    let msg = `共生成 ${totalScenes} 个场次`;
+    if (errors.length > 0) {
+      msg += ` (失败: ${errors.join('; ')})`;
+    }
+    notify(
+      '批量拆场完成',
+      msg,
+      errors.length > 0 ? (totalScenes > 0 ? 'warning' : 'error') : 'success'
+    );
+    showBatchSplitModal.value = false;
+    await actions.loadMatrixOverview();
+  } catch (err) {
+    notify('批量拆场失败', err.message || '网络或服务端异常', 'error');
+  } finally {
+    isBatchSplitting.value = false;
+  }
 }
 </script>

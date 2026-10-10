@@ -221,4 +221,14 @@ export const api = {
   getForecast: (projectId, fid) => apiFetch(`/api/projects/${projectId}/forecast/${fid}`),
   selectForecast: (projectId, fid, data) => apiFetch(`/api/projects/${projectId}/forecast/${fid}/select`, { method: 'POST', body: JSON.stringify(typeof data === 'string' ? { branch_id: data } : data) }),
   getActivePlan: (projectId) => apiFetch(`/api/projects/${projectId}/forecast/active-plan`),
+
+  // Chapter Intents (章节意图工坊)
+  listChapterIntents: (projectId, volumeIndex) => {
+    const q = (volumeIndex !== undefined && volumeIndex !== null && volumeIndex > 0) ? `?volume=${encodeURIComponent(volumeIndex)}` : '';
+    return apiFetch(`/api/projects/${projectId}/intents${q}`);
+  },
+  generateVolumeIntents: (projectId, data) => apiFetch(`/api/projects/${projectId}/intents/generate`, { method: 'POST', body: JSON.stringify(data) }),
+  saveChapterIntent: (projectId, chapterIndex, data) => apiFetch(`/api/projects/${projectId}/intents/${chapterIndex}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteChapterIntent: (projectId, chapterIndex) => apiFetch(`/api/projects/${projectId}/intents/${chapterIndex}`, { method: 'DELETE' }),
+  generateMatrixFromIntents: (projectId, data) => apiFetch(`/api/projects/${projectId}/matrix/generate-from-intents`, { method: 'POST', body: JSON.stringify(data) }),
 };

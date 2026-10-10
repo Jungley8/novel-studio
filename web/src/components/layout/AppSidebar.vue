@@ -133,7 +133,8 @@ import {
   ChevronDown,
   Download,
   BookDown,
-  GitBranch
+  GitBranch,
+  ListChecks
 } from 'lucide-vue-next';
 
 const navGroups = computed(() => [
@@ -151,6 +152,7 @@ const navGroups = computed(() => [
       { id: 'framework', label: '作品设定', desc: '核心设定、规则与文风基调', icon: Compass },
       { id: 'codex', label: '设定集', desc: '人物、势力与世界观档案', icon: BookOpen, badge: state.codexEntries.length ? `${state.codexEntries.length}条` : '' },
       { id: 'matrix', label: '全书大纲', desc: '全书章节结构与剧情路线', icon: LayoutGrid, badge: state.matrixOverview?.total_scenes ? `${state.matrixOverview.total_scenes}场` : '' },
+      { id: 'intents', label: '章节意图', desc: '按章提炼核心冲突、视角与情绪张力', icon: ListChecks },
     ]
   },
   {
