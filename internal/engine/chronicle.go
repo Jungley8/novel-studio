@@ -93,25 +93,17 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 	var currentVolume *domain.VolumeArc
 	var activeTier *domain.PowerLadderTier
 	if project.Framework != nil {
-		accChapters := 0
-		for i := range project.Framework.VolumeArcs {
-			arc := project.Framework.VolumeArcs[i]
-			est := arc.EstimatedChapters
-			if est <= 0 {
-				est = 40
-			}
-			if targetChapter > accChapters && targetChapter <= accChapters+est {
-				currentVolume = &arc
-				break
-			}
-			accChapters += est
-		}
-		if currentVolume == nil && len(project.Framework.VolumeArcs) > 0 {
-			currentVolume = &project.Framework.VolumeArcs[len(project.Framework.VolumeArcs)-1]
-		}
-		if currentVolume != nil {
+		// 过渡适配器：从 VolumeArcs 按序用 EstimatedChapters 累加派生 []domain.VolumeSpan。
+		// 待 VolumeArc 落显式起止章后直连，见 internal/domain/intent.go 的 TODO(P1)。
+		spans, arcMap := deriveVolumeSpans(project.Framework.VolumeArcs)
+		matchedVolIdx := domain.ResolveVolume(targetChapter, spans)
+		if matchedVolIdx != -1 {
+			currentVolume = arcMap[matchedVolIdx]
 			globalSummary += fmt.Sprintf("\n【当前分卷总纲】第 %d 卷：《%s》 | 卷主线：%s | 卷大高潮：%s",
 				currentVolume.VolumeIndex, currentVolume.Title, currentVolume.CoreGoal, currentVolume.Climax)
+		} else {
+			currentVolume = nil
+			globalSummary += "\n【当前分卷总纲】目标章节超出已规划分卷，请先扩展卷纲"
 		}
 
 		for i := range project.Framework.PowerLadder {
@@ -505,4 +497,43 @@ func cleanExcerpt(s string) string {
 		}
 	}
 	return strings.Join(cleanedLines, " ")
+}
+
+// deriveVolumeSpans builds []domain.VolumeSpan and mapping from VolumeArcs.
+// 过渡适配器：从 VolumeArcs 按序用 EstimatedChapters 累加派生 []domain.VolumeSpan。
+// 待 VolumeArc 落显式起止章后直连，见 internal/domain/intent.go 的 TODO(P1)。
+func deriveVolumeSpans(arcs []domain.VolumeArc) ([]domain.VolumeSpan, map[int]*domain.VolumeArc) {
+	spans := make([]domain.VolumeSpan, 0, len(arcs))
+	arcMap := make(map[int]*domain.VolumeArc, len(arcs))
+	accChapters := 0
+	for i := range arcs {
+		arc := &arcs[i]
+		est := arc.EstimatedChapters
+		if est <= 0 {
+			// 延续历史旧规则：未设定预估章数时默认 40 章（过渡性质）
+			est = 40
+		}
+		volIdx := arc.VolumeIndex
+		if volIdx == 0 {
+			volIdx = i + 1
+		}
+		spans = append(spans, domain.VolumeSpan{
+			VolumeIndex:  volIdx,
+			StartChapter: accChapters + 1,
+			EndChapter:   accChapters + est,
+		})
+		arcMap[volIdx] = arc
+		accChapters += est
+	}
+	return spans, arcMap
+}
+
+// resolveVolumeArc locates the VolumeArc for targetChapter using explicit VolumeSpans.
+// Returns nil if targetChapter misses (gap, out-of-bounds, or empty spans).
+func resolveVolumeArc(targetChapter int, spans []domain.VolumeSpan, arcMap map[int]*domain.VolumeArc) *domain.VolumeArc {
+	volIdx := domain.ResolveVolume(targetChapter, spans)
+	if volIdx == -1 {
+		return nil
+	}
+	return arcMap[volIdx]
 }
