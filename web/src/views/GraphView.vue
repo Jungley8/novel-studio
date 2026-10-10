@@ -190,6 +190,17 @@
             @mousedown.stop="startDragNode($event, node)"
             @click.stop="selectNode(node)">
             
+            <!-- 主角特有尊贵金色旋转光环 (Radial Anchor) -->
+            <circle 
+              v-if="node.isProtagonist"
+              r="30" 
+              fill="none" 
+              stroke="#fbbf24" 
+              stroke-width="1.5" 
+              stroke-dasharray="3 3"
+              class="animate-spin"
+              style="animation-duration: 25s;" />
+
             <!-- 选中或高亮光环 -->
             <circle 
               v-if="isNodeHighlighted(node)"
@@ -202,10 +213,10 @@
 
             <!-- 节点主体背景圆 -->
             <circle 
-              r="24" 
+              :r="node.isProtagonist ? 26 : 24" 
               :fill="isNodeSelected(node) ? '#27272a' : '#18181b'" 
               :stroke="node.color || '#f59e0b'" 
-              :stroke-width="isNodeSelected(node) ? 2.5 : 1.5" 
+              :stroke-width="node.isProtagonist ? 2.5 : (isNodeSelected(node) ? 2.5 : 1.5)" 
               :opacity="isNodeDimmed(node) ? 0.2 : 1"
               class="transition-all duration-200 shadow-lg" />
 
@@ -657,42 +668,54 @@ const categoryFilters = computed(() => {
 // 图节点内部数据字典 (记录 x, y 坐标与力导向物理速度)
 const nodePositions = ref(new Map());
 
-// 初始化或更新节点坐标分布
+// 初始化或更新节点坐标分布 (以主角为中心径向排布)
 function syncNodePositions() {
   const entries = state.codexEntries || [];
-  const cx = 350;
-  const cy = 250;
-  const radius = Math.min(220, Math.max(120, entries.length * 28));
+  const cx = 450;
+  const cy = 320;
+  const radius = Math.min(320, Math.max(160, entries.length * 36));
 
   entries.forEach((e, idx) => {
     if (!nodePositions.value.has(e.id)) {
-      // 沿圆周均匀初分布
-      const angle = (idx / (entries.length || 1)) * 2 * Math.PI;
-      nodePositions.value.set(e.id, {
-        x: cx + Math.cos(angle) * radius + (Math.random() - 0.5) * 40,
-        y: cy + Math.sin(angle) * radius + (Math.random() - 0.5) * 40,
-        vx: 0,
-        vy: 0,
-      });
+      const isProtagonist = e.name === '主角' || e.id.includes('_pro');
+      if (isProtagonist) {
+        // 主角直接锚定在核心正中央
+        nodePositions.value.set(e.id, {
+          x: cx,
+          y: cy,
+          vx: 0,
+          vy: 0,
+        });
+      } else {
+        // 其余配角、宗门与势力沿外层环形放射排列
+        const angle = (idx / (entries.length || 1)) * 2 * Math.PI;
+        nodePositions.value.set(e.id, {
+          x: cx + Math.cos(angle) * radius + (Math.random() - 0.5) * 40,
+          y: cy + Math.sin(angle) * radius + (Math.random() - 0.5) * 40,
+          vx: 0,
+          vy: 0,
+        });
+      }
     }
   });
 
-  // 运行微物理模拟让节点松散分离
-  runForceSimulation(40);
+  // 运行微物理模拟让节点松散分离并强制避让重叠
+  runForceSimulation(60);
 }
 
-// 轻量级原生无依赖力导向模拟
-function runForceSimulation(iterations = 30) {
+// 轻量级工业级高防重叠力导向模拟 (满足奥卡姆剃刀原则，零沉重依赖)
+function runForceSimulation(iterations = 60) {
   const entries = state.codexEntries || [];
   const relations = state.codexRelations || [];
   if (entries.length === 0) return;
 
-  const kRepel = 2400; // 排斥常数
-  const kAttract = 0.05; // 连线引力常数
-  const damp = 0.85;
+  const kRepel = 7500; // 提升排斥常数
+  const kAttract = 0.035; // 连线引力常数
+  const damp = 0.82;
+  const minSafeDistance = 115; // 节点硬碰撞避让距离 (圆半径 24 + 外光环 + 文字标签)
 
   for (let it = 0; it < iterations; it++) {
-    // 1. 节点间排斥
+    // 1. 节点间排斥与刚体碰撞分离 (Hard Collision Avoidance)
     for (let i = 0; i < entries.length; i++) {
       const p1 = nodePositions.value.get(entries[i].id);
       if (!p1) continue;
@@ -701,16 +724,29 @@ function runForceSimulation(iterations = 30) {
         if (!p2) continue;
         const dx = p1.x - p2.x;
         const dy = p1.y - p2.y;
-        const distSq = dx * dx + dy * dy || 1;
+        const distSq = dx * dx + dy * dy || 0.01;
         const dist = Math.sqrt(distSq);
-        if (dist < 320) {
+
+        // A. 弹性排斥场
+        if (dist < 450) {
           const force = kRepel / distSq;
-          const fx = (dx / dist) * force;
-          const fy = (dy / dist) * force;
+          const fx = (dx / (dist || 1)) * force;
+          const fy = (dy / (dist || 1)) * force;
           p1.vx += fx;
           p1.vy += fy;
           p2.vx -= fx;
           p2.vy -= fy;
+        }
+
+        // B. 刚体硬碰撞隔离 (保证任意两节点绝对不重叠)
+        if (dist < minSafeDistance) {
+          const overlap = (minSafeDistance - dist) * 0.5;
+          const nx = dx / (dist || 0.001);
+          const ny = dy / (dist || 0.001);
+          p1.x += nx * overlap;
+          p1.y += ny * overlap;
+          p2.x -= nx * overlap;
+          p2.y -= ny * overlap;
         }
       }
     }
@@ -733,9 +769,18 @@ function runForceSimulation(iterations = 30) {
     for (const e of entries) {
       const p = nodePositions.value.get(e.id);
       if (!p) continue;
-      // 轻微向中心拉拽
-      p.vx += (350 - p.x) * 0.01;
-      p.vy += (250 - p.y) * 0.01;
+      const isProtagonist = e.name === '主角' || e.id.includes('_pro');
+      const targetCenterX = 450;
+      const targetCenterY = 320;
+
+      if (isProtagonist) {
+        // 主角作为全书核心锚点，向心力更强
+        p.vx += (targetCenterX - p.x) * 0.04;
+        p.vy += (targetCenterY - p.y) * 0.04;
+      } else {
+        p.vx += (targetCenterX - p.x) * 0.008;
+        p.vy += (targetCenterY - p.y) * 0.008;
+      }
 
       p.vx *= damp;
       p.vy *= damp;
@@ -759,12 +804,14 @@ const validNodes = computed(() => {
       return true;
     })
     .map(e => {
-      const pos = nodePositions.value.get(e.id) || { x: 350, y: 250 };
+      const pos = nodePositions.value.get(e.id) || { x: 450, y: 320 };
+      const isProtagonist = e.name === '主角' || e.id.includes('_pro');
       return {
         id: e.id,
         name: e.name,
         category: e.category,
-        color: e.color_tag || categoryColors[e.category] || '#f59e0b',
+        isProtagonist,
+        color: isProtagonist ? '#fbbf24' : (e.color_tag || categoryColors[e.category] || '#f59e0b'),
         x: pos.x,
         y: pos.y,
         raw: e,
@@ -795,6 +842,17 @@ const nodeRelations = computed(() => {
   return (state.codexRelations || []).filter(r => r.source_entry_id === id || r.target_entry_id === id);
 });
 
+// 动态计算连线曲率 (当存在双向关联时大幅弯曲，避免重合)
+function getLinkCurvature(link) {
+  const relations = state.codexRelations || [];
+  const hasReverse = relations.some(r => 
+    r.id !== link.id && 
+    r.source_entry_id === link.target_entry_id && 
+    r.target_entry_id === link.source_entry_id
+  );
+  return hasReverse ? 0.22 : 0.08;
+}
+
 // 辅助连线几何计算
 function computeLinkPath(link) {
   const x1 = link.source.x;
@@ -802,11 +860,11 @@ function computeLinkPath(link) {
   const x2 = link.target.x;
   const y2 = link.target.y;
 
-  // 稍作微弧线弯曲，防止双向重叠
   const dx = x2 - x1;
   const dy = y2 - y1;
-  const cx = (x1 + x2) / 2 - dy * 0.12;
-  const cy = (y1 + y2) / 2 + dx * 0.12;
+  const curve = getLinkCurvature(link);
+  const cx = (x1 + x2) / 2 - dy * curve;
+  const cy = (y1 + y2) / 2 + dx * curve;
 
   return `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`;
 }
@@ -818,9 +876,10 @@ function computeLinkMidpoint(link) {
   const y2 = link.target.y;
   const dx = x2 - x1;
   const dy = y2 - y1;
+  const curve = getLinkCurvature(link);
   return {
-    x: (x1 + x2) / 2 - dy * 0.06,
-    y: (y1 + y2) / 2 + dx * 0.06,
+    x: (x1 + x2) / 2 - dy * (curve * 0.5),
+    y: (y1 + y2) / 2 + dx * (curve * 0.5),
   };
 }
 
