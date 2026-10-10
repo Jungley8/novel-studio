@@ -1,6 +1,6 @@
 <template>
   <div class="flex-1 flex flex-col min-h-0 bg-atelier-950 overflow-hidden">
-    <!-- 头部工具栏与过渡方案警示栏 -->
+    <!-- 头部工具栏 -->
     <div class="p-4 border-b border-atelier-750 bg-atelier-900/60 backdrop-blur-sm space-y-3 shrink-0">
       <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div class="flex items-center gap-2.5">
@@ -10,29 +10,36 @@
           <div>
             <div class="flex items-center gap-2">
               <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">Studio 全局对话</h2>
-              <span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-brand-amber/15 text-brand-amber border border-brand-amber/30">
-                TRANSITIONAL
-              </span>
             </div>
             <p class="text-xs text-ink-400 mt-0.5">跨项目宏观灵感闲聊、情节碰撞与题材头脑风暴。</p>
           </div>
         </div>
 
-        <!-- 参考作品上下文选择器与操作 -->
-        <div class="flex items-center gap-2.5">
+        <!-- 参考作品上下文选择器与推演模式 -->
+        <div class="flex items-center gap-2.5 flex-wrap">
           <div class="flex items-center gap-1.5 text-xs">
             <span class="text-ink-400 font-mono text-[11px] whitespace-nowrap">参考 Horizon:</span>
             <select 
               v-model="activeContextProjectId"
-              :disabled="state.projects.length === 0"
               class="bg-atelier-850 border border-atelier-700 rounded-md px-2.5 py-1.5 text-xs text-ink-100 font-medium focus:outline-none focus:border-brand-amber/60 cursor-pointer max-w-[200px] truncate">
-              <option v-if="state.projects.length === 0" value="">-- 暂无作品工程 --</option>
+              <option value="">-- 全局通用脑暴 (不挂载单书) --</option>
               <option 
                 v-for="p in state.projects" 
                 :key="p.id" 
                 :value="p.id">
                 {{ p.title }} ({{ p.target_platform || '通用' }})
               </option>
+            </select>
+          </div>
+
+          <div class="flex items-center gap-1.5 text-xs">
+            <span class="text-ink-400 font-mono text-[11px] whitespace-nowrap">推演模式:</span>
+            <select 
+              v-model="selectedMode"
+              class="bg-atelier-850 border border-atelier-700 rounded-md px-2.5 py-1.5 text-xs text-ink-100 font-medium focus:outline-none focus:border-brand-amber/60 cursor-pointer">
+              <option value="scene_brainstorm">剧情风暴 (Brainstorm)</option>
+              <option value="character_roleplay">角色推演 (Roleplay)</option>
+              <option value="editor_critique">总编评审 (Critique)</option>
             </select>
           </div>
 
@@ -45,50 +52,22 @@
         </div>
       </div>
 
-      <!-- 过渡方案规范提示条 (明确标注这是过渡方案，等待 POST /api/studio/chat) -->
-      <!-- TODO: 等待后端完成 POST /api/studio/chat 原生跨项目聚合对话接口 -->
+      <!-- 演进史：原借用单项目 /api/projects/:id/chat (scene_brainstorm) 顶替，现已升级为原生 POST /api/studio/chat 跨项目聚合对话接口 -->
       <div class="p-3 bg-brand-amber/10 border border-brand-amber/25 rounded-xl text-xs text-ink-200 flex items-start gap-2.5">
         <Sparkles class="w-4 h-4 text-brand-amber shrink-0 mt-0.5" />
         <div class="space-y-0.5 leading-relaxed">
           <div class="font-semibold text-brand-amber text-[11px]">
-            跨项目灵感对话（过渡方案）说明
+            Studio 原生跨项目对话智囊已就绪
           </div>
           <div class="text-[11px] text-ink-300">
-            当前复用现有单项目 <code>scene_brainstorm</code> (剧情风暴) 接口作为全局知识源，允许选择单书的设定 Horizon 作为上下文。本模块严格使用现有接口，等待后端上线原生 <code>POST /api/studio/chat</code> 聚合对话服务。
+            支持无项目全局灵感探索与单书 Horizon 上下文挂载，原生接入 <code>POST /api/studio/chat</code> 服务。
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 零作品工程空态 (防白屏) -->
-    <div 
-      v-if="state.projects.length === 0" 
-      class="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-4">
-      <div class="w-14 h-14 rounded-2xl bg-atelier-900 border border-atelier-750 flex items-center justify-center text-ink-400 shadow-atelier-sm">
-        <MessagesSquare class="w-7 h-7" />
-      </div>
-      <div class="space-y-1.5 max-w-md">
-        <h3 class="text-sm font-semibold text-ink-100 font-serif">暂无可用作品工程上下文</h3>
-        <p class="text-xs text-ink-400 leading-relaxed">
-          当前过渡方案依赖现有项目级 <code>/api/projects/:id/chat</code> 接口推演。在建立第一部小说工程前无法挂载 Horizon 上下文。你可以先创建作品，或在灵感 Inbox 记录点子。
-        </p>
-      </div>
-      <div class="flex items-center gap-3 pt-2">
-        <button 
-          @click="state.showNewProjectModal = true" 
-          class="px-4 py-2 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-lg shadow-amber-glow transition cursor-pointer">
-          新建第一部作品
-        </button>
-        <button 
-          @click="state.activeTab = 'studio-ideas'" 
-          class="px-4 py-2 bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 text-xs rounded-lg border border-atelier-700 transition cursor-pointer">
-          前往灵感 Inbox
-        </button>
-      </div>
-    </div>
-
     <!-- 正常对话聊天工作区 -->
-    <template v-else>
+    <div class="flex-1 flex flex-col min-h-0">
       <!-- 消息气泡流容器 -->
       <div ref="chatContainer" class="flex-1 p-5 overflow-y-auto space-y-4">
         <!-- 对话初始引导卡片 -->
@@ -126,7 +105,7 @@
           :class="msg.role === 'user' ? 'items-end' : 'items-start'">
           
           <div class="flex items-center gap-2 text-[10px] font-mono text-ink-500 px-1">
-            <span>{{ msg.role === 'user' ? '作者 (你)' : '工坊智囊 (剧情风暴)' }}</span>
+            <span>{{ msg.role === 'user' ? '作者 (你)' : '工坊智囊 (' + modeName(msg.mode) + ')' }}</span>
             <span v-if="msg.sourceProject" class="text-brand-amber/80">· {{ msg.sourceProject }}</span>
             <span>{{ msg.timestamp }}</span>
           </div>
@@ -157,7 +136,7 @@
         <!-- 思考推演中指示器 -->
         <div v-if="isLoading" class="flex items-center gap-2 text-xs text-brand-amber py-2 px-1">
           <span class="w-3.5 h-3.5 border-2 border-brand-amber border-t-transparent rounded-full animate-spin"></span>
-          <span class="text-[11px] font-mono">工坊智囊正在结合 Horizon 设定深度推演...</span>
+          <span class="text-[11px] font-mono">工坊智囊正在深度推演中...</span>
         </div>
       </div>
 
@@ -172,19 +151,19 @@
         
         <div class="flex items-center justify-between">
           <div class="text-[10px] font-mono text-ink-400 flex items-center gap-2">
-            <span>当前接口: <code>/api/projects/:id/chat</code> (scene_brainstorm)</span>
+            <span>当前接口: <code>POST /api/studio/chat</code> ({{ selectedMode }})</span>
           </div>
 
           <button 
             @click="sendMessage" 
-            :disabled="isLoading || !inputContent.trim() || !activeContextProjectId" 
+            :disabled="isLoading || !inputContent.trim()" 
             class="px-4 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-lg shadow-amber-glow transition disabled:opacity-40 cursor-pointer flex items-center gap-1.5">
             <Send class="w-3.5 h-3.5" />
             <span>发送推演</span>
           </button>
         </div>
       </div>
-    </template>
+    </div>
   </div>
 </template>
 
@@ -200,6 +179,7 @@ import {
 } from 'lucide-vue-next';
 
 const activeContextProjectId = ref('');
+const selectedMode = ref('scene_brainstorm');
 const messages = ref([]);
 const inputContent = ref('');
 const isLoading = ref(false);
@@ -216,15 +196,24 @@ const currentContextProject = computed(() => {
 });
 
 const currentContextProjectTitle = computed(() => {
-  return currentContextProject.value?.title || '未选择作品';
+  return currentContextProject.value?.title || '全局通用（未挂载单书）';
 });
 
-// 初始化上下文作品，优先使用已选项目或列表第一个
+function modeName(mode) {
+  switch (mode) {
+    case 'character_roleplay':
+      return '角色推演';
+    case 'editor_critique':
+      return '总编评审';
+    default:
+      return '剧情风暴';
+  }
+}
+
+// 初始化上下文作品，优先使用已选项目
 function initContextProject() {
   if (state.selectedProjectId && state.projects.some(p => p.id === state.selectedProjectId)) {
     activeContextProjectId.value = state.selectedProjectId;
-  } else if (state.projects.length > 0) {
-    activeContextProjectId.value = state.projects[0].id;
   }
 }
 
@@ -233,12 +222,6 @@ watch(() => state.selectedProjectId, (newId) => {
     activeContextProjectId.value = newId;
   }
 });
-
-watch(() => state.projects, () => {
-  if (!activeContextProjectId.value && state.projects.length > 0) {
-    initContextProject();
-  }
-}, { immediate: true });
 
 function applyQuickPrompt(text) {
   inputContent.value = text;
@@ -259,12 +242,9 @@ async function sendMessage() {
   const text = inputContent.value.trim();
   if (!text || isLoading.value) return;
 
-  if (!activeContextProjectId.value) {
-    notify('缺少上下文作品', '请先选择一个作品工程作为知识源 Horizon', 'warning');
-    return;
-  }
-
   const projTitle = currentContextProjectTitle.value;
+  const currentMode = selectedMode.value;
+
   messages.value.push({
     role: 'user',
     content: text,
@@ -276,21 +256,21 @@ async function sendMessage() {
   await scrollToBottom();
 
   try {
-    // 复用现有 WorkshopChat 的 scene_brainstorm 接口做知识源
+    // 演进史：原借用单项目 /api/projects/:id/chat (scene_brainstorm) 顶替，现已升级为原生 POST /api/studio/chat 跨项目聚合对话接口
     const payload = {
-      role_mode: 'scene_brainstorm',
-      character_id: '',
+      project_id: activeContextProjectId.value || undefined,
+      mode: currentMode,
       message: text,
-      chapter_index: 1, // 宏观闲聊以全书第 1 章/宏观大纲为参考
     };
 
-    const res = await api.workshopChat(activeContextProjectId.value, payload);
+    const res = await api.studioChat(payload);
     const replyText = typeof res === 'string' ? res : (res?.reply || JSON.stringify(res));
 
     messages.value.push({
       role: 'assistant',
       content: replyText,
-      sourceProject: projTitle,
+      mode: currentMode,
+      sourceProject: activeContextProjectId.value ? projTitle : '全局脑暴',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     });
   } catch (err) {
