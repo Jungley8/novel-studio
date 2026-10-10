@@ -416,7 +416,7 @@ func (o *Orchestrator) ReviewDraft(
 	if finalScore < 0 {
 		finalScore = 0
 	}
-	out.Verdict = decideVerdict(out.Verdict, finalScore, heuristic)
+	out.Verdict = decideVerdict(out.Verdict, finalScore, draftText, heuristic)
 
 	return &domain.ReviewResult{
 		Verdict:         out.Verdict,
