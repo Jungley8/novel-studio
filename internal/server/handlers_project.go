@@ -124,6 +124,12 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 
 	action := parts[1]
 	switch action {
+	case "forecast":
+		subParts := []string{}
+		if len(parts) > 2 {
+			subParts = parts[2:]
+		}
+		s.handleProjectForecast(w, r, projectID, subParts)
 	case "suggest-conflict":
 		s.handleSuggestConflict(w, r, projectID)
 	case "chapters":

@@ -1,9 +1,15 @@
 package main
 
+// 退出码契约:
+//   0 = 已归档入库 (或未开启自动归档时正常完成)
+//   1 = 执行失败
+//   2 = 停线待人工 (触发质量门禁/拒稿停线)
+
 import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -18,6 +24,11 @@ import (
 
 func runProduceCLI(argv []string, defaultDataDir string) int {
 	fs := flag.NewFlagSet("produce", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage of produce:\n")
+		fs.PrintDefaults()
+		fmt.Fprintf(fs.Output(), "\n退出码:\n  0: 已归档入库 (或非自动归档正常完成)\n  1: 执行失败\n  2: 停线待人工\n")
+	}
 	dataDirFlag := fs.String("data-dir", defaultDataDir, "数据持久化目录")
 	projectIDFlag := fs.String("project", "", "作品 ID (默认选择首个已有作品)")
 	chapterIdxFlag := fs.Int("chapter", 0, "章节序号 (默认自动递增下一章)")
@@ -108,33 +119,53 @@ func runProduceCLI(argv []string, defaultDataDir string) int {
 		return 1
 	}
 
-	fmt.Println("\n✓ 生产完成！")
-	if res.ResumedPhase != "" {
-		fmt.Printf("  • 断点恢复: 从 [%s] 阶段无损续跑\n", res.ResumedPhase)
-	}
-	fmt.Printf("  • 终审裁决: %s (综合评分: %d/100, 突发度: %d)\n",
-		res.Audit.Verdict, res.Audit.Score, res.Audit.BurstinessScore)
-	fmt.Printf("  • 定向返工轮次: %d 次\n", res.RewriteLoops)
-	fmt.Printf("  • Token消耗: %d tokens (预估成本: $%.4f USD)\n",
-		res.TotalUsage.TotalTokens, res.EstimatedCostUSD)
-	if len(res.Audit.Issues) > 0 {
-		fmt.Printf("  • 审校批注: %s\n", strings.Join(res.Audit.Issues, "; "))
-	}
-	if len(res.Audit.ResolvedHookIDs) > 0 {
-		fmt.Printf("  • 伏笔闭环回收: %s (已标记 RESOLVED)\n", strings.Join(res.Audit.ResolvedHookIDs, ", "))
-	}
-	if res.Committed {
-		fmt.Printf("  • 持久化状态: 已原子归档写入 SQLite (实体状态机已更新)\n")
-	} else {
-		fmt.Printf("  • 持久化状态: 未归档 (可手动审核后归档)\n")
+	return printProduceSummary(os.Stdout, os.Stderr, res)
+}
+
+func printProduceSummary(stdout, stderr io.Writer, res *engine.WorkshopProduceResult) int {
+	if res == nil {
+		return 1
 	}
 
-	fmt.Printf("\n--- 章节正文片段 (%d 字) ---\n", len([]rune(res.Content)))
+	// 停线待人工: 退出码 2
+	if res.Audit != nil && res.Audit.NeedsHuman {
+		fmt.Fprintf(stderr, "✗ 终审裁决: %s (综合评分: %d/100)\n", res.Audit.Verdict, res.Audit.Score)
+		fmt.Fprintf(stderr, "✗ 返工轮次: %d 次\n", res.RewriteLoops)
+		for i := 0; i < len(res.Audit.Issues) && i < 3; i++ {
+			fmt.Fprintf(stderr, "✗ 审校问题 %d: %s\n", i+1, res.Audit.Issues[i])
+		}
+		return 2
+	}
+
+	fmt.Fprintln(stdout, "\n✓ 生产完成！")
+	if res.ResumedPhase != "" {
+		fmt.Fprintf(stdout, "  • 断点恢复: 从 [%s] 阶段无损续跑\n", res.ResumedPhase)
+	}
+	if res.Audit != nil {
+		fmt.Fprintf(stdout, "  • 终审裁决: %s (综合评分: %d/100, 突发度: %d)\n",
+			res.Audit.Verdict, res.Audit.Score, res.Audit.BurstinessScore)
+	}
+	fmt.Fprintf(stdout, "  • 定向返工轮次: %d 次\n", res.RewriteLoops)
+	fmt.Fprintf(stdout, "  • Token消耗: %d tokens (预估成本: $%.4f USD)\n",
+		res.TotalUsage.TotalTokens, res.EstimatedCostUSD)
+	if res.Audit != nil && len(res.Audit.Issues) > 0 {
+		fmt.Fprintf(stdout, "  • 审校批注: %s\n", strings.Join(res.Audit.Issues, "; "))
+	}
+	if res.Audit != nil && len(res.Audit.ResolvedHookIDs) > 0 {
+		fmt.Fprintf(stdout, "  • 伏笔闭环回收: %s (已标记 RESOLVED)\n", strings.Join(res.Audit.ResolvedHookIDs, ", "))
+	}
+	if res.Committed {
+		fmt.Fprintf(stdout, "  • 持久化状态: 已原子归档写入 SQLite (实体状态机已更新)\n")
+	} else {
+		fmt.Fprintf(stdout, "  • 持久化状态: 未归档 (可手动审核后归档)\n")
+	}
+
+	fmt.Fprintf(stdout, "\n--- 章节正文片段 (%d 字) ---\n", len([]rune(res.Content)))
 	runes := []rune(res.Content)
 	if len(runes) > 300 {
-		fmt.Printf("%s...\n", string(runes[:300]))
+		fmt.Fprintf(stdout, "%s...\n", string(runes[:300]))
 	} else {
-		fmt.Printf("%s\n", res.Content)
+		fmt.Fprintf(stdout, "%s\n", res.Content)
 	}
 
 	return 0

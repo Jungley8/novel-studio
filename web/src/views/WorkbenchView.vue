@@ -611,6 +611,63 @@
     <!-- 中栏：文学手稿画布 (弹性自适应排版空间) -->
     <div class="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden bg-atelier-950">
       
+      <!-- 停线待人工红/琥珀色横幅 (质检超轮次停线，需人工介入定稿) -->
+      <div 
+        v-if="state.pipelineState?.halted && state.pipelineState?.haltInfo" 
+        class="px-5 py-3.5 bg-gradient-to-r from-red-950/95 via-atelier-900/95 to-amber-950/90 border-b border-red-500/40 text-xs select-none shrink-0 animate-fade-in shadow-md">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div class="flex items-start gap-3">
+            <div class="w-7 h-7 rounded-lg bg-red-500/20 text-red-400 border border-red-500/30 flex items-center justify-center font-bold shrink-0 mt-0.5">
+              <AlertTriangle class="w-4 h-4 text-red-400" />
+            </div>
+            <div>
+              <div class="font-bold text-red-200 flex flex-wrap items-center gap-2">
+                <span class="text-sm font-serif">第 {{ state.pipelineState.haltInfo.chapterIndex }} 章已停线待人工</span>
+                <span class="text-[11px] font-mono px-2 py-0.5 rounded bg-red-900/60 text-red-300 border border-red-500/30 font-normal">
+                  终审 {{ state.pipelineState.haltInfo.verdict }} · {{ state.pipelineState.haltInfo.score }} 分 · 返工 {{ state.pipelineState.haltInfo.rewriteLoops }} 轮
+                </span>
+              </div>
+              <div class="text-[11px] text-ink-300 mt-1">
+                已达最大重写轮次或触发严重缺陷，自动流水线已安全阻断，需人工介入审阅定稿。
+              </div>
+
+              <!-- Top 3 Issues -->
+              <div 
+                v-if="state.pipelineState.haltInfo.issues && state.pipelineState.haltInfo.issues.length > 0" 
+                class="mt-2 space-y-1 bg-atelier-950/70 p-2.5 rounded-lg border border-red-500/25 max-w-2xl">
+                <div class="text-[10px] text-red-400 font-semibold mb-1 flex items-center gap-1">
+                  <span>主要阻断问题（Top 3 Issues）：</span>
+                </div>
+                <div 
+                  v-for="(issue, idx) in state.pipelineState.haltInfo.issues.slice(0, 3)" 
+                  :key="idx" 
+                  class="text-[11px] text-red-200/90 flex items-start gap-1.5 leading-snug">
+                  <span class="text-red-400 font-bold shrink-0">•</span>
+                  <span class="truncate">{{ issue }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 双按钮操作区 -->
+          <div class="flex items-center gap-2.5 shrink-0 self-end md:self-center">
+            <button 
+              @click="actions.loadHaltDraftForManualEdit ? actions.loadHaltDraftForManualEdit() : loadHaltDraft()" 
+              class="px-3.5 py-1.5 rounded-lg bg-brand-amber/20 hover:bg-brand-amber/30 text-brand-amber border border-brand-amber/40 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer shadow-sm">
+              <PenTool class="w-3.5 h-3.5" />
+              <span>载入返工稿进手工精修</span>
+            </button>
+            <button 
+              @click="actions.retryAutonomousPipeline ? actions.retryAutonomousPipeline() : actions.runAutonomousPipeline()" 
+              :disabled="state.pipelineState.active"
+              class="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-500 hover:to-amber-500 text-ink-50 font-bold text-xs shadow-md transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+              <RotateCcw class="w-3.5 h-3.5" />
+              <span>重试全自动</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- 连载接龙卡片 (本章已成功归档，一键衔接下一章) -->
       <div 
         v-if="state.pipelineState.justCommitted" 
@@ -636,7 +693,9 @@
           </button>
           <button 
             @click="actions.startNextChapter()" 
-            class="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-brand-amber to-amber-600 hover:from-brand-amber-hover hover:to-amber-500 text-atelier-950 font-bold text-xs shadow-amber-glow transition flex items-center gap-1.5 cursor-pointer">
+            :disabled="state.pipelineState?.halted"
+            :title="state.pipelineState?.halted ? '本章停线，需人工定稿后才能继续' : ''"
+            class="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-brand-amber to-amber-600 hover:from-brand-amber-hover hover:to-amber-500 text-atelier-950 font-bold text-xs shadow-amber-glow transition flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:grayscale disabled:shadow-none">
             <Zap class="w-3.5 h-3.5 fill-current" />
             <span>⚡ 一键生成第 {{ computedState.nextChapterIndex.value }} 章</span>
           </button>
@@ -1424,6 +1483,8 @@ async function handleCommitChapter() {
       { taskType: 'commit', chapterIndex: targetIndex, status: 'completed' }
     );
     state.editingChapterIndex = null;
+    state.pipelineState.halted = false;
+    state.pipelineState.haltInfo = null;
     await actions.selectProject(state.currentProject.id);
     state.workbench.content = '';
     state.workbench.coreConflict = '';
@@ -1434,6 +1495,17 @@ async function handleCommitChapter() {
     notify('保存失败', e.message || '保存章节发生异常', 'error', 5000, { taskType: 'commit', chapterIndex: targetIndex, status: 'failed' });
   } finally {
     state.isCommitting = false;
+  }
+}
+
+function loadHaltDraft() {
+  if (actions.loadHaltDraftForManualEdit) {
+    actions.loadHaltDraftForManualEdit();
+  } else {
+    const idx = state.pipelineState?.haltInfo?.chapterIndex || state.editingChapterIndex || (state.chapters?.length ? state.chapters.length + 1 : 1);
+    state.editingChapterIndex = idx;
+    state.activeStep = 5;
+    state.activeTab = 'workbench';
   }
 }
 
@@ -1448,6 +1520,8 @@ async function resetToNewChapter() {
     if (!ok) return;
   }
   state.editingChapterIndex = null;
+  state.pipelineState.halted = false;
+  state.pipelineState.haltInfo = null;
   state.workbench.content = '';
   state.workbench.coreConflict = '';
   state.workbench.beats = [

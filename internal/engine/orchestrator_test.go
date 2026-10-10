@@ -528,3 +528,49 @@ func TestOrchestrator_ExtractPlotHooks(t *testing.T) {
 		t.Errorf("expected target chapter 15, got %d", hooks[0].TargetChapter)
 	}
 }
+
+func TestOrchestrator_DeriveBeatsForChapterType(t *testing.T) {
+	mockJSON := `{
+		"beats": [
+			{"phase": "交锋", "tension": 8, "action": "绝招对轰", "expectation_broken": "反派震惊"},
+			{"phase": "反杀", "tension": 9, "action": "一剑封喉", "expectation_broken": "强敌覆灭", "hook_type": "CLIFFHANGER"}
+		],
+		"state_mutation": {
+			"inventory_delta": "获得储物袋",
+			"power_delta": "战意沸腾"
+		}
+	}`
+
+	mock := &mockLLMClient{response: mockJSON}
+	orch := engine.NewOrchestrator(mock)
+
+	p := &domain.Project{
+		Title:          "万域之王",
+		TargetPlatform: "番茄脑洞",
+	}
+	horizon := &engine.CanonHorizon{
+		Project:       p,
+		TargetChapter: 5,
+	}
+
+	out, err := orch.DeriveBeatsForChapterType(context.Background(), "deepseek-reasoner", horizon, "强敌决战", domain.ChapterTypeClimax)
+	if err != nil {
+		t.Fatalf("DeriveBeatsForChapterType failed: %v", err)
+	}
+
+	if len(out.Beats) != 2 {
+		t.Errorf("expected 2 beats, got %d", len(out.Beats))
+	}
+	if out.Beats[1].HookType != "CLIFFHANGER" {
+		t.Errorf("expected CLIFFHANGER, got %s", out.Beats[1].HookType)
+	}
+
+	// Verify DeriveBeatsWithHorizon delegates to DeriveBeatsForChapterType without breaking signature
+	outDefault, err := orch.DeriveBeatsWithHorizon(context.Background(), "deepseek-reasoner", horizon, "强敌决战")
+	if err != nil {
+		t.Fatalf("DeriveBeatsWithHorizon failed: %v", err)
+	}
+	if len(outDefault.Beats) != 2 {
+		t.Errorf("expected 2 beats from DeriveBeatsWithHorizon, got %d", len(outDefault.Beats))
+	}
+}
