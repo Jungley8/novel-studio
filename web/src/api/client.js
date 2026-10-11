@@ -214,6 +214,9 @@ export const api = {
 
   // Studio
   listStudioLibrary: () => apiFetch('/api/studio/library'),
+  listStudioThreads: () => apiFetch('/api/studio/threads'),
+  getStudioThread: (id) => apiFetch(`/api/studio/threads/${id}`),
+  deleteStudioThread: (id) => apiFetch(`/api/studio/threads/${id}`, { method: 'DELETE' }),
   studioChat: (data) => apiFetch('/api/studio/chat', { method: 'POST', body: JSON.stringify(data) }),
 
   // Forecast (剧情树)
