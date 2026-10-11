@@ -25,6 +25,7 @@ type mockWorkshopLLMClient struct {
 	suggestConflictCalls int
 	capturedBeatsPrompt  string
 	validationJSON       string
+	plantedHooksJSON     string
 }
 
 func (m *mockWorkshopLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
@@ -56,6 +57,12 @@ func (m *mockWorkshopLLMClient) ChatCompletion(ctx context.Context, model, syste
 	}
 	if strings.Contains(systemPrompt, "总审编") || strings.Contains(systemPrompt, "总编审") {
 		return m.reviewJSON, nil
+	}
+	if strings.Contains(systemPrompt, "伏笔登记员") {
+		if m.plantedHooksJSON != "" {
+			return m.plantedHooksJSON, nil
+		}
+		return `[]`, nil
 	}
 	return m.renderDraft, nil
 }

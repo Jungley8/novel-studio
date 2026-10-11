@@ -1269,6 +1269,55 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		}
 	}
 
+	// 5.7 伏笔自动登记（增强层：失败记账不阻断归档）
+	// 解决"正文新埋伏笔未入台账 → 后续章节无从回收"的漏记问题；登记声明须过证据门。
+	if result.Committed {
+		existingHooks, lerr := w.store.ListPlotHooks(ctx, req.ProjectID)
+		if lerr != nil {
+			if auditReport != nil {
+				auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【伏笔登记警告】读取伏笔台账失败: %v", lerr))
+			}
+		} else {
+			candidates, regUsage, rerr := ExtractPlantedHooks(ctx, w.orch.client, req.ReasoningModel, horizon.Project, req.ChapterIndex, currentDraft, existingHooks)
+			addUsage(regUsage)
+			if rerr != nil {
+				if auditReport != nil {
+					auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【伏笔登记警告】伏笔提取失败: %v", rerr))
+				}
+			} else {
+				valid, rejected := FilterPlantedHookCandidates(candidates, currentDraft, existingHooks)
+				for _, r := range rejected {
+					if auditReport != nil {
+						auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【伏笔登记被拒】「%s」: %s", r.Candidate.Title, r.Reason))
+					}
+				}
+				var registered []string
+				for i, c := range valid {
+					hook := &domain.PlotHook{
+						ID:             fmt.Sprintf("hook_auto_%d_%d", time.Now().UnixNano(), i+1),
+						ProjectID:      req.ProjectID,
+						Title:          c.Title,
+						Details:        c.Details,
+						CreatedChapter: req.ChapterIndex,
+						TargetChapter:  c.TargetChapter,
+						Status:         domain.HookStatusOpen,
+						CreatedAt:      time.Now(),
+					}
+					if serr := w.store.SavePlotHook(ctx, hook); serr != nil {
+						if auditReport != nil {
+							auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【伏笔登记警告】伏笔「%s」落库失败: %v", c.Title, serr))
+						}
+						continue
+					}
+					registered = append(registered, c.Title)
+				}
+				if len(registered) > 0 && auditReport != nil {
+					auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【伏笔登记】新增伏笔 %d 条: %s", len(registered), strings.Join(registered, "、")))
+				}
+			}
+		}
+	}
+
 	emit(WorkshopEvent{
 		Phase:       PhaseComplete,
 		Message:     fmt.Sprintf("全流程生产完成！总Token消耗: %d", totalUsage.TotalTokens),
