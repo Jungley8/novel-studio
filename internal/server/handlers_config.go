@@ -94,6 +94,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.cfg.QueueTimes = updated.QueueTimes
+		if s.scheduler != nil {
+			s.scheduler.SetQueueTimes(s.cfg.QueueTimes)
+		}
 
 		// Update independent providers if specified
 		updateProvider := func(cur **config.ProviderConfig, in *config.ProviderConfig) {

@@ -109,6 +109,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "[NovelStudio] 初始化 HTTP 服务失败: %v\n", err)
 		os.Exit(1)
 	}
+	srvHandler.StartScheduler()
 
 	addr := fmt.Sprintf("127.0.0.1:%d", cfg.ServerPort)
 	httpServer := &http.Server{
@@ -160,6 +161,7 @@ func main() {
 		if err := desktop.WaitForShutdown(httpServer); err != nil {
 			fmt.Fprintf(os.Stderr, "[NovelStudio] 优雅停机超时或异常: %v\n", err)
 		}
+		srvHandler.StopScheduler()
 	} else {
 		err := desktop.RunDesktop(desktop.DesktopOptions{
 			Title:   fmt.Sprintf("NovelStudio (故事工厂) %s", version),
@@ -167,6 +169,7 @@ func main() {
 			Height:  900,
 			Handler: srvHandler,
 			OnExit: func() {
+				srvHandler.StopScheduler()
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				_ = httpServer.Shutdown(ctx)

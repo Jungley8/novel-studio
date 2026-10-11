@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/Jungley8/novel-studio/internal/config"
 	"github.com/Jungley8/novel-studio/internal/engine"
+	"github.com/Jungley8/novel-studio/internal/notify"
+	"github.com/Jungley8/novel-studio/internal/scheduler"
 	"github.com/Jungley8/novel-studio/internal/store"
 	"github.com/Jungley8/novel-studio/web"
 )
@@ -25,6 +28,8 @@ type Server struct {
 	chronicle   *engine.CanonChronicle
 	qualityGate *engine.QualityGate
 	workshop    *engine.ChapterWorkshop
+	scheduler   *scheduler.Scheduler
+	schedCancel context.CancelFunc
 	mux         *http.ServeMux
 	fs          fs.FS
 }
@@ -80,7 +85,27 @@ func New(
 	}
 
 	srv.routes()
+
+	srv.scheduler = scheduler.New(s, &schedulerRuntime{srv}, &schedulerRuntime{srv}, notify.New(), scheduler.Options{})
+	srv.scheduler.SetQueueTimes(cfg.QueueTimes)
+
 	return srv, nil
+}
+
+func (s *Server) StartScheduler() {
+	if s.scheduler == nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.schedCancel = cancel
+	go s.scheduler.Start(ctx)
+}
+
+func (s *Server) StopScheduler() {
+	if s.schedCancel != nil {
+		s.schedCancel()
+		s.schedCancel = nil
+	}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
