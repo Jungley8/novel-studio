@@ -183,3 +183,62 @@ func TestAggregateMetrics_TableDriven(t *testing.T) {
 		})
 	}
 }
+
+func TestAggregateMetrics_TerminalOutcomes(t *testing.T) {
+	input := []*domain.ChapterQualityMetrics{
+		{
+			ProjectID:    "p-outcomes",
+			ChapterIndex: 1,
+			ActualWords:  2000,
+			WordsTarget:  2000,
+			Verdict:      "ACCEPTED",
+			Score:        90,
+			Outcome:      domain.ChapterOutcomeCommitted,
+		},
+		{
+			ProjectID:    "p-outcomes",
+			ChapterIndex: 2,
+			ActualWords:  2000,
+			WordsTarget:  2000,
+			Verdict:      "REVISION",
+			Score:        70,
+			Outcome:      domain.ChapterOutcomeNeedsHuman,
+		},
+		{
+			ProjectID:    "p-outcomes",
+			ChapterIndex: 3,
+			ActualWords:  2000,
+			WordsTarget:  2000,
+			Verdict:      "ACCEPTED",
+			Score:        85,
+			Outcome:      domain.ChapterOutcomeTechnicalBlocked,
+		},
+		{
+			ProjectID:    "p-outcomes",
+			ChapterIndex: 4,
+			ActualWords:  2000,
+			WordsTarget:  2000,
+			Verdict:      "ACCEPTED",
+			Score:        88,
+			Outcome:      domain.ChapterOutcomeProduced,
+		},
+	}
+
+	summary := aggregateMetrics(input)
+
+	if summary.Chapters != 4 {
+		t.Errorf("Chapters: expected 4, got %d", summary.Chapters)
+	}
+	if summary.CommittedChapters != 1 {
+		t.Errorf("CommittedChapters: expected 1, got %d", summary.CommittedChapters)
+	}
+	if summary.NeedsHumanChapters != 1 {
+		t.Errorf("NeedsHumanChapters: expected 1, got %d", summary.NeedsHumanChapters)
+	}
+	if summary.TechnicalBlockedChapters != 1 {
+		t.Errorf("TechnicalBlockedChapters: expected 1, got %d", summary.TechnicalBlockedChapters)
+	}
+	if summary.ProducedChapters != 1 {
+		t.Errorf("ProducedChapters: expected 1, got %d", summary.ProducedChapters)
+	}
+}

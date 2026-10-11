@@ -14,6 +14,10 @@ import (
 // MetricsSummary encapsulates aggregated chapter quality statistics for a project.
 type MetricsSummary struct {
 	Chapters                       int
+	CommittedChapters              int
+	NeedsHumanChapters             int
+	TechnicalBlockedChapters       int
+	ProducedChapters               int
 	UnderTargetChapters            int
 	RewriteChapters                int
 	UnclosedReconciliationChapters int
@@ -40,6 +44,16 @@ func aggregateMetrics(items []*domain.ChapterQualityMetrics) MetricsSummary {
 	for _, it := range items {
 		if it == nil {
 			continue
+		}
+		switch it.Outcome {
+		case domain.ChapterOutcomeCommitted:
+			summary.CommittedChapters++
+		case domain.ChapterOutcomeNeedsHuman:
+			summary.NeedsHumanChapters++
+		case domain.ChapterOutcomeTechnicalBlocked:
+			summary.TechnicalBlockedChapters++
+		case domain.ChapterOutcomeProduced:
+			summary.ProducedChapters++
 		}
 		if it.UnderTarget {
 			summary.UnderTargetChapters++
@@ -84,6 +98,8 @@ func printProjectMetrics(projectID, projectTitle string, summary MetricsSummary)
 		return
 	}
 	fmt.Printf("  统计章节数: %d\n", summary.Chapters)
+	fmt.Printf("  终态分布: 已入库 %d / 停线待人工 %d / 技术阻断 %d / 已产出未入库 %d\n",
+		summary.CommittedChapters, summary.NeedsHumanChapters, summary.TechnicalBlockedChapters, summary.ProducedChapters)
 	fmt.Printf("  字数达标率: %.1f%% (未达标章节: %d)\n", summary.WordPassRate*100, summary.UnderTargetChapters)
 	fmt.Printf("  平均评审分: %.1f\n", summary.AvgScore)
 	fmt.Printf("  重写返工率: %.1f%% (重写章节: %d)\n", summary.RewriteRate*100, summary.RewriteChapters)

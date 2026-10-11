@@ -222,6 +222,7 @@ func (s *SQLiteStore) migrate() error {
 		hook_claims_validated INTEGER NOT NULL,
 		hook_claims_rejected INTEGER NOT NULL,
 		compaction_failed INTEGER NOT NULL,
+		outcome TEXT NOT NULL DEFAULT 'committed',
 		created_at DATETIME NOT NULL,
 		PRIMARY KEY (project_id, chapter_index)
 	);
@@ -370,6 +371,7 @@ func (s *SQLiteStore) migrate() error {
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN structured_items_json TEXT DEFAULT '';`)
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN alignment TEXT DEFAULT '';`)
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN threat_level TEXT DEFAULT '';`)
+	_, _ = s.db.Exec(`ALTER TABLE chapter_quality_metrics ADD COLUMN outcome TEXT NOT NULL DEFAULT 'committed';`)
 
 	// One-time data migration from legacy projects.protagonist_json into codex_entries
 	var colCount int
