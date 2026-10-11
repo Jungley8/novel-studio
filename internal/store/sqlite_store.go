@@ -1668,11 +1668,13 @@ func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, cha
 	}
 
 	// 7. Delete any codex progressions triggered from this chapter
-	_, _ = tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM codex_progressions 
 		WHERE entry_id IN (SELECT id FROM codex_entries WHERE project_id = ?) 
 		  AND active_from_chapter = ?
-	`, projectID, chapterIndex)
+	`, projectID, chapterIndex); err != nil {
+		return nil, nil, fmt.Errorf("delete codex progressions in tx: %w", err)
+	}
 
 	// 8. Ledger: chapter.uncommitted keeps the full withdrawn draft inspectable.
 	beforeBytes, _ := json.Marshal(c)

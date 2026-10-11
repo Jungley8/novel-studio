@@ -1140,3 +1140,110 @@ func TestSQLiteStore_UncommitChapter_PowerDeltaGuard(t *testing.T) {
 		t.Errorf("expected 青凝镜 removed from inventory after uncommitting ch2, got %s", protAfter.Inventory)
 	}
 }
+
+// Case ⑧: DROP TABLE codex_progressions 后 uncommit 第 1 章（带配角 progression）
+// -> Step 7 DELETE 失败必须冒泡包含 "codex progressions" 的 error，
+// 且由于事务整体回滚，章节未被删除（GetChapter 仍在）。
+func TestSQLiteStore_UncommitChapter_DeleteCodexProgressionsFailureRollback(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test_uncommit_prog_fail.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	proj := &domain.Project{
+		ID:    "proj-prog-fail",
+		Title: "删除进度失败回滚测试",
+	}
+	if err := s.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	prot := &domain.CodexEntry{
+		ID:        "codex_prog_fail_pro",
+		ProjectID: proj.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "林动",
+		Realm:     "淬体九重",
+		Inventory: "粗布衣",
+	}
+	if err := s.SaveCodexEntry(ctx, prot); err != nil {
+		t.Fatalf("SaveCodexEntry protagonist failed: %v", err)
+	}
+
+	char := &domain.CodexEntry{
+		ID:        "codex_prog_fail_char",
+		ProjectID: proj.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "SUPPORTING",
+		Name:      "柳依依",
+		Realm:     "凡人",
+	}
+	if err := s.SaveCodexEntry(ctx, char); err != nil {
+		t.Fatalf("SaveCodexEntry supporting character failed: %v", err)
+	}
+
+	ch1 := &domain.Chapter{
+		ID:           "ch_prog_fail_1",
+		ProjectID:    proj.ID,
+		ChapterIndex: 1,
+		Title:        "第一章 聚仙楼风波",
+		CoreConflict: "结识柳依依",
+		Content:      "寒夜风雪呼啸，聚仙楼内灯火通明...",
+		StateMutation: domain.StateMutation{
+			CharacterMutations: []domain.CharacterMutation{
+				{
+					Name:          "柳依依",
+					StatusDelta:   "目睹林动神力，震撼归心",
+					RelationDelta: "DEVOTED",
+				},
+			},
+		},
+	}
+	if _, err := s.CommitChapter(ctx, proj.ID, ch1); err != nil {
+		t.Fatalf("CommitChapter failed: %v", err)
+	}
+
+	// 确认第 1 章归档后成功写入了 codex_progressions
+	var progCount int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM codex_progressions WHERE active_from_chapter = 1`).Scan(&progCount); err != nil {
+		t.Fatalf("query codex_progressions count failed: %v", err)
+	}
+	if progCount != 1 {
+		t.Fatalf("expected 1 progression row before drop, got %d", progCount)
+	}
+
+	// 删表法：确定性触发 Step 7 DELETE 失败
+	if _, err := s.db.Exec(`DROP TABLE codex_progressions`); err != nil {
+		t.Fatalf("DROP TABLE codex_progressions failed: %v", err)
+	}
+
+	// 调 UncommitChapter -> 必须返回 error 且包含 progressions 标识
+	cp, p, err := s.UncommitChapter(ctx, proj.ID, 1)
+	if err == nil {
+		t.Fatalf("expected UncommitChapter to fail after DROP TABLE codex_progressions, got cp=%v, p=%v", cp, p)
+	}
+	if !strings.Contains(err.Error(), "codex progressions") {
+		t.Errorf("expected error to contain 'codex progressions', got: %v", err)
+	}
+
+	// 断言章节未被删除（证明事务原子性：Step 5 的 DELETE chapters 已被 rollback，而非部分提交）
+	savedCh, err := s.GetChapter(ctx, proj.ID, 1)
+	if err != nil || savedCh == nil {
+		t.Fatalf("expected chapter 1 to remain intact after tx rollback, err: %v", err)
+	}
+	if savedCh.Content != ch1.Content {
+		t.Errorf("expected chapter 1 content to remain unchanged, got %q", savedCh.Content)
+	}
+
+	// 断言 checkpoint 表中未残留草稿
+	storedCp, _ := s.GetCheckpoint(ctx, proj.ID, 1)
+	if storedCp != nil && storedCp.Phase == domain.CheckpointPhaseDrafted {
+		t.Errorf("unexpected draft checkpoint committed despite error: %+v", storedCp)
+	}
+}
