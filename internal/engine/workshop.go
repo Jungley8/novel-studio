@@ -147,6 +147,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		req.WordsTarget = 2000
 	}
 	if req.MaxRewriteLoops <= 0 {
+		// 0 与负值统一归一为默认 3；本字段无法表达"禁用重写"（既有语义：重写始终受 MaxRewriteLoops 封顶）。
 		req.MaxRewriteLoops = 3
 	}
 
@@ -719,9 +720,9 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		words := len([]rune(currentDraft))
 		ratio := float64(words) / float64(req.WordsTarget) * 100
 		if triggered {
-			report.Issues = append(report.Issues, fmt.Sprintf("【字数遥测】实际 %d 字低于目标 %d 字的 80%%（%.1f%%），已触发定向扩写", words, req.WordsTarget, ratio))
+			report.Issues = append(report.Issues, fmt.Sprintf("【字数遥测】实际 %d 字低于目标 %d 字的 %.0f%%（%.1f%%），已触发定向扩写", words, req.WordsTarget, WordCountRevisionFloor*100, ratio))
 		} else {
-			report.Issues = append(report.Issues, fmt.Sprintf("【字数遥测】实际 %d 字低于目标 %d 字的 80%% 及格线（%.1f%%）", words, req.WordsTarget, ratio))
+			report.Issues = append(report.Issues, fmt.Sprintf("【字数遥测】实际 %d 字低于目标 %d 字的 %.0f%% 及格线（%.1f%%）", words, req.WordsTarget, WordCountRevisionFloor*100, ratio))
 		}
 	}
 	if wordcountUnderTarget() && req.MaxRewriteLoops > 0 {
