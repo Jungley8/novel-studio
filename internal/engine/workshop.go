@@ -176,6 +176,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		rhythmWarning     string
 		planInjectWarning string
 		intentWarning     string
+		compactionWarning string
 	)
 
 	if req.ResumeCheckpoint {
@@ -305,9 +306,19 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	}
 
 	// 1.3 Synthesize Canon Horizon with accounted extras
-	horizon, err := w.chronicle.AssembleHorizonWithExtras(ctx, req.ProjectID, req.ChapterIndex, extras...)
+	if w.orch != nil && w.orch.client != nil {
+		w.chronicle.SetCompactor(NewLLMCompactor(w.orch.client, req.ReasoningModel))
+	}
+	horizon, trace, err := w.chronicle.AssembleHorizonTracedWithExtras(ctx, req.ProjectID, req.ChapterIndex, extras...)
 	if err != nil {
 		return nil, fmt.Errorf("assemble canon horizon failed: %w", err)
+	}
+	if trace != nil && trace.CompactionFailed {
+		compactionWarning = fmt.Sprintf("【记忆压缩警告】%s", trace.CompactionNote)
+		emit(WorkshopEvent{
+			Phase:   PhaseHorizon,
+			Message: compactionWarning,
+		})
 	}
 	if req.NarrativeStyle != "" {
 		horizon.NarrativeTone = req.NarrativeStyle
@@ -640,6 +651,9 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	}
 	if auditReport != nil && intentWarning != "" {
 		auditReport.Issues = append(auditReport.Issues, intentWarning)
+	}
+	if auditReport != nil && compactionWarning != "" {
+		auditReport.Issues = append(auditReport.Issues, compactionWarning)
 	}
 
 	// 5. Targeted Rewrite Loop if revision needed

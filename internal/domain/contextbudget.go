@@ -3,12 +3,14 @@ package domain
 // ContextTrace records the token budget allocation, itemized accounting,
 // and truncation history of CanonChronicle horizon assembly.
 type ContextTrace struct {
-	ProtectedIDs    []string `json:"protected_ids"`
-	CompressibleIDs []string `json:"compressible_ids"`
-	DroppedIDs      []string `json:"dropped_ids"`
-	BudgetTokens    int      `json:"budget_tokens"`
-	EstimatedTokens int      `json:"estimated_tokens"`
-	Truncated       bool     `json:"truncated"`
+	ProtectedIDs     []string `json:"protected_ids"`
+	CompressibleIDs  []string `json:"compressible_ids"`
+	DroppedIDs       []string `json:"dropped_ids"`
+	BudgetTokens     int      `json:"budget_tokens"`
+	EstimatedTokens  int      `json:"estimated_tokens"`
+	Truncated        bool     `json:"truncated"`
+	CompactionFailed bool     `json:"compaction_failed,omitempty"`
+	CompactionNote   string   `json:"compaction_note,omitempty"`
 }
 
 // EstimateTokens provides a lightweight heuristic token estimation for context pieces:

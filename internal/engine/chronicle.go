@@ -64,6 +64,7 @@ type CanonChronicle struct {
 	store        store.Store
 	cfg          *config.Config
 	budgetTokens int
+	compactor    CompressibleCompactor
 }
 
 func NewCanonChronicle(s store.Store) *CanonChronicle {
@@ -78,6 +79,11 @@ func (c *CanonChronicle) SetBudgetTokens(tokens int) {
 // SetConfig sets the system config reference on CanonChronicle.
 func (c *CanonChronicle) SetConfig(cfg *config.Config) {
 	c.cfg = cfg
+}
+
+// SetCompactor sets the semantic memory compactor for dropped compressible context.
+func (c *CanonChronicle) SetCompactor(fn CompressibleCompactor) {
+	c.compactor = fn
 }
 
 func (c *CanonChronicle) resolveBudget(ctx context.Context) int {
@@ -614,6 +620,7 @@ func (c *CanonChronicle) AssembleHorizonTracedWithExtras(ctx context.Context, pr
 	retainedMap := make(map[string]bool)
 	currentRemaining := remainingBudget
 	totalEstimatedTokens := totalProtectedTokens
+	var droppedItems []CompactionItem
 
 	for _, item := range allCompressible {
 		if item.tokens <= currentRemaining {
@@ -624,9 +631,52 @@ func (c *CanonChronicle) AssembleHorizonTracedWithExtras(ctx context.Context, pr
 		} else {
 			trace.DroppedIDs = append(trace.DroppedIDs, item.id)
 			trace.Truncated = true
+			kind := item.category
+			if strings.HasPrefix(item.id, "codex/") {
+				kind = "codex"
+			} else if strings.HasPrefix(item.id, "callback/") {
+				kind = "callback"
+			} else if strings.HasPrefix(item.id, "history/retro") || strings.HasPrefix(item.id, "retro/") {
+				kind = "retro"
+			}
+			droppedItems = append(droppedItems, CompactionItem{
+				ID:   item.id,
+				Kind: kind,
+				Text: item.desc,
+			})
 		}
 	}
 	trace.EstimatedTokens = totalEstimatedTokens
+
+	var compiledText string
+	if len(droppedItems) > 0 && c.compactor != nil {
+		remaining := budget - totalEstimatedTokens
+		if remaining >= MinCompactionBudgetTokens {
+			compiled, cErr := c.compactor(ctx, CompactionInput{
+				ChapterIndex: targetChapter,
+				Dropped:      droppedItems,
+				BudgetTokens: remaining,
+			})
+			if cErr != nil {
+				trace.CompactionFailed = true
+				trace.CompactionNote = fmt.Sprintf("语义压缩执行失败: %v", cErr)
+			} else if strings.TrimSpace(compiled) == "" {
+				trace.CompactionFailed = true
+				trace.CompactionNote = "语义压缩输出为空"
+			} else if domain.EstimateTokens(compiled) > remaining {
+				trace.CompactionFailed = true
+				trace.CompactionNote = fmt.Sprintf("语义压缩输出超出剩余预算: 预估 %d tokens 超过剩余预算 %d tokens", domain.EstimateTokens(compiled), remaining)
+			} else {
+				tokens := domain.EstimateTokens(compiled)
+				totalEstimatedTokens += tokens
+				trace.EstimatedTokens = totalEstimatedTokens
+				trace.CompressibleIDs = append(trace.CompressibleIDs, "memory/compiled-compressible")
+				compiledText = compiled
+			}
+		} else {
+			trace.CompactionNote = "剩余预算不足，跳过压缩"
+		}
+	}
 
 	// Synthesize HistoricalCallbacks text from retained items
 	var cbSb strings.Builder
@@ -662,6 +712,14 @@ func (c *CanonChronicle) AssembleHorizonTracedWithExtras(ctx context.Context, pr
 		}
 		cbSb.WriteString("【往卷全局记忆 (Volume Retrospectives)】\n")
 		cbSb.WriteString(strings.Join(retainedRetroDescs, "\n\n"))
+	}
+
+	if compiledText != "" {
+		if cbSb.Len() > 0 {
+			cbSb.WriteString("\n\n")
+		}
+		cbSb.WriteString("【压缩记忆 (Compiled Memory)】\n")
+		cbSb.WriteString(compiledText)
 	}
 
 	// Synthesize Codex text and relations from retained items.

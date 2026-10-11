@@ -1846,3 +1846,261 @@ func TestCanonChronicle_AcctFix_TracedWithExtras(t *testing.T) {
 		t.Errorf("expected error to mention 'inject/plan', got: %v", errOF)
 	}
 }
+
+// -----------------------------------------------------------------------------
+// P0-1 语义压缩管线 (LLM Compactor) 测试
+// -----------------------------------------------------------------------------
+
+func setupCompactionTestFixture() (*CanonChronicle, int) {
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:         "p_compaction_test",
+			Title:      "万道征程",
+			WorldRules: "天道有常，因果轮回。",
+		},
+		chapters: []*domain.Chapter{
+			{ChapterIndex: 1, Title: "第1章", Content: "起步篇章。"},
+			{ChapterIndex: 2, Title: "第2章", Content: "磨砺篇章。"},
+			{ChapterIndex: 3, Title: "第3章", Content: "蓄势篇章。"},
+			{ChapterIndex: 4, Title: "第4章", Content: "暗涌篇章。"},
+		},
+		hooks: []*domain.PlotHook{
+			{
+				ID:             "hook_far_drop",
+				Title:          "远期超长伏笔",
+				Details:        strings.Repeat("潜藏在深渊地下的古老妖皇封印，牵扯万古大劫暗线因果。", 10),
+				CreatedChapter: 1,
+				TargetChapter:  30,
+				Status:         domain.HookStatusOpen,
+			},
+		},
+	}
+	chronicle := NewCanonChronicle(mockStore)
+	chronicle.SetBudgetTokens(1)
+	_, probeTrace, _ := chronicle.AssembleHorizonTraced(context.Background(), "p_compaction_test", 5)
+	baseProtectedTokens := probeTrace.EstimatedTokens
+
+	// Budget accommodates base protected + 150 tokens.
+	// hook_far_drop is ~240 tokens, so it will be dropped, leaving 150 tokens remaining (>= MinCompactionBudgetTokens 100).
+	budget := baseProtectedTokens + 150
+	chronicle.SetBudgetTokens(budget)
+	return chronicle, budget
+}
+
+// 1. TestCanonChronicle_Compaction_InjectsCompiledMemory：小 budget 逼出丢弃 + SetCompactor 假压缩器（返回预算内摘录）
+// → 断言 horizon.HistoricalCallbacks 含 【压缩记忆 与摘录文本、trace.CompressibleIDs 含 memory/compiled-compressible、CompactionFailed==false。
+func TestCanonChronicle_Compaction_InjectsCompiledMemory(t *testing.T) {
+	chronicle, _ := setupCompactionTestFixture()
+
+	excerpt := "【压缩摘录】妖皇深渊封印因果潜伏未消。"
+	compactorCalled := false
+	chronicle.SetCompactor(func(ctx context.Context, in CompactionInput) (string, error) {
+		compactorCalled = true
+		if in.ChapterIndex != 5 {
+			t.Errorf("expected ChapterIndex=5, got %d", in.ChapterIndex)
+		}
+		if len(in.Dropped) == 0 {
+			t.Errorf("expected non-empty Dropped items")
+		}
+		if in.BudgetTokens < MinCompactionBudgetTokens {
+			t.Errorf("expected BudgetTokens >= %d, got %d", MinCompactionBudgetTokens, in.BudgetTokens)
+		}
+		return excerpt, nil
+	})
+
+	horizon, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_compaction_test", 5)
+	if err != nil {
+		t.Fatalf("AssembleHorizonTraced failed: %v", err)
+	}
+
+	if !compactorCalled {
+		t.Fatalf("expected compactor to be called")
+	}
+	if trace.CompactionFailed {
+		t.Errorf("expected CompactionFailed==false, got true (note: %s)", trace.CompactionNote)
+	}
+	if !strings.Contains(horizon.HistoricalCallbacks, "【压缩记忆") {
+		t.Errorf("expected HistoricalCallbacks to contain '【压缩记忆', got:\n%s", horizon.HistoricalCallbacks)
+	}
+	if !strings.Contains(horizon.HistoricalCallbacks, excerpt) {
+		t.Errorf("expected HistoricalCallbacks to contain excerpt %q, got:\n%s", excerpt, horizon.HistoricalCallbacks)
+	}
+
+	hasCompiledID := false
+	for _, id := range trace.CompressibleIDs {
+		if id == "memory/compiled-compressible" {
+			hasCompiledID = true
+			break
+		}
+	}
+	if !hasCompiledID {
+		t.Errorf("expected trace.CompressibleIDs to contain 'memory/compiled-compressible', got: %v", trace.CompressibleIDs)
+	}
+	if len(trace.DroppedIDs) == 0 {
+		t.Errorf("expected trace.DroppedIDs to be non-empty")
+	}
+}
+
+// 2. TestCanonChronicle_Compaction_FailureKeepsDeterministicDrop：假压缩器返回 error
+// → CompactionFailed==true、摘录不在、DroppedIDs 非空。
+func TestCanonChronicle_Compaction_FailureKeepsDeterministicDrop(t *testing.T) {
+	chronicle, _ := setupCompactionTestFixture()
+
+	chronicle.SetCompactor(func(ctx context.Context, in CompactionInput) (string, error) {
+		return "", errors.New("simulated LLM timeout")
+	})
+
+	horizon, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_compaction_test", 5)
+	if err != nil {
+		t.Fatalf("AssembleHorizonTraced should not fail fatally on compaction error, got: %v", err)
+	}
+
+	if !trace.CompactionFailed {
+		t.Errorf("expected CompactionFailed==true, got false")
+	}
+	if !strings.Contains(trace.CompactionNote, "simulated LLM timeout") {
+		t.Errorf("expected CompactionNote to mention error, got: %s", trace.CompactionNote)
+	}
+	if strings.Contains(horizon.HistoricalCallbacks, "【压缩记忆") {
+		t.Errorf("expected HistoricalCallbacks NOT to contain '【压缩记忆', got:\n%s", horizon.HistoricalCallbacks)
+	}
+	if len(trace.DroppedIDs) == 0 {
+		t.Errorf("expected trace.DroppedIDs to be non-empty")
+	}
+}
+
+// 3. TestCanonChronicle_Compaction_OverBudgetOutputRejected：假压缩器返回超预算长文 → Failed。
+func TestCanonChronicle_Compaction_OverBudgetOutputRejected(t *testing.T) {
+	chronicle, _ := setupCompactionTestFixture()
+
+	chronicle.SetCompactor(func(ctx context.Context, in CompactionInput) (string, error) {
+		// Return text far exceeding BudgetTokens
+		return strings.Repeat("超长压缩记忆文本，远超剩余预算上限。", in.BudgetTokens+100), nil
+	})
+
+	horizon, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_compaction_test", 5)
+	if err != nil {
+		t.Fatalf("AssembleHorizonTraced should succeed, got: %v", err)
+	}
+
+	if !trace.CompactionFailed {
+		t.Errorf("expected CompactionFailed==true for over-budget output")
+	}
+	if !strings.Contains(trace.CompactionNote, "超出剩余预算") {
+		t.Errorf("expected CompactionNote to mention '超出剩余预算', got: %s", trace.CompactionNote)
+	}
+	if strings.Contains(horizon.HistoricalCallbacks, "【压缩记忆") {
+		t.Errorf("expected HistoricalCallbacks NOT to contain '【压缩记忆', got:\n%s", horizon.HistoricalCallbacks)
+	}
+	if len(trace.DroppedIDs) == 0 {
+		t.Errorf("expected trace.DroppedIDs to be non-empty")
+	}
+}
+
+// 4. TestCanonChronicle_Compaction_NoCompactorUnchanged：不 SetCompactor → 无压缩段落、CompactionFailed==false（回归保护）。
+func TestCanonChronicle_Compaction_NoCompactorUnchanged(t *testing.T) {
+	chronicle, _ := setupCompactionTestFixture()
+	// Do not call chronicle.SetCompactor
+
+	horizon, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_compaction_test", 5)
+	if err != nil {
+		t.Fatalf("AssembleHorizonTraced failed: %v", err)
+	}
+
+	if trace.CompactionFailed {
+		t.Errorf("expected CompactionFailed==false, got true")
+	}
+	if trace.CompactionNote != "" {
+		t.Errorf("expected CompactionNote to be empty, got: %s", trace.CompactionNote)
+	}
+	if strings.Contains(horizon.HistoricalCallbacks, "【压缩记忆") {
+		t.Errorf("expected HistoricalCallbacks NOT to contain '【压缩记忆', got:\n%s", horizon.HistoricalCallbacks)
+	}
+	if len(trace.DroppedIDs) == 0 {
+		t.Errorf("expected trace.DroppedIDs to be non-empty")
+	}
+}
+
+type mockLLMCompactorClient struct {
+	capturedSystemPrompt string
+	capturedUserPrompt   string
+	capturedModel        string
+	capturedTemperature  float64
+	returnText           string
+	returnErr            error
+}
+
+func (m *mockLLMCompactorClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	return m.returnText, m.returnErr
+}
+
+func (m *mockLLMCompactorClient) ChatCompletionWithUsage(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, TokenUsage, error) {
+	m.capturedModel = model
+	m.capturedSystemPrompt = systemPrompt
+	m.capturedUserPrompt = userPrompt
+	m.capturedTemperature = temperature
+	return m.returnText, TokenUsage{TotalTokens: 100}, m.returnErr
+}
+
+func (m *mockLLMCompactorClient) ChatCompletionStream(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
+	return nil, nil
+}
+
+func TestNewLLMCompactor(t *testing.T) {
+	t.Run("nil client returns error", func(t *testing.T) {
+		compactor := NewLLMCompactor(nil, "model-x")
+		_, err := compactor(context.Background(), CompactionInput{
+			ChapterIndex: 1,
+			Dropped:      []CompactionItem{{ID: "c1", Kind: "callback", Text: "text"}},
+			BudgetTokens: 200,
+		})
+		if err == nil {
+			t.Errorf("expected error when client is nil")
+		}
+	})
+
+	t.Run("empty dropped returns empty string", func(t *testing.T) {
+		mockClient := &mockLLMCompactorClient{}
+		compactor := NewLLMCompactor(mockClient, "model-x")
+		out, err := compactor(context.Background(), CompactionInput{
+			ChapterIndex: 1,
+			Dropped:      nil,
+			BudgetTokens: 200,
+		})
+		if err != nil || out != "" {
+			t.Errorf("expected empty string and nil error on empty dropped, got %q, %v", out, err)
+		}
+	})
+
+	t.Run("calls client with correct system prompt and temperature", func(t *testing.T) {
+		mockClient := &mockLLMCompactorClient{
+			returnText: "  精炼记忆摘录  ",
+		}
+		compactor := NewLLMCompactor(mockClient, "deepseek-reasoner")
+		out, err := compactor(context.Background(), CompactionInput{
+			ChapterIndex: 3,
+			Dropped: []CompactionItem{
+				{ID: "callback/hook_1", Kind: "callback", Text: "伏笔详情文本"},
+			},
+			BudgetTokens: 150,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if out != "精炼记忆摘录" {
+			t.Errorf("expected trimmed output '精炼记忆摘录', got %q", out)
+		}
+		if !strings.HasPrefix(mockClient.capturedSystemPrompt, "你是一名长篇小说的记忆压缩器") {
+			t.Errorf("expected system prompt to start with '你是一名长篇小说的记忆压缩器', got %q", mockClient.capturedSystemPrompt)
+		}
+		if mockClient.capturedTemperature != 0.2 {
+			t.Errorf("expected temperature 0.2, got %v", mockClient.capturedTemperature)
+		}
+		if mockClient.capturedModel != "deepseek-reasoner" {
+			t.Errorf("expected model 'deepseek-reasoner', got %s", mockClient.capturedModel)
+		}
+		if !strings.Contains(mockClient.capturedUserPrompt, "callback/hook_1") {
+			t.Errorf("expected user prompt to contain item ID, got %s", mockClient.capturedUserPrompt)
+		}
+	})
+}
