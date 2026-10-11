@@ -931,13 +931,9 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	}
 
 	if auditReport != nil && len(auditReport.ResolvedHookClaims) > 0 {
-		validIDs, rejected := FilterResolvedHookClaims(auditReport.ResolvedHookClaims, horizon.AllActiveHooks, currentDraft)
-		auditReport.ResolvedHookIDs = validIDs
-		for _, r := range rejected {
-			auditReport.Issues = append(auditReport.Issues,
-				fmt.Sprintf("【伏笔兑现证据不足】ID %q 回收声明被拒（%s）", r.Claim.ID, r.Reason))
-		}
-		if len(rejected) > 0 {
+		// 证据门与 issue 记账统一走 GateResolvedHookClaims（与手动审阅路径同口径）。
+		validIDs := GateResolvedHookClaims(auditReport, horizon.AllActiveHooks, currentDraft)
+		if len(validIDs) < len(auditReport.ResolvedHookClaims) {
 			emit(WorkshopEvent{Phase: PhaseDrafted,
 				Message: fmt.Sprintf("伏笔回收证据门：通过 %d / 声明 %d", len(validIDs), len(auditReport.ResolvedHookClaims))})
 		}
