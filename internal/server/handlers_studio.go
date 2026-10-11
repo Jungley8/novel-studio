@@ -1,15 +1,26 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/engine"
 )
+
+type studioThreadStore interface {
+	CreateStudioThread(ctx context.Context, t *domain.StudioThread) error
+	GetStudioThread(ctx context.Context, id string) (*domain.StudioThread, error)
+	ListStudioThreads(ctx context.Context) ([]*domain.StudioThread, error)
+	DeleteStudioThread(ctx context.Context, id string) error
+	AppendStudioMessage(ctx context.Context, m *domain.StudioMessage) error
+	ListStudioMessages(ctx context.Context, threadID string) ([]*domain.StudioMessage, error)
+}
 
 // StudioLibraryItem represents the cross-project aggregated status for Studio overview.
 type StudioLibraryItem struct {
@@ -28,6 +39,7 @@ type StudioChatRequest struct {
 	ProjectID string `json:"project_id,omitempty"`
 	Mode      string `json:"mode,omitempty"`
 	Message   string `json:"message"`
+	ThreadID  string `json:"thread_id,omitempty"`
 }
 
 // StudioChatResponse represents the response body for Studio-level assistant dialogue.
@@ -36,6 +48,8 @@ type StudioChatResponse struct {
 	Mode       string            `json:"mode"`
 	ProjectID  string            `json:"project_id,omitempty"`
 	TokensUsed engine.TokenUsage `json:"tokens_used"`
+	ThreadID   string            `json:"thread_id"`
+	MessageID  string            `json:"message_id"`
 }
 
 // handleStudioLibrary aggregates cross-project statistics for the Studio Library overview.
@@ -156,11 +170,17 @@ func (s *Server) handleStudioLibrary(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, items)
 }
 
-// handleStudioChat provides cross-project or horizon-backed conversational brainstorming.
+// handleStudioChat provides cross-project or horizon-backed conversational brainstorming with persistence.
 // POST /api/studio/chat
 func (s *Server) handleStudioChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	stStore, ok := s.store.(studioThreadStore)
+	if !ok {
+		errorResponse(w, http.StatusInternalServerError, "store does not support studio threads (fail-closed)")
 		return
 	}
 
@@ -187,10 +207,64 @@ func (s *Server) handleStudioChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	var sysPrompt string
+	var thread *domain.StudioThread
+	if req.ThreadID != "" {
+		t, err := stStore.GetStudioThread(ctx, req.ThreadID)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, "get studio thread: "+err.Error())
+			return
+		}
+		if t == nil {
+			errorResponse(w, http.StatusNotFound, "thread not found")
+			return
+		}
+		thread = t
+	} else {
+		// When creating new thread with requested project_id, fail-closed if project does not exist
+		if req.ProjectID != "" {
+			p, err := s.store.GetProject(ctx, req.ProjectID)
+			if err != nil || p == nil {
+				errorResponse(w, http.StatusNotFound, "project not found")
+				return
+			}
+		}
 
-	if req.ProjectID != "" {
-		p, err := s.store.GetProject(ctx, req.ProjectID)
+		runes := []rune(req.Message)
+		title := req.Message
+		if len(runes) > 30 {
+			title = string(runes[:30]) + "…"
+		}
+		now := time.Now()
+		thread = &domain.StudioThread{
+			ID:        fmt.Sprintf("th_%d", now.UnixNano()),
+			Title:     title,
+			ProjectID: req.ProjectID,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := stStore.CreateStudioThread(ctx, thread); err != nil {
+			errorResponse(w, http.StatusInternalServerError, "create studio thread: "+err.Error())
+			return
+		}
+	}
+
+	userMsg := &domain.StudioMessage{
+		ID:        fmt.Sprintf("msg_%d_u", time.Now().UnixNano()),
+		ThreadID:  thread.ID,
+		Role:      "user",
+		Content:   req.Message,
+		Mode:      mode,
+		ProjectID: thread.ProjectID,
+		CreatedAt: time.Now(),
+	}
+	if err := stStore.AppendStudioMessage(ctx, userMsg); err != nil {
+		errorResponse(w, http.StatusInternalServerError, "append user message: "+err.Error())
+		return
+	}
+
+	var sysPrompt string
+	if thread.ProjectID != "" {
+		p, err := s.store.GetProject(ctx, thread.ProjectID)
 		if err != nil || p == nil {
 			errorResponse(w, http.StatusNotFound, "project not found")
 			return
@@ -198,13 +272,13 @@ func (s *Server) handleStudioChat(w http.ResponseWriter, r *http.Request) {
 
 		// 薄封装：调用 s.chronicle.AssembleHorizon 获取项目 horizon 上下文（与 preview handler 同式）
 		targetChapter := 1
-		if chapters, err := s.store.ListChapters(ctx, req.ProjectID); err == nil && len(chapters) > 0 {
+		if chapters, err := s.store.ListChapters(ctx, thread.ProjectID); err == nil && len(chapters) > 0 {
 			targetChapter = len(chapters) + 1
 		}
 
 		var canonText string
 		if s.chronicle != nil {
-			if horizon, err := s.chronicle.AssembleHorizon(ctx, req.ProjectID, targetChapter); err == nil && horizon != nil {
+			if horizon, err := s.chronicle.AssembleHorizon(ctx, thread.ProjectID, targetChapter); err == nil && horizon != nil {
 				canonText = horizon.RollingCanonText
 				if horizon.TailAnchor != "" {
 					canonText += "\n" + horizon.TailAnchor
@@ -311,10 +385,123 @@ func (s *Server) handleStudioChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	usageBytes, _ := json.Marshal(usage)
+	asstNow := time.Now()
+	if !asstNow.After(userMsg.CreatedAt) {
+		asstNow = userMsg.CreatedAt.Add(time.Millisecond)
+	}
+	assistantMsg := &domain.StudioMessage{
+		ID:         fmt.Sprintf("msg_%d_a", asstNow.UnixNano()),
+		ThreadID:   thread.ID,
+		Role:       "assistant",
+		Content:    strings.TrimSpace(resText),
+		Mode:       mode,
+		ProjectID:  thread.ProjectID,
+		TokenUsage: string(usageBytes),
+		CreatedAt:  asstNow,
+	}
+	if err := stStore.AppendStudioMessage(ctx, assistantMsg); err != nil {
+		errorResponse(w, http.StatusInternalServerError, "append assistant message: "+err.Error())
+		return
+	}
+
 	jsonResponse(w, http.StatusOK, StudioChatResponse{
 		Reply:      strings.TrimSpace(resText),
 		Mode:       mode,
-		ProjectID:  req.ProjectID,
+		ProjectID:  thread.ProjectID,
 		TokensUsed: usage,
+		ThreadID:   thread.ID,
+		MessageID:  assistantMsg.ID,
 	})
+}
+
+// handleStudioThreads lists all studio conversation threads.
+// GET /api/studio/threads
+func (s *Server) handleStudioThreads(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	stStore, ok := s.store.(studioThreadStore)
+	if !ok {
+		errorResponse(w, http.StatusInternalServerError, "store does not support studio threads (fail-closed)")
+		return
+	}
+
+	threads, err := stStore.ListStudioThreads(r.Context())
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, "list studio threads: "+err.Error())
+		return
+	}
+	if threads == nil {
+		threads = make([]*domain.StudioThread, 0)
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"threads": threads,
+	})
+}
+
+// handleStudioThreadRoutes handles individual thread operations (GET/DELETE).
+// GET /api/studio/threads/{id}
+// DELETE /api/studio/threads/{id}
+func (s *Server) handleStudioThreadRoutes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodDelete {
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	stStore, ok := s.store.(studioThreadStore)
+	if !ok {
+		errorResponse(w, http.StatusInternalServerError, "store does not support studio threads (fail-closed)")
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/api/studio/threads/")
+	id = strings.TrimSpace(id)
+	if id == "" {
+		errorResponse(w, http.StatusBadRequest, "thread id cannot be empty")
+		return
+	}
+
+	ctx := r.Context()
+	switch r.Method {
+	case http.MethodGet:
+		thread, err := stStore.GetStudioThread(ctx, id)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, "get studio thread: "+err.Error())
+			return
+		}
+		if thread == nil {
+			errorResponse(w, http.StatusNotFound, "thread not found")
+			return
+		}
+
+		messages, err := stStore.ListStudioMessages(ctx, id)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, "list studio messages: "+err.Error())
+			return
+		}
+		if messages == nil {
+			messages = make([]*domain.StudioMessage, 0)
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"thread":   thread,
+			"messages": messages,
+		})
+	case http.MethodDelete:
+		if err := stStore.DeleteStudioThread(ctx, id); err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				errorResponse(w, http.StatusNotFound, "thread not found")
+				return
+			}
+			errorResponse(w, http.StatusInternalServerError, "delete studio thread: "+err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]string{
+			"status": "deleted",
+		})
+	}
 }
