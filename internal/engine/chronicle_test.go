@@ -1521,3 +1521,214 @@ func TestCanonChronicle_ContextBudget_ProtectedOverflowTruncated(t *testing.T) {
 		t.Errorf("expected trace.ProtectedIDs to be recorded on protected overflow")
 	}
 }
+
+// --- acctfix additions (append-only): anchor + relations accounting ---
+
+// vaultAnchorAcctStore wraps mockChronicleStore with an in-memory StyleVault so
+// AssembleHorizonTraced takes the StyleVaultStore branch without SQLite.
+type vaultAnchorAcctStore struct {
+	*mockChronicleStore
+	vault *domain.StyleVault
+}
+
+func (s *vaultAnchorAcctStore) GetStyleVault(ctx context.Context, projectID string) (*domain.StyleVault, error) {
+	if s.vault != nil {
+		return s.vault, nil
+	}
+	return &domain.StyleVault{ProjectID: projectID}, nil
+}
+
+func (s *vaultAnchorAcctStore) SaveStyleVault(ctx context.Context, vault *domain.StyleVault) error {
+	s.vault = vault
+	return nil
+}
+
+func (s *vaultAnchorAcctStore) SetGoldenExcerpts(ctx context.Context, projectID string, excerpts []string) error {
+	s.vault = &domain.StyleVault{ProjectID: projectID, GoldenExcerpts: excerpts}
+	return nil
+}
+
+func newAcctAnchorBase() *mockChronicleStore {
+	return &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p_acct_anchor",
+			Title:          "锚记账录",
+			TargetPlatform: "起点仙侠",
+			WorldRules:     "天道有常",
+		},
+		chapters: []*domain.Chapter{
+			{
+				ChapterIndex: 1,
+				Title:        "第一章 开篇",
+				CoreConflict: "天机骤变",
+				Content:      "开篇正文内容，山雨欲来风满楼。",
+			},
+		},
+	}
+}
+
+// TestCanonChronicle_AcctFix_StyleVaultAnchorAccounted verifies the anchor
+// secondary gate: with a seeded vault, EstimatedTokens must include the anchor
+// bytes, and a budget that fits protected items but not the anchor must fail
+// closed with style/vault_anchor in ProtectedIDs.
+func TestCanonChronicle_AcctFix_StyleVaultAnchorAccounted(t *testing.T) {
+	vault := &domain.StyleVault{
+		ProjectID: "p_acct_anchor",
+		GoldenExcerpts: []string{
+			"苍山负雪，松涛如潮，剑气纵横三万里。",
+			"残阳似血，孤雁长鸣，古道西风瘦马。",
+			"夜阑听雨，烛火摇曳，旧友书信迟迟未至。",
+		},
+	}
+	anchorText := BuildStyleAnchor(vault)
+	if anchorText == "" {
+		t.Fatalf("expected non-empty anchor from seeded vault")
+	}
+	anchorTokens := domain.EstimateTokens(anchorText)
+	if anchorTokens <= 0 {
+		t.Fatalf("expected positive anchor tokens, got %d", anchorTokens)
+	}
+
+	// Full-budget runs with/without vault: diff must equal anchor tokens exactly.
+	fullChron := NewCanonChronicle(&vaultAnchorAcctStore{mockChronicleStore: newAcctAnchorBase(), vault: vault})
+	fullChron.SetBudgetTokens(12000)
+	horizonFull, traceFull, err := fullChron.AssembleHorizonTraced(context.Background(), "p_acct_anchor", 2)
+	if err != nil {
+		t.Fatalf("full-budget run with vault failed: %v", err)
+	}
+	if horizonFull.StyleVaultAnchor != anchorText {
+		t.Errorf("expected StyleVaultAnchor to equal BuildStyleAnchor(vault), got %q", horizonFull.StyleVaultAnchor)
+	}
+
+	emptyChron := NewCanonChronicle(&vaultAnchorAcctStore{
+		mockChronicleStore: newAcctAnchorBase(),
+		vault:              &domain.StyleVault{ProjectID: "p_acct_anchor"},
+	})
+	emptyChron.SetBudgetTokens(12000)
+	_, traceEmpty, err := emptyChron.AssembleHorizonTraced(context.Background(), "p_acct_anchor", 2)
+	if err != nil {
+		t.Fatalf("full-budget run without vault failed: %v", err)
+	}
+	if got := traceFull.EstimatedTokens - traceEmpty.EstimatedTokens; got != anchorTokens {
+		t.Errorf("anchor bytes not fully accounted: EstimatedTokens diff=%d, want anchorTokens=%d", got, anchorTokens)
+	}
+
+	// Probe exact protected tokens via the fail-closed budget-1 path, then set
+	// budget to exactly protected so protected passes but the anchor overflows.
+	probeChron := NewCanonChronicle(&vaultAnchorAcctStore{mockChronicleStore: newAcctAnchorBase(), vault: vault})
+	probeChron.SetBudgetTokens(1)
+	_, traceProbe, errProbe := probeChron.AssembleHorizonTraced(context.Background(), "p_acct_anchor", 2)
+	if errProbe == nil || traceProbe == nil {
+		t.Fatalf("expected protected-overflow probe error, got err=%v", errProbe)
+	}
+	protectedTokens := traceProbe.EstimatedTokens
+	if protectedTokens <= 0 {
+		t.Fatalf("expected positive protected tokens, got %d", protectedTokens)
+	}
+
+	tinyChron := NewCanonChronicle(&vaultAnchorAcctStore{mockChronicleStore: newAcctAnchorBase(), vault: vault})
+	tinyChron.SetBudgetTokens(protectedTokens)
+	horizonTiny, traceTiny, errTiny := tinyChron.AssembleHorizonTraced(context.Background(), "p_acct_anchor", 2)
+	if errTiny == nil {
+		t.Fatalf("expected anchor secondary-gate error with budget==protected (%d), got nil", protectedTokens)
+	}
+	if horizonTiny != nil {
+		t.Errorf("expected nil horizon on anchor overflow, got %v", horizonTiny)
+	}
+	if traceTiny == nil {
+		t.Fatalf("expected non-nil trace on anchor overflow")
+	}
+	if !traceTiny.Truncated {
+		t.Errorf("expected trace.Truncated=true on anchor overflow")
+	}
+	foundAnchor := false
+	for _, id := range traceTiny.ProtectedIDs {
+		if id == "style/vault_anchor" {
+			foundAnchor = true
+			break
+		}
+	}
+	if !foundAnchor {
+		t.Errorf("expected trace.ProtectedIDs to contain style/vault_anchor, got %v", traceTiny.ProtectedIDs)
+	}
+}
+
+// TestCanonChronicle_AcctFix_CodexRelationsAccounted verifies relations bytes
+// are counted pre-loop: two entities plus one relation row must raise
+// EstimatedTokens by exactly the embedded relations segment.
+func TestCanonChronicle_AcctFix_CodexRelationsAccounted(t *testing.T) {
+	rel := domain.EntityRelation{
+		ID:            "rel-acct-1",
+		ProjectID:     "p_acct_rel",
+		SourceEntryID: "e-alice",
+		TargetEntryID: "e-bob",
+		TargetName:    "罗老二",
+		RelationType:  "NEMESIS",
+		Description:   "夺妻之恨不共戴天",
+	}
+	newBase := func(withRel bool) *mockChronicleStore {
+		m := &mockChronicleStore{
+			project: &domain.Project{
+				ID:             "p_acct_rel",
+				Title:          "羁绊记账录",
+				TargetPlatform: "起点仙侠",
+				WorldRules:     "有仇必报",
+			},
+			chapters: []*domain.Chapter{
+				{
+					ChapterIndex: 1,
+					Title:        "第一章 相逢",
+					CoreConflict: "狭路相逢",
+					Content:      "开篇正文内容，恩怨纠葛初现端倪。",
+				},
+			},
+			codexEntries: []*domain.CodexEntry{
+				{
+					ID:           "e-alice",
+					Name:         "萧老大",
+					Category:     domain.CategoryCharacter,
+					TrackingMode: domain.TrackingModeAlwaysInject,
+					Summary:      "青龙寨大当家",
+				},
+				{
+					ID:           "e-bob",
+					Name:         "罗老二",
+					Category:     domain.CategoryCharacter,
+					TrackingMode: domain.TrackingModeAlwaysInject,
+					Summary:      "黑风寨二当家",
+				},
+			},
+		}
+		if withRel {
+			m.codexRelations = []domain.EntityRelation{rel}
+		}
+		return m
+	}
+
+	relChron := NewCanonChronicle(newBase(true))
+	relChron.SetBudgetTokens(12000)
+	horizonRel, traceRel, err := relChron.AssembleHorizonTraced(context.Background(), "p_acct_rel", 2)
+	if err != nil {
+		t.Fatalf("run with relation failed: %v", err)
+	}
+
+	noRelChron := NewCanonChronicle(newBase(false))
+	noRelChron.SetBudgetTokens(12000)
+	_, traceNoRel, err := noRelChron.AssembleHorizonTraced(context.Background(), "p_acct_rel", 2)
+	if err != nil {
+		t.Fatalf("run without relation failed: %v", err)
+	}
+
+	relLine := fmt.Sprintf("• [%s] ➔ [%s] (%s)：%s\n", "萧老大", "罗老二", "NEMESIS", "夺妻之恨不共戴天")
+	relSeg := "\n【实体间羁绊与冲突事实 (Relations)】\n" + relLine
+	if got := traceRel.EstimatedTokens - traceNoRel.EstimatedTokens; got != domain.EstimateTokens(relSeg) {
+		t.Errorf("relations bytes not fully accounted: EstimatedTokens diff=%d, want segmentTokens=%d",
+			got, domain.EstimateTokens(relSeg))
+	}
+	if !strings.Contains(horizonRel.CodexContextText, relLine) {
+		t.Errorf("expected CodexContextText to contain relation line %q, got:\n%s", relLine, horizonRel.CodexContextText)
+	}
+	if len(horizonRel.CodexRelations) != 1 {
+		t.Errorf("expected 1 retained CodexRelations entry, got %d", len(horizonRel.CodexRelations))
+	}
+}

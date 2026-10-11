@@ -285,7 +285,12 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 	rulesTokens := domain.EstimateTokens(globalSummary)
 	protectedList = append(protectedList, protectedItem{id: "global/rules", tokens: rulesTokens})
 
-	protagText := protagonist.NameAndLevel() + " " + protagonist.Archetype + " " + protagonist.Summary
+	// protagText covers the union of accounting-side fields (NameAndLevel, Archetype,
+	// Summary) and prompt-render-side fields (protNameLevel=NameAndLevel,
+	// protInventory=Inventory, protGoal=CoreMotivation else Summary). Inventory has no
+	// upper bound, so omitting it would let unbounded bytes slip past the budget gate.
+	// Superset estimation (safe direction): counted bytes always cover rendered bytes.
+	protagText := protagonist.NameAndLevel() + " " + protagonist.Archetype + " " + protagonist.Summary + " " + protagonist.Inventory + " " + protagonist.CoreMotivation
 	protagTokens := domain.EstimateTokens(protagText)
 	protectedList = append(protectedList, protectedItem{id: "global/protagonist", tokens: protagTokens})
 
@@ -395,12 +400,68 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 	}
 
 	var codexCandidates []compressibleCandidate
+	relLinesBySource := make(map[string][]string)
+	relStructsBySource := make(map[string][]domain.EntityRelation)
 
 	codexEntries, err := c.store.ListCodexEntries(ctx, projectID, "")
 	if err == nil && len(codexEntries) > 0 {
 		scanner := NewMentionScanner()
 		scanText := rollingSb.String() + "\n" + tailAnchor
 		matched, _ := scanner.ScanText(scanText, codexEntries)
+
+		// Relations pre-query (superset over the full matched set, not the retained
+		// subset which is only known after the budget loop): every relation byte that
+		// can appear in CodexContextText is folded into its source candidate's desc
+		// BEFORE EstimateTokens, otherwise trace.EstimatedTokens<=budget would not
+		// imply actual prompt<=budget. Guard style (append only when relErr == nil)
+		// mirrors the previous post-loop block, which is deleted to avoid double
+		// counting; CodexContextText is assembled from retained descs that already
+		// carry their relations segments.
+		matchedIDs := make(map[string]bool, len(matched))
+		for _, ent := range matched {
+			if ent != nil {
+				matchedIDs[ent.ID] = true
+			}
+		}
+		for _, ent := range matched {
+			if ent == nil {
+				continue
+			}
+			rels, relErr := c.store.ListCodexRelations(ctx, projectID, ent.ID)
+			if relErr == nil {
+				for _, r := range rels {
+					if r.SourceEntryID != ent.ID {
+						continue
+					}
+					if !matchedIDs[r.TargetEntryID] {
+						continue
+					}
+					dup := false
+					for _, prev := range relStructsBySource[ent.ID] {
+						if prev.ID != "" && prev.ID == r.ID {
+							dup = true
+							break
+						}
+					}
+					if dup {
+						continue
+					}
+					sourceName := entNameByID(matched, r.SourceEntryID)
+					targetName := r.TargetName
+					if targetName == "" {
+						targetName = entNameByID(matched, r.TargetEntryID)
+					}
+					var relSb strings.Builder
+					relSb.WriteString(fmt.Sprintf("• [%s] ➔ [%s] (%s)", sourceName, targetName, r.RelationType))
+					if r.Description != "" {
+						relSb.WriteString(fmt.Sprintf("：%s", r.Description))
+					}
+					relSb.WriteString("\n")
+					relLinesBySource[ent.ID] = append(relLinesBySource[ent.ID], relSb.String())
+					relStructsBySource[ent.ID] = append(relStructsBySource[ent.ID], r)
+				}
+			}
+		}
 
 		for _, ent := range matched {
 			var codexSb strings.Builder
@@ -468,6 +529,12 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 			entID := ent.ID
 			if entID == "" {
 				entID = ent.Name
+			}
+			if lines := relLinesBySource[ent.ID]; len(lines) > 0 {
+				codexSb.WriteString("\n【实体间羁绊与冲突事实 (Relations)】\n")
+				for _, ln := range lines {
+					codexSb.WriteString(ln)
+				}
 			}
 			descStr := codexSb.String()
 			codexCandidates = append(codexCandidates, compressibleCandidate{
@@ -570,7 +637,12 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 		cbSb.WriteString(strings.Join(retainedRetroDescs, "\n\n"))
 	}
 
-	// Synthesize Codex text and relations from retained items
+	// Synthesize Codex text and relations from retained items.
+	// Relations segments are already embedded in the retained descs (counted
+	// pre-loop), so CodexContextText is assembled purely by joining retained descs;
+	// the old post-loop relations query/append block is deleted to avoid double
+	// counting. The CodexRelations field is restricted to the retained subset from
+	// the pre-queried relations.
 	var activeCodex []*domain.CodexEntry
 	var codexRels []domain.EntityRelation
 	var codexSb strings.Builder
@@ -587,32 +659,13 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 		}
 	}
 
-	if len(activeCodex) > 0 {
-		// Query relations between co-occurring retained entities
-		for _, ent := range activeCodex {
-			rels, relErr := c.store.ListCodexRelations(ctx, projectID, ent.ID)
-			if relErr == nil {
-				for _, r := range rels {
-					if retainedCodexIDs[r.TargetEntryID] {
-						codexRels = append(codexRels, r)
-					}
-				}
-			}
+	for _, it := range codexCandidates {
+		if !retainedMap[it.id] || it.codexEntry == nil {
+			continue
 		}
-
-		if len(codexRels) > 0 {
-			codexSb.WriteString("\n【实体间羁绊与冲突事实 (Relations)】\n")
-			for _, r := range codexRels {
-				sourceName := entNameByID(activeCodex, r.SourceEntryID)
-				targetName := r.TargetName
-				if targetName == "" {
-					targetName = entNameByID(activeCodex, r.TargetEntryID)
-				}
-				codexSb.WriteString(fmt.Sprintf("• [%s] ➔ [%s] (%s)", sourceName, targetName, r.RelationType))
-				if r.Description != "" {
-					codexSb.WriteString(fmt.Sprintf("：%s", r.Description))
-				}
-				codexSb.WriteString("\n")
+		for _, r := range relStructsBySource[it.codexEntry.ID] {
+			if retainedCodexIDs[r.TargetEntryID] {
+				codexRels = append(codexRels, r)
 			}
 		}
 	}
@@ -626,6 +679,25 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 		if vault != nil {
 			styleVaultAnchor = BuildStyleAnchor(vault)
 		}
+	}
+
+	// Anchor secondary gate: StyleVaultAnchor is generated after the budget loop but
+	// is always injected into the prose prompt (anchorSection), so its bytes must be
+	// counted here, otherwise trace.EstimatedTokens<=budget would not imply actual
+	// prompt<=budget. style/vault_anchor is the full-book constant style contract
+	// (主锚); style/tail_anchor above is only the 200-rune auxiliary bridge (辅锚)
+	// carrying the previous chapter's closing tone. Protected-overflow style error
+	// keeps the tokfix semantics (trace.Truncated=true).
+	if styleVaultAnchor != "" {
+		trace.ProtectedIDs = append(trace.ProtectedIDs, "style/vault_anchor")
+	}
+	anchorTokens := domain.EstimateTokens(styleVaultAnchor)
+	totalEstimatedTokens += anchorTokens
+	trace.EstimatedTokens = totalEstimatedTokens
+	if totalEstimatedTokens > budget {
+		trace.Truncated = true
+		return nil, trace, fmt.Errorf("context budget exceeded after including style vault anchor: estimated %d tokens exceeds budget %d tokens. 超限项清单: [style/vault_anchor: %d tokens]. 建议操作：请在系统设置中调大 context_budget_tokens (当前配置: %d)，或精简文风锚定样本",
+			totalEstimatedTokens, budget, anchorTokens, budget)
 	}
 
 	return &CanonHorizon{
