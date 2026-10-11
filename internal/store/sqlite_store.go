@@ -941,7 +941,10 @@ func (s *SQLiteStore) CommitChapter(ctx context.Context, projectID string, c *do
 		}
 	}
 
-	protagonist, _ := s.getProtagonistTx(ctx, tx, projectID)
+	protagonist, err := s.getProtagonistTx(ctx, tx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("load protagonist in tx: %w", err)
+	}
 	var protagonistBeforeJSON string
 	if protagonist != nil {
 		if pb, merr := json.Marshal(protagonist); merr == nil {

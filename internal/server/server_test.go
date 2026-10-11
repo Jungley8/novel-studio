@@ -1069,3 +1069,155 @@ func TestServer_Bootstrap_ProtagonistCodexAndRelations(t *testing.T) {
 		t.Errorf("expected seeded checkpoint for chapter 1, got %+v", cp)
 	}
 }
+
+func TestPostChapters_EvidenceGateRejectsUnownedConsume(t *testing.T) {
+	srv, s, _ := setupTestServer(t)
+	ctx := context.Background()
+
+	p := &domain.Project{
+		ID:             "proj-evidence-reject",
+		Title:          "证据门拒收测试",
+		TargetPlatform: "起点仙侠",
+	}
+	if err := s.SaveProject(ctx, p); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+	if err := s.SaveCodexEntry(ctx, &domain.CodexEntry{
+		ID:        "codex_proj-evidence-reject_pro",
+		ProjectID: p.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "林尘",
+		Realm:     "筑基初期",
+		Inventory: "新手木剑",
+	}); err != nil {
+		t.Fatalf("SaveCodexEntry failed: %v", err)
+	}
+
+	// POST {"chapter_index":1,"state_mutation":{"inventory_delta":"-辟毒珠"}}
+	bodyJSON := `{"chapter_index":1,"title":"第一章 尝试违规扣减","content":"章节正文内容...","state_mutation":{"inventory_delta":"-辟毒珠"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+p.ID+"/chapters", strings.NewReader(bodyJSON))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Ledger Warning") {
+		t.Fatalf("expected response body to contain 'Ledger Warning', got: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "证据不足，拒绝无证据状态变更") {
+		t.Fatalf("expected response body to contain '证据不足，拒绝无证据状态变更', got: %s", w.Body.String())
+	}
+
+	// 随后 GET 章节确认未落库
+	getReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+p.ID+"/chapters/1", nil)
+	getW := httptest.NewRecorder()
+	srv.ServeHTTP(getW, getReq)
+	if getW.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found for chapter 1, got %d: %s", getW.Code, getW.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+p.ID+"/chapters", nil)
+	listW := httptest.NewRecorder()
+	srv.ServeHTTP(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for chapter list, got %d: %s", listW.Code, listW.Body.String())
+	}
+	var chapters []*domain.Chapter
+	if err := json.Unmarshal(listW.Body.Bytes(), &chapters); err != nil {
+		t.Fatalf("unmarshal chapters list failed: %v", err)
+	}
+	if len(chapters) != 0 {
+		t.Fatalf("expected 0 chapters committed, got %d", len(chapters))
+	}
+}
+
+func TestPostChapters_EvidenceGatePassesClean(t *testing.T) {
+	srv, s, _ := setupTestServer(t)
+	ctx := context.Background()
+
+	p := &domain.Project{
+		ID:             "proj-evidence-pass",
+		Title:          "证据门合法放行测试",
+		TargetPlatform: "起点仙侠",
+	}
+	if err := s.SaveProject(ctx, p); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+	if err := s.SaveCodexEntry(ctx, &domain.CodexEntry{
+		ID:        "codex_proj-evidence-pass_pro",
+		ProjectID: p.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "林尘",
+		Realm:     "筑基初期",
+		Inventory: "新手木剑",
+	}); err != nil {
+		t.Fatalf("SaveCodexEntry failed: %v", err)
+	}
+
+	bodyJSON := `{"chapter_index":1,"title":"第一章 获得机缘","content":"采得辟毒珠一枚...","state_mutation":{"inventory_delta":"+辟毒珠x1"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+p.ID+"/chapters", strings.NewReader(bodyJSON))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d: %s", w.Code, w.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+p.ID+"/chapters/1", nil)
+	getW := httptest.NewRecorder()
+	srv.ServeHTTP(getW, getReq)
+	if getW.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for chapter 1, got %d: %s", getW.Code, getW.Body.String())
+	}
+	var chap domain.Chapter
+	if err := json.Unmarshal(getW.Body.Bytes(), &chap); err != nil {
+		t.Fatalf("unmarshal chapter failed: %v", err)
+	}
+	if chap.ChapterIndex != 1 || chap.Title != "第一章 获得机缘" {
+		t.Fatalf("unexpected chapter content: %+v", chap)
+	}
+}
+
+func TestPostChapters_EvidenceGateEmptyMutationPasses(t *testing.T) {
+	srv, s, _ := setupTestServer(t)
+	ctx := context.Background()
+
+	p := &domain.Project{
+		ID:             "proj-evidence-empty",
+		Title:          "纯文本章放行测试",
+		TargetPlatform: "通用网文",
+	}
+	if err := s.SaveProject(ctx, p); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+	if err := s.SaveCodexEntry(ctx, &domain.CodexEntry{
+		ID:        "codex_proj-evidence-empty_pro",
+		ProjectID: p.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "林尘",
+		Realm:     "筑基初期",
+		Inventory: "新手木剑",
+	}); err != nil {
+		t.Fatalf("SaveCodexEntry failed: %v", err)
+	}
+
+	bodyJSON := `{"chapter_index":1,"title":"第一章 纯文本过渡","content":"平淡日常的一章..."}`
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+p.ID+"/chapters", strings.NewReader(bodyJSON))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d: %s", w.Code, w.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+p.ID+"/chapters/1", nil)
+	getW := httptest.NewRecorder()
+	srv.ServeHTTP(getW, getReq)
+	if getW.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for chapter 1, got %d: %s", getW.Code, getW.Body.String())
+	}
+}

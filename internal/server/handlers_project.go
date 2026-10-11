@@ -255,6 +255,37 @@ func (s *Server) handleProjectChapters(w http.ResponseWriter, r *http.Request, p
 			c.ID = fmt.Sprintf("ch_%s_%d", projectID, c.ChapterIndex)
 		}
 
+		hasMutation := strings.TrimSpace(c.StateMutation.InventoryDelta) != "" ||
+			strings.TrimSpace(c.StateMutation.PowerDelta) != "" ||
+			len(c.StateMutation.CharacterMutations) > 0
+		if hasMutation {
+			prot, err := s.store.GetProtagonistEntry(ctx, projectID)
+			if err != nil {
+				errorResponse(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if prot != nil {
+				trail, err := domain.DryRunStateMutation(prot, c.StateMutation)
+				if err != nil {
+					errorResponse(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				var warnings []string
+				for _, line := range trail {
+					if strings.Contains(line, "[Ledger Warning]") {
+						warnings = append(warnings, line)
+						if len(warnings) == 3 {
+							break
+						}
+					}
+				}
+				if len(warnings) > 0 {
+					errorResponse(w, http.StatusBadRequest, strings.Join(warnings, "; ")+": 证据不足，拒绝无证据状态变更")
+					return
+				}
+			}
+		}
+
 		updatedProj, err := s.store.CommitChapter(ctx, projectID, &c)
 		if err != nil {
 			errorResponse(w, http.StatusBadRequest, err.Error())
