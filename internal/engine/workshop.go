@@ -1024,6 +1024,34 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		// Clear checkpoint after successful commit
 		_ = w.store.ClearCheckpoint(ctx, req.ProjectID, req.ChapterIndex)
 
+		// 记账边界（有意设计）：增强层失败以可见警告记账（摘要/压缩/指标）；硬门失败停线（结算/证据/前置）。
+		compactionFailed := false
+		if trace != nil {
+			compactionFailed = trace.CompactionFailed
+		}
+		metrics := &domain.ChapterQualityMetrics{
+			ProjectID:              req.ProjectID,
+			ChapterIndex:           req.ChapterIndex,
+			RunID:                  req.RunID,
+			ActualWords:            actualWords,
+			WordsTarget:            req.WordsTarget,
+			WordQuotaRatio:         ratio,
+			UnderTarget:            underTarget,
+			Verdict:                string(auditReport.Verdict),
+			Score:                  auditReport.Score,
+			RewriteLoops:           rewriteLoops,
+			UnresolvedObservations: len(unresolvedObservations),
+			HookClaimsTotal:        len(auditReport.ResolvedHookClaims),
+			HookClaimsValidated:    len(auditReport.ResolvedHookIDs),
+			HookClaimsRejected:     len(auditReport.ResolvedHookClaims) - len(auditReport.ResolvedHookIDs),
+			CompactionFailed:       compactionFailed,
+			CreatedAt:              time.Now(),
+		}
+		if mErr := w.store.SaveChapterMetrics(ctx, metrics); mErr != nil {
+			auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【指标警告】质量指标落库失败: %v", mErr))
+			emit(WorkshopEvent{Phase: PhaseCommitted, Message: "质量指标落库失败（已记录警告，不影响归档）"})
+		}
+
 		emit(WorkshopEvent{
 			Phase:   PhaseCommitted,
 			Message: fmt.Sprintf("第 %d 章已成功原子结算并归档入库！", req.ChapterIndex),
