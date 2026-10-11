@@ -42,6 +42,8 @@ func main() {
 			os.Exit(runProduceCLI(os.Args[2:], defaultDataDir))
 		case "bench":
 			os.Exit(runBenchCLI(os.Args[2:], defaultDataDir))
+		case "abtest":
+			os.Exit(runABTestCLI(os.Args[2:], defaultDataDir))
 		case "metrics":
 			os.Exit(runMetricsCLI(os.Args[2:], defaultDataDir))
 		case "genesis":
@@ -193,6 +195,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  novel-studio pipeline [选项]        全自动一键跑通创世到卷批产流水线\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio produce [选项]         无头命令行一键全流程自主章节生产\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio bench [选项]           长篇质量回归只读体检报告\n")
+	fmt.Fprintf(os.Stderr, "  novel-studio abtest [选项]          A/B 双跑对比评测（快照隔离，只读真实库）\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio service <子命令>       macOS launchd 原生常驻后台守护服务\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio doctor                 运行环境依赖、数据库与健康探针自检报告\n\n")
 	fmt.Fprintf(os.Stderr, "服务子命令 (novel-studio service <cmd>):\n")
