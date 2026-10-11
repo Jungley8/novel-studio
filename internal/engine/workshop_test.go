@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
+	"github.com/Jungley8/novel-studio/internal/store"
 )
 
 type mockWorkshopLLMClient struct {
@@ -2247,5 +2249,290 @@ func TestChapterWorkshop_TechnicalBlocked_SetsNeedsHuman(t *testing.T) {
 
 	if len(mockStore.chapters) != 0 {
 		t.Errorf("expected 0 chapters committed into store, got %d", len(mockStore.chapters))
+	}
+}
+
+// TestChapterWorkshop_RealSQLiteStore_VolumeRetrospectiveOnVolumeEnd 验证使用真实 *store.SQLiteStore
+// 且 VolumeArcs 仅有 EstimatedChapters（StartChapter/EndChapter 为 0）时，
+// 经 ProduceChapter 到卷终章后分卷回顾能击穿指针别名并真实落库持久化。
+func TestChapterWorkshop_RealSQLiteStore_VolumeRetrospectiveOnVolumeEnd(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "real_retro_test.db")
+	realStore, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create real SQLiteStore: %v", err)
+	}
+	defer realStore.Close()
+
+	projectID := "proj-real-retro"
+	proj := &domain.Project{
+		ID:             projectID,
+		Title:          "修真大道",
+		TargetPlatform: "起点仙侠",
+		Framework: &domain.ProjectFramework{
+			VolumeArcs: []domain.VolumeArc{
+				{
+					VolumeIndex:       1,
+					Title:             "第一卷 筑基篇",
+					CoreGoal:          "夺丹筑基",
+					Climax:            "力斩强敌破劫入道",
+					EstimatedChapters: 2, // 1~2, 终章为第2章（Start/End 留空验证 BackfillVolumeArcs）
+				},
+				{
+					VolumeIndex:       2,
+					Title:             "第二卷 金丹篇",
+					CoreGoal:          "凝结金丹",
+					Climax:            "金丹大成",
+					EstimatedChapters: 3,
+				},
+			},
+		},
+	}
+	if err := realStore.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	fakeClient := &fakeSummaryWorkshopLLMClient{}
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(realStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, realStore)
+
+	// 第 1 章：提交成功，但不触发分卷回顾
+	req1 := WorkshopProduceRequest{
+		ProjectID:       projectID,
+		ChapterIndex:    1,
+		CoreConflict:    "初入仙门",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+	res1, err := workshop.ProduceChapter(ctx, req1)
+	if err != nil {
+		t.Fatalf("ProduceChapter chapter 1 failed: %v", err)
+	}
+	if !res1.Committed {
+		t.Fatalf("expected chapter 1 to be committed")
+	}
+
+	retro1, err := realStore.GetVolumeRetrospective(ctx, projectID, 1)
+	if err != nil {
+		t.Fatalf("GetVolumeRetrospective error: %v", err)
+	}
+	if retro1 != nil {
+		t.Fatalf("expected no retrospective for chapter 1, got %+v", retro1)
+	}
+
+	// 第 2 章（卷1终章）：提交成功，触发分卷回顾并真实落库！
+	req2 := WorkshopProduceRequest{
+		ProjectID:       projectID,
+		ChapterIndex:    2,
+		CoreConflict:    "筑基大战",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+	res2, err := workshop.ProduceChapter(ctx, req2)
+	if err != nil {
+		t.Fatalf("ProduceChapter chapter 2 failed: %v", err)
+	}
+	if !res2.Committed {
+		t.Fatalf("expected chapter 2 to be committed")
+	}
+
+	// 核心断言：击穿指针别名，验证真实 SQLiteStore 落库！
+	retro2, err := realStore.GetVolumeRetrospective(ctx, projectID, 1)
+	if err != nil {
+		t.Fatalf("GetVolumeRetrospective volume 1 failed: %v", err)
+	}
+	if retro2 == nil {
+		t.Fatalf("expected volume retrospective for volume 1 to be persisted in real SQLiteStore, got nil")
+	}
+	if retro2.VolumeIndex != 1 {
+		t.Errorf("expected VolumeIndex == 1, got %d", retro2.VolumeIndex)
+	}
+	if retro2.FromChapter != 1 || retro2.ToChapter != 2 {
+		t.Errorf("expected chapter range 1..2, got %d..%d", retro2.FromChapter, retro2.ToChapter)
+	}
+	if !strings.Contains(retro2.Text, "发生") || !strings.Contains(retro2.Text, "留下") || !strings.Contains(retro2.Text, "未回收") {
+		t.Errorf("expected retro text containing 发生/留下/未回收, got %s", retro2.Text)
+	}
+}
+
+// TestChapterWorkshop_RealSQLiteStore_ExplicitVolumeSpans 验证显式卷界（StartChapter/EndChapter 与 EstimatedChapters 不一致）
+// 在真实 SQLiteStore 下能准确以显式卷界触发回顾，且落库的 FromChapter/ToChapter 与显式卷界一致。
+func TestChapterWorkshop_RealSQLiteStore_ExplicitVolumeSpans(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "real_explicit_retro_test.db")
+	realStore, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create real SQLiteStore: %v", err)
+	}
+	defer realStore.Close()
+
+	projectID := "proj-explicit-retro"
+	proj := &domain.Project{
+		ID:             projectID,
+		Title:          "万道争锋",
+		TargetPlatform: "起点仙侠",
+		Framework: &domain.ProjectFramework{
+			VolumeArcs: []domain.VolumeArc{
+				{
+					VolumeIndex:       1,
+					Title:             "第一卷 问剑",
+					CoreGoal:          "问剑试炼",
+					Climax:            "剑斩心魔",
+					StartChapter:      1,
+					EndChapter:        2,
+					EstimatedChapters: 10, // 与显式起止 1..2 不一致
+				},
+			},
+		},
+	}
+	if err := realStore.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	fakeClient := &fakeSummaryWorkshopLLMClient{}
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(realStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, realStore)
+
+	// 第 1 章
+	req1 := WorkshopProduceRequest{
+		ProjectID:       projectID,
+		ChapterIndex:    1,
+		CoreConflict:    "试剑开篇",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+	res1, err := workshop.ProduceChapter(ctx, req1)
+	if err != nil {
+		t.Fatalf("ProduceChapter chapter 1 failed: %v", err)
+	}
+	if !res1.Committed {
+		t.Fatalf("expected chapter 1 to be committed")
+	}
+
+	// 第 2 章（显式终章，但 EstimatedChapters 为 10）
+	req2 := WorkshopProduceRequest{
+		ProjectID:       projectID,
+		ChapterIndex:    2,
+		CoreConflict:    "剑斩心魔破关",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+	res2, err := workshop.ProduceChapter(ctx, req2)
+	if err != nil {
+		t.Fatalf("ProduceChapter chapter 2 failed: %v", err)
+	}
+	if !res2.Committed {
+		t.Fatalf("expected chapter 2 to be committed")
+	}
+
+	retro, err := realStore.GetVolumeRetrospective(ctx, projectID, 1)
+	if err != nil {
+		t.Fatalf("GetVolumeRetrospective failed: %v", err)
+	}
+	if retro == nil {
+		t.Fatalf("expected volume retrospective to be saved at explicit end chapter 2, got nil")
+	}
+	if retro.FromChapter != 1 || retro.ToChapter != 2 {
+		t.Errorf("expected explicit chapter range 1..2, got %d..%d (EstimatedChapters was 10)", retro.FromChapter, retro.ToChapter)
+	}
+}
+
+// fallbackMockStore provides a mock store where GetProject returns nil Framework,
+// while CommitChapter returns a Project with Framework (unbackfilled VolumeArcs),
+// simulating the fallback path to UpdatedProject and testing the BackfillVolumeArcs guard.
+type fallbackMockStore struct {
+	*mockSummaryWorkshopStore
+	fallbackProj *domain.Project
+}
+
+func (f *fallbackMockStore) CommitChapter(ctx context.Context, projectID string, chapter *domain.Chapter) (*domain.Project, error) {
+	_, err := f.mockSummaryWorkshopStore.mockChronicleStore.CommitChapter(ctx, projectID, chapter)
+	if err != nil {
+		return nil, err
+	}
+	return f.fallbackProj, nil
+}
+
+// TestChapterWorkshop_VolumeRetrospective_FallbackUpdatedProjectRequiresBackfill 验证当 activeProj
+// 未经 chronicle 预先回填（如 fallback 到 UpdatedProject 或 horizon 未预填起止时），
+// workshop.go 必须在 deriveVolumeSpans 前显式调用 BackfillVolumeArcs，否则显式卷界 spans 为 {0,0} 导致静默跳过。
+func TestChapterWorkshop_VolumeRetrospective_FallbackUpdatedProjectRequiresBackfill(t *testing.T) {
+	ctx := context.Background()
+	// horizon.Project 的 Framework 为 nil
+	baseProj := &domain.Project{
+		ID:             "p-fallback-test",
+		Title:          "回退路径测试",
+		TargetPlatform: "起点仙侠",
+	}
+	// UpdatedProject 带有 Framework，但 VolumeArcs 未经回填（StartChapter/EndChapter 均为 0）
+	updatedProjWithFw := &domain.Project{
+		ID:             "p-fallback-test",
+		Title:          "回退路径测试",
+		TargetPlatform: "起点仙侠",
+		Framework: &domain.ProjectFramework{
+			VolumeArcs: []domain.VolumeArc{
+				{
+					VolumeIndex:       1,
+					Title:             "第一卷",
+					EstimatedChapters: 2,
+					// StartChapter: 0, EndChapter: 0 (未回填)
+				},
+			},
+		},
+	}
+	mockStore := &fallbackMockStore{
+		mockSummaryWorkshopStore: newMockSummaryWorkshopStore(baseProj),
+		fallbackProj:             updatedProjWithFw,
+	}
+	fakeClient := &fakeSummaryWorkshopLLMClient{}
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	// 第 1 章
+	req1 := WorkshopProduceRequest{
+		ProjectID:       "p-fallback-test",
+		ChapterIndex:    1,
+		CoreConflict:    "开局",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+	res1, err := workshop.ProduceChapter(ctx, req1)
+	if err != nil {
+		t.Fatalf("ProduceChapter 1 failed: %v", err)
+	}
+	if !res1.Committed {
+		t.Fatalf("expected chapter 1 committed")
+	}
+
+	// 第 2 章（终章）
+	req2 := WorkshopProduceRequest{
+		ProjectID:       "p-fallback-test",
+		ChapterIndex:    2,
+		CoreConflict:    "终章突破",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+	res2, err := workshop.ProduceChapter(ctx, req2)
+	if err != nil {
+		t.Fatalf("ProduceChapter 2 failed: %v", err)
+	}
+	if !res2.Committed {
+		t.Fatalf("expected chapter 2 committed")
+	}
+
+	// 若 workshop.go 漏掉 BackfillVolumeArcs，spans 为 {0,0}，ResolveVolume 返回 -1，分卷回顾被静默跳过！
+	// 只有通过 BackfillVolumeArcs 归一化后，才会在第 2 章成功触发分卷回顾并保存。
+	if len(mockStore.volumeRetros) == 0 {
+		t.Fatalf("expected volume retrospective to be saved via fallback UpdatedProject with BackfillVolumeArcs, got 0")
+	}
+	retro := mockStore.volumeRetros[1]
+	if retro == nil || retro.FromChapter != 1 || retro.ToChapter != 2 {
+		t.Fatalf("expected retro range 1..2, got %+v", retro)
 	}
 }

@@ -882,12 +882,18 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		})
 
 		// Volume retrospective on volume arc completion.
-		// 无 Framework 或算不出卷边界时跳过（不报错）。
-		activeProj := result.UpdatedProject
-		if activeProj == nil {
+		// CommitChapter 返回的 Project 不带 framework 是 store 层既有契约，
+		// 因此判卷主体优先从 horizon.Project 取（chronicle 组装时已含 Framework 并执行过 BackfillVolumeArcs），
+		// result.UpdatedProject 仅作后备兜底。
+		var activeProj *domain.Project
+		if horizon != nil && horizon.Project != nil {
 			activeProj = horizon.Project
 		}
+		if activeProj == nil || (activeProj.Framework == nil && result.UpdatedProject != nil && result.UpdatedProject.Framework != nil) {
+			activeProj = result.UpdatedProject
+		}
 		if activeProj != nil && activeProj.Framework != nil && len(activeProj.Framework.VolumeArcs) > 0 {
+			activeProj.Framework.VolumeArcs = BackfillVolumeArcs(activeProj.Framework.VolumeArcs)
 			spans, arcMap := deriveVolumeSpans(activeProj.Framework.VolumeArcs)
 			volIdx := domain.ResolveVolume(req.ChapterIndex, spans)
 			if volIdx != -1 {
@@ -926,7 +932,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 										auditReport.Issues = append(auditReport.Issues, "【摘要警告】未找到本卷任何章节摘要，跳过分卷回顾")
 									}
 								} else {
-									vr, vrUsage, vrErr := BuildVolumeRetrospective(ctx, w.orch.client, req.ReasoningModel, activeProj, *arc, chSummaries)
+									vr, vrUsage, vrErr := BuildVolumeRetrospective(ctx, w.orch.client, req.ReasoningModel, activeProj, *arc, *currentSpan, chSummaries)
 									if vrErr != nil {
 										if auditReport != nil {
 											auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】生成分卷回顾失败: %v", vrErr))

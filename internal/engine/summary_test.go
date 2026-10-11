@@ -189,7 +189,8 @@ func TestBuildVolumeRetrospective_Case2_ThreeSections(t *testing.T) {
 		}` + "\n```"
 
 		client := &fakeSummaryLLMClient{response: validJSON}
-		retro, usage, err := BuildVolumeRetrospective(ctx, client, "fake-reasoner", project, volume, summaries)
+		span := domain.VolumeSpan{VolumeIndex: 1, StartChapter: 1, EndChapter: 40}
+		retro, usage, err := BuildVolumeRetrospective(ctx, client, "fake-reasoner", project, volume, span, summaries)
 		if err != nil {
 			t.Fatalf("BuildVolumeRetrospective failed: %v", err)
 		}
@@ -234,7 +235,8 @@ func TestBuildVolumeRetrospective_Case2_ThreeSections(t *testing.T) {
 	t.Run("missing sections returns error", func(t *testing.T) {
 		incompleteJSON := `{"text": "【发生】林凡破关。【留下】战力大进。"}`
 		client := &fakeSummaryLLMClient{response: incompleteJSON}
-		_, _, err := BuildVolumeRetrospective(ctx, client, "fake-reasoner", project, volume, summaries)
+		span := domain.VolumeSpan{VolumeIndex: 1, StartChapter: 1, EndChapter: 40}
+		_, _, err := BuildVolumeRetrospective(ctx, client, "fake-reasoner", project, volume, span, summaries)
 		if err == nil {
 			t.Fatalf("expected error for missing 未回收 section, got nil")
 		}
@@ -244,7 +246,8 @@ func TestBuildVolumeRetrospective_Case2_ThreeSections(t *testing.T) {
 		longText := "【发生】" + strings.Repeat("浩瀚苍茫的世界发生了大战，天地碎裂，众生喋血。", 8) + "\n【留下】道基受损。\n【未回收】魔尊未死。"
 		longJSON := `{"text": "` + longText + `"}`
 		client := &fakeSummaryLLMClient{response: longJSON}
-		_, _, err := BuildVolumeRetrospective(ctx, client, "fake-reasoner", project, volume, summaries)
+		span := domain.VolumeSpan{VolumeIndex: 1, StartChapter: 1, EndChapter: 40}
+		_, _, err := BuildVolumeRetrospective(ctx, client, "fake-reasoner", project, volume, span, summaries)
 		if err == nil {
 			t.Fatalf("expected error for overlength retrospective, got nil")
 		}
@@ -261,7 +264,7 @@ func TestBuildVolumeRetrospective_Case2_ThreeSections(t *testing.T) {
 		}
 		rawJSON := `{"happened": "破关斩敌", "remaining": "道基稳固", "unresolved": "宿敌潜逃"}`
 		client := &fakeSummaryLLMClient{response: rawJSON}
-		retro, _, err := BuildVolumeRetrospective(ctx, client, "fake-reasoner", projectNoFw, volumeStandalone, summaries)
+		retro, _, err := BuildVolumeRetrospective(ctx, client, "fake-reasoner", projectNoFw, volumeStandalone, domain.VolumeSpan{}, summaries)
 		if err != nil {
 			t.Fatalf("BuildVolumeRetrospective with nil framework failed: %v", err)
 		}
@@ -270,9 +273,43 @@ func TestBuildVolumeRetrospective_Case2_ThreeSections(t *testing.T) {
 		}
 	})
 
+	t.Run("explicit volume span takes precedence over estimated chapters", func(t *testing.T) {
+		explicitProject := &domain.Project{
+			ID:    "proj-explicit",
+			Title: "显式卷界测试",
+			Framework: &domain.ProjectFramework{
+				VolumeArcs: []domain.VolumeArc{
+					{
+						VolumeIndex:       1,
+						Title:             "第一卷",
+						StartChapter:      10,
+						EndChapter:        25,
+						EstimatedChapters: 40, // EstimatedChapters != 25 - 10 + 1 (16)
+					},
+				},
+			},
+		}
+		vol := explicitProject.Framework.VolumeArcs[0]
+		explicitSpan := domain.VolumeSpan{
+			VolumeIndex:  1,
+			StartChapter: 10,
+			EndChapter:   25,
+		}
+		rawJSON := `{"happened": "破关斩敌", "remaining": "道基稳固", "unresolved": "宿敌潜逃"}`
+		client := &fakeSummaryLLMClient{response: rawJSON}
+		retro, _, err := BuildVolumeRetrospective(ctx, client, "fake-reasoner", explicitProject, vol, explicitSpan, summaries)
+		if err != nil {
+			t.Fatalf("BuildVolumeRetrospective failed: %v", err)
+		}
+		if retro.FromChapter != 10 || retro.ToChapter != 25 {
+			t.Fatalf("expected explicit range 10..25, got %d..%d", retro.FromChapter, retro.ToChapter)
+		}
+	})
+
 	t.Run("empty summaries returns error", func(t *testing.T) {
 		client := &fakeSummaryLLMClient{response: `{"happened": "发生", "remaining": "留下", "unresolved": "未回收"}`}
-		_, _, err := BuildVolumeRetrospective(ctx, client, "fake-reasoner", project, volume, nil)
+		span := domain.VolumeSpan{VolumeIndex: 1, StartChapter: 1, EndChapter: 40}
+		_, _, err := BuildVolumeRetrospective(ctx, client, "fake-reasoner", project, volume, span, nil)
 		if err == nil {
 			t.Fatalf("expected error for empty summaries, got nil")
 		}

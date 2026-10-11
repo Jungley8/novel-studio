@@ -172,6 +172,7 @@ func BuildVolumeRetrospective(
 	model string,
 	project *domain.Project,
 	volume VolumeArc,
+	span domain.VolumeSpan,
 	summaries []ChapterSummary,
 ) (VolumeRetrospective, TokenUsage, error) {
 	if client == nil {
@@ -181,23 +182,24 @@ func BuildVolumeRetrospective(
 		return VolumeRetrospective{}, TokenUsage{}, errors.New("summaries cannot be empty")
 	}
 
-	fromChapter, toChapter := 0, 0
-	if project != nil && project.Framework != nil && len(project.Framework.VolumeArcs) > 0 {
-		acc := 0
-		for _, arc := range project.Framework.VolumeArcs {
-			est := arc.EstimatedChapters
-			if est <= 0 {
-				est = 40
+	fromChapter, toChapter := span.StartChapter, span.EndChapter
+	if fromChapter <= 0 || toChapter < fromChapter {
+		if volume.StartChapter > 0 && volume.EndChapter >= volume.StartChapter {
+			fromChapter = volume.StartChapter
+			toChapter = volume.EndChapter
+		} else if project != nil && project.Framework != nil && len(project.Framework.VolumeArcs) > 0 {
+			normalized := BackfillVolumeArcs(project.Framework.VolumeArcs)
+			spans, _ := deriveVolumeSpans(normalized)
+			for _, s := range spans {
+				if s.VolumeIndex == volume.VolumeIndex {
+					fromChapter = s.StartChapter
+					toChapter = s.EndChapter
+					break
+				}
 			}
-			if arc.VolumeIndex == volume.VolumeIndex {
-				fromChapter = acc + 1
-				toChapter = acc + est
-				break
-			}
-			acc += est
 		}
 	}
-	if fromChapter == 0 {
+	if fromChapter <= 0 || toChapter < fromChapter {
 		if len(summaries) > 0 {
 			fromChapter = summaries[0].ChapterIndex
 			toChapter = summaries[0].ChapterIndex
