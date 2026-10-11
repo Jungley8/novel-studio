@@ -820,8 +820,10 @@ func streamOnce(
 }
 
 // SafeChatCompletionWithStreamFallback executes an LLM request using streaming first to eliminate
-// 'awaiting headers' timeouts on gateways. If streaming succeeds, tokens are aggregated in memory.
-// If streaming is unsupported or encounters an upstream non-streaming error, it falls back to ChatCompletionWithUsage.
+// 'awaiting headers' timeouts on gateways. If streaming succeeds, tokens are aggregated in memory;
+// transport errors are hard failures that bubble up unchanged (no retry, no sync fallback).
+// If streaming completes with empty content, it falls back to ChatCompletionWithUsage.
+// Output-limit finishes trigger bounded continuation via mergeExactContinuation.
 func SafeChatCompletionWithStreamFallback(
 	ctx context.Context,
 	client LLMClient,
