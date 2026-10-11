@@ -96,6 +96,10 @@ async function apiFetch(endpoint, options = {}) {
     throw new Error(errorMsg);
   }
 
+  if (response.status === 204) {
+    return null;
+  }
+
   // Handle empty or text responses
   const contentType = response.headers.get('content-type');
   if (contentType && contentType.includes('application/json')) {
@@ -239,6 +243,15 @@ export const api = {
   // Studio Todos & Pipeline
   listStudioTodos: () => apiFetch('/api/studio/todos'),
   startPipeline: (data, handlers) => startPipelineStream('/api/pipeline', data, handlers),
+
+  // Studio Automation & Queue
+  listAutomations: () => apiFetch('/api/studio/automation'),
+  saveAutomation: (projectId, data) => apiFetch(`/api/studio/automation/${projectId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  resumeAutomation: (projectId) => apiFetch(`/api/studio/automation/${projectId}/resume`, { method: 'POST' }),
+  listQueue: () => apiFetch('/api/studio/queue'),
+  createQueueItem: (data) => apiFetch('/api/studio/queue', { method: 'POST', body: JSON.stringify(data) }),
+  updateQueueItem: (id, data) => apiFetch(`/api/studio/queue/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteQueueItem: (id) => apiFetch(`/api/studio/queue/${id}`, { method: 'DELETE' }),
 };
 
 async function startPipelineStream(endpoint, data, handlers = {}) {

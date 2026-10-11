@@ -136,7 +136,8 @@ import {
   GitBranch,
   ListChecks,
   Rocket,
-  AlertTriangle
+  AlertTriangle,
+  CalendarClock
 } from 'lucide-vue-next';
 
 const navGroups = computed(() => [
@@ -148,6 +149,7 @@ const navGroups = computed(() => [
       { id: 'studio-chat', label: '全局对话', desc: '跨项目闲聊与宏观设定风暴', icon: MessagesSquare },
       { id: 'pipeline', label: '全自动流水线', desc: '一键从创世跑到成章（含停线提示）', icon: Rocket },
       { id: 'studio-todos', label: '停线待办', desc: '需要人工介入的章节与原因', icon: AlertTriangle },
+      { id: 'studio-automation', label: '自动化排程', desc: '定时续产与开书队列，无人值守', icon: CalendarClock },
     ]
   },
   {

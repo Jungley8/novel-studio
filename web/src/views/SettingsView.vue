@@ -28,7 +28,7 @@
         </button>
 
         <button 
-          @click="actions.saveConfig" 
+          @click="handleSaveConfig" 
           class="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-md shadow transition cursor-pointer">
           <Save class="w-3.5 h-3.5" />
           <span>保存配置</span>
@@ -384,6 +384,18 @@
         </label>
         <p class="text-[11px] text-ink-400 mt-1 pl-5">开启后流水线自动锁定意图卡全自动推进；关闭则生成意图后停线待人工</p>
       </div>
+
+      <!-- 新书队列触发时刻 -->
+      <div class="pt-3 border-t border-atelier-800">
+        <label class="block text-xs font-medium text-ink-300 mb-1.5">新书队列触发时刻：</label>
+        <input 
+          type="text" 
+          v-model="queueTimesText" 
+          @blur="syncQueueTimes"
+          class="w-full bg-atelier-950 border border-atelier-750 rounded-lg px-3.5 py-2 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60" 
+          placeholder="例如 03:00, 15:00 (逗号分隔 HH:MM，留空=不自动处理)">
+        <p class="text-[11px] text-ink-400 mt-1">新书队列将在这些时刻自动开书并批产（留空=不自动处理）</p>
+      </div>
     </div>
 
     <!-- 底部小白贴心提示 -->
@@ -400,6 +412,7 @@
 </template>
 
 <script setup>
+import { ref, watch } from 'vue';
 import { state, actions } from '../stores/appState';
 import { 
   Settings, 
@@ -415,4 +428,35 @@ import {
   ShieldCheck,
   SlidersHorizontal 
 } from 'lucide-vue-next';
+
+const queueTimesText = ref('');
+
+watch(
+  () => state.config.queue_times,
+  (val) => {
+    if (Array.isArray(val)) {
+      queueTimesText.value = val.join(', ');
+    } else {
+      queueTimesText.value = '';
+    }
+  },
+  { immediate: true }
+);
+
+function syncQueueTimes() {
+  const val = queueTimesText.value ? queueTimesText.value.trim() : '';
+  if (!val) {
+    state.config.queue_times = [];
+  } else {
+    state.config.queue_times = val
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+}
+
+async function handleSaveConfig() {
+  syncQueueTimes();
+  await actions.saveConfig();
+}
 </script>
