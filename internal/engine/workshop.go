@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -86,6 +87,10 @@ type WorkshopProduceResult struct {
 	TechnicalBlockReason string                      `json:"technical_block_reason,omitempty"`
 	UnmatchedNames       []string                    `json:"unmatched_names,omitempty"`
 	SettlementEvidence   []domain.SettlementEvidence `json:"settlement_evidence,omitempty"`
+	ActualWords          int                         `json:"actual_words,omitempty"`
+	WordsTarget          int                         `json:"words_target,omitempty"`
+	WordQuotaRatio       float64                     `json:"word_quota_ratio,omitempty"`
+	UnderTarget          bool                        `json:"under_target,omitempty"`
 }
 
 // ChapterWorkshop is the deep orchestration module that encapsulates the entire
@@ -814,6 +819,21 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	// Cost estimation: ~$0.00014 per 1k prompt tokens, ~$0.00028 per 1k completion tokens
 	estimatedCostUSD := EstimateCostUSD(totalUsage)
 
+	actualWords := len([]rune(currentDraft))
+	targetWords := req.WordsTarget
+	ratio := 0.0
+	if targetWords > 0 {
+		ratio = math.Round((float64(actualWords)/float64(targetWords))*10000) / 10000
+	}
+	emit(WorkshopEvent{
+		Phase:   PhaseDrafted,
+		Message: fmt.Sprintf("字数遥测：实际 %d 字 / 目标 %d 字（%.1f%%）", actualWords, targetWords, ratio*100),
+	})
+	underTarget := ratio < BenchWordCountPassRatio
+	if underTarget && auditReport != nil {
+		auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【字数遥测】实际 %d 字低于目标 %d 字的 80%% 及格线（%.1f%%）", actualWords, targetWords, ratio*100))
+	}
+
 	chapterTitle := fmt.Sprintf("第 %d 章", req.ChapterIndex)
 	result := &WorkshopProduceResult{
 		ChapterIndex:         req.ChapterIndex,
@@ -831,6 +851,10 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		TechnicalBlockReason: technicalBlockReason,
 		UnmatchedNames:       unmatchedNames,
 		SettlementEvidence:   settleEvidences,
+		ActualWords:          actualWords,
+		WordsTarget:          targetWords,
+		WordQuotaRatio:       ratio,
+		UnderTarget:          underTarget,
 	}
 	if checkpointHit {
 		result.ResumedPhase = resumedPhase
