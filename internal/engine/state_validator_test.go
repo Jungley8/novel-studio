@@ -393,7 +393,7 @@ func TestChapterWorkshop_SettlerReconciliation_Unresolved_NotBlocking(t *testing
 			{
 				"code": "persistent-discrepancy",
 				"summary": "主角境界突破在正文中描写隐晦，无法确证",
-				"evidence": ["气势如虹"]
+				"evidence": ["拔出玄铁重剑握于掌中，气势如虹"]
 			}
 		]
 	}`
