@@ -81,6 +81,7 @@ func runProduceCLI(argv []string, defaultDataDir string) int {
 
 		orch := engine.NewOrchestrator(router)
 		chronicle := engine.NewCanonChronicle(s)
+		chronicle.SetConfig(cfg)
 		qualityGate := engine.NewQualityGate(router, nil)
 		workshop := engine.NewChapterWorkshop(orch, chronicle, qualityGate, s)
 
@@ -128,6 +129,7 @@ func runProduceCLI(argv []string, defaultDataDir string) int {
 
 	orch := engine.NewOrchestrator(router)
 	chronicle := engine.NewCanonChronicle(s)
+	chronicle.SetConfig(cfg)
 	qualityGate := engine.NewQualityGate(router, nil)
 	workshop := engine.NewChapterWorkshop(orch, chronicle, qualityGate, s)
 

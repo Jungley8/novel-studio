@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Jungley8/novel-studio/internal/activity"
+	"github.com/Jungley8/novel-studio/internal/config"
 	"github.com/Jungley8/novel-studio/internal/domain"
 )
 
@@ -867,6 +868,39 @@ func TestBackfillVolumeArcs_LegacyEquivalence(t *testing.T) {
 				t.Fatalf("chapter %d miss expected '超出已规划' note in GlobalSummary", ch)
 			}
 		}
+	}
+}
+
+func TestCanonChronicle_SetConfig_ContextBudget(t *testing.T) {
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p_budget_cfg",
+			Title:          "预算测试",
+			TargetPlatform: "起点中文网",
+		},
+		chapters: []*domain.Chapter{
+			{
+				ChapterIndex: 1,
+				Title:        "第一章",
+				Content:      "正文测试内容",
+			},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	chronicle.SetConfig(&config.Config{
+		ContextBudgetTokens: 5000,
+	})
+
+	_, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_budget_cfg", 2)
+	if err != nil {
+		t.Fatalf("expected AssembleHorizonTraced to succeed, got: %v", err)
+	}
+	if trace == nil {
+		t.Fatalf("expected trace to be non-nil")
+	}
+	if trace.BudgetTokens != 5000 {
+		t.Errorf("expected trace.BudgetTokens to be 5000, got %d", trace.BudgetTokens)
 	}
 }
 

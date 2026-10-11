@@ -26,7 +26,7 @@ type Config struct {
 	ReasonerProvider    *ProviderConfig `json:"reasoner_provider,omitempty"`
 	WriterProvider      *ProviderConfig `json:"writer_provider,omitempty"`
 	AutoOpenBrowser     bool            `json:"auto_open_browser"`
-	ContextBudgetTokens int             `json:"context_budget_tokens,omitempty"`
+	ContextBudgetTokens int             `json:"context_budget_tokens"`
 }
 
 func DefaultConfig() *Config {
@@ -66,8 +66,8 @@ func Load(path string) (*Config, error) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
-	if cfg.ContextBudgetTokens <= 0 {
-		cfg.ContextBudgetTokens = 12000
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
 	return cfg, nil
 }
