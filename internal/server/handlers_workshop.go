@@ -678,15 +678,7 @@ type PromptPreviewResponse struct {
 }
 
 func estimateTokens(text string) int {
-	runes := []rune(text)
-	if len(runes) == 0 {
-		return 0
-	}
-	toks := len(runes) * 3 / 4
-	if toks < 1 {
-		return 1
-	}
-	return toks
+	return domain.EstimateTokens(text)
 }
 
 func (s *Server) handlePromptPreview(w http.ResponseWriter, r *http.Request, projectID string) {

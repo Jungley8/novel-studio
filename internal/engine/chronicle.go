@@ -310,6 +310,7 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 			breakdown = append(breakdown, fmt.Sprintf("%s: %d tokens", p.id, p.tokens))
 		}
 		trace.EstimatedTokens = totalProtectedTokens
+		trace.Truncated = true
 		return nil, trace, fmt.Errorf("context budget exceeded by protected items: estimated %d tokens exceeds budget %d tokens. 超限项清单: [%s]. 建议操作：请在系统设置中调大 context_budget_tokens (当前配置: %d)，或精简世界法则设定 (如 global/rules 中过长的公理内容)",
 			totalProtectedTokens, budget, strings.Join(breakdown, ", "), budget)
 	}
