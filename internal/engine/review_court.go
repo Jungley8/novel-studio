@@ -32,12 +32,12 @@ const (
 
 // DivisionResult stores the auditing outcome from a single judicial division.
 type DivisionResult struct {
-	DivisionName    DivisionName         `json:"division_name"`
-	Verdict         domain.ReviewVerdict `json:"verdict"`
-	Score           int                  `json:"score"`
-	Issues          []string             `json:"issues"`
-	Suggestions     string               `json:"suggestions"`
-	ResolvedHookIDs []string             `json:"resolved_hook_ids,omitempty"`
+	DivisionName  DivisionName                 `json:"division_name"`
+	Verdict       domain.ReviewVerdict         `json:"verdict"`
+	Score         int                          `json:"score"`
+	Issues        []string                     `json:"issues"`
+	Suggestions   string                       `json:"suggestions"`
+	ResolvedHooks []domain.HookResolutionClaim `json:"resolved_hooks,omitempty"`
 }
 
 // CourtAuditReport encapsulates the synthesized outcome of the three-division review court,
@@ -132,7 +132,7 @@ func (c *ReviewCourt) LogicDivision(
 你的专职审查重点：
 1. 世界法则与实体状态不变量：主角是否违背了世界法则公理？战力体系与境界是否出现崩坏矛盾？是否使用了未持有的物品？
 2. 节拍因果履约：给定的剧情节拍核心动作和打破预期是否全部落实？情节因果链条是否完整，有无逻辑跳跃或机械降神？
-3. 伏笔回收判定：正文是否回收或实质推进了给定的开放伏笔？若有，在 resolved_hook_ids 中给出已回收的伏笔 ID 列表。
+3. 伏笔回收判定：正文是否回收或实质推进了给定的开放伏笔？若有，在 resolved_hooks 中给出回收声明：id 必须来自参考开放伏笔列表，quote 必须是正文中兑现该伏笔的原文片段（必须完全来自正文、不少于 8 字）。无证据的声明将被证据门拒绝。
 
 必须且仅输出标准 JSON 格式：
 {
@@ -140,7 +140,7 @@ func (c *ReviewCourt) LogicDivision(
   "score": 1到100的整数 (80分及以上方可通过),
   "issues": ["逻辑硬伤或节拍履约问题1", "问题2"],
   "suggestions": "针对逻辑因果与伏笔回收的具体修改建议",
-  "resolved_hook_ids": ["已在此章成功回收的伏笔ID列表，若无则为空数组 []"]
+  "resolved_hooks": [{"id": "伏笔ID", "quote": "正文兑现原文片段（≥8字）"}]
 }`
 
 	beatsJSON, _ := json.Marshal(beats)
@@ -190,23 +190,23 @@ func (c *ReviewCourt) LogicDivision(
 	}
 
 	var out struct {
-		Verdict         domain.ReviewVerdict `json:"verdict"`
-		Score           int                  `json:"score"`
-		Issues          []string             `json:"issues"`
-		Suggestions     string               `json:"suggestions"`
-		ResolvedHookIDs []string             `json:"resolved_hook_ids"`
+		Verdict       domain.ReviewVerdict         `json:"verdict"`
+		Score         int                          `json:"score"`
+		Issues        []string                     `json:"issues"`
+		Suggestions   string                       `json:"suggestions"`
+		ResolvedHooks []domain.HookResolutionClaim `json:"resolved_hooks"`
 	}
 	if err := json.Unmarshal([]byte(cleanJSON), &out); err != nil {
 		return nil, usage, fmt.Errorf("parse logic division JSON failed (raw: %s): %w", resp, err)
 	}
 
 	return &DivisionResult{
-		DivisionName:    DivisionLogic,
-		Verdict:         out.Verdict,
-		Score:           out.Score,
-		Issues:          out.Issues,
-		Suggestions:     out.Suggestions,
-		ResolvedHookIDs: out.ResolvedHookIDs,
+		DivisionName:  DivisionLogic,
+		Verdict:       out.Verdict,
+		Score:         out.Score,
+		Issues:        out.Issues,
+		Suggestions:   out.Suggestions,
+		ResolvedHooks: out.ResolvedHooks,
 	}, usage, nil
 }
 
@@ -561,7 +561,14 @@ func (c *ReviewCourt) ChiefJudge(
 	}
 
 	// Collect resolved hooks
-	resolvedHookIDs := logicRes.ResolvedHookIDs
+	var resolvedHookIDs []string
+	seenHooks := make(map[string]bool)
+	for _, claim := range logicRes.ResolvedHooks {
+		if claim.ID != "" && !seenHooks[claim.ID] {
+			seenHooks[claim.ID] = true
+			resolvedHookIDs = append(resolvedHookIDs, claim.ID)
+		}
+	}
 
 	report := &domain.AuditReport{
 		Verdict:            finalVerdict,
@@ -575,6 +582,7 @@ func (c *ReviewCourt) ChiefJudge(
 		Issues:             allIssues,
 		Suggestions:        strings.Join(suggestionParts, "\n"),
 		ResolvedHookIDs:    resolvedHookIDs,
+		ResolvedHookClaims: logicRes.ResolvedHooks,
 		ReviewedAt:         time.Now(),
 	}
 
