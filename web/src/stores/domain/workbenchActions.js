@@ -1,4 +1,5 @@
 import { api } from '../../api/client';
+import { createDefaultWorkbench } from './projectScope';
 
 export function createWorkbenchActions(state, notify, helpers, dialogs) {
   return {
@@ -58,8 +59,7 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
       state.pipelineState.halted = false;
       state.pipelineState.haltInfo = null;
       state.editingChapterIndex = null;
-      state.workbench.content = '';
-      state.workbench.coreConflict = '';
+      state.workbench = createDefaultWorkbench();
       state.reviewResult = null;
       state.activeStep = 1;
       const nextIdx = state.chapters.length + 1;
@@ -437,14 +437,7 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
       }
       try {
         await api.clearCheckpoint(state.currentProject.id, idx);
-        state.workbench.content = '';
-        state.workbench.coreConflict = '';
-        state.workbench.beats = [
-          { phase: '开端压迫', tension: 4, action: '', expectation_broken: '' },
-          { phase: '冲突升级', tension: 6, action: '', expectation_broken: '' },
-          { phase: '绝地反转', tension: 9, action: '', expectation_broken: '' },
-          { phase: '留存悬念', tension: 8, action: '', expectation_broken: '' },
-        ];
+        state.workbench = createDefaultWorkbench();
         state.reviewResult = null;
         state.editingChapterIndex = null;
         state.activeStep = 1;

@@ -1,4 +1,5 @@
 import { api } from '../../api/client';
+import { activeGenerationTask, resetProjectScopedState } from './projectScope';
 
 export function createProjectActions(state, notify, helpers, dialogs) {
   return {
@@ -14,18 +15,45 @@ export function createProjectActions(state, notify, helpers, dialogs) {
       }
     },
 
+    // 切换/刷新作品。
+    // 返回 true 表示已成功切换或刷新；false 表示被拒绝（存在进行中的生成任务或加载失败）。
     async selectProject(id) {
-      if (!id) return;
+      if (!id) return false;
+      const isSwitch = !state.currentProject || id !== state.selectedProjectId;
+      const previousId = state.selectedProjectId;
+      const previousProject = state.currentProject;
+
+      if (isSwitch) {
+        // Fail-Closed：生成任务把产物写回当前作品的全局工作台，
+        // 中途切换会把旧作品的产物串进新作品，必须先等待完成。
+        const busyTask = activeGenerationTask(state);
+        if (busyTask) {
+          notify(
+            '正在生成内容',
+            `《${state.currentProject?.title || '当前作品'}》的「${busyTask}」尚未完成，请等待完成后再切换作品`,
+            'warning',
+            4500
+          );
+          return false;
+        }
+
+        // 切换前先把当前作品的在途草稿落盘到原作品，避免正文丢失。
+        if (state.currentProject && (state.workbench.content.trim() || state.workbench.coreConflict.trim())) {
+          if (helpers && helpers.saveCheckpoint) {
+            await helpers.saveCheckpoint({}, true);
+          }
+        }
+
+        // 整体清空作品级瞬态状态，杜绝上一个作品的手稿/审校/弹窗基质串稿。
+        resetProjectScopedState(state);
+      }
+
       state.selectedProjectId = id;
       try {
         state.currentProject = await api.getProject(id);
         if (state.currentProject) {
-          if (state.currentProject.default_words_target) {
-            state.wordsTarget = state.currentProject.default_words_target;
-          }
-          if (state.currentProject.default_narrative_style) {
-            state.narrativeStyle = state.currentProject.default_narrative_style;
-          }
+          state.wordsTarget = state.currentProject.default_words_target || 2000;
+          state.narrativeStyle = state.currentProject.default_narrative_style || 'hardboiled';
         }
         state.chapters = await api.listChapters(id);
         state.hooks = await api.listHooks(id);
@@ -42,11 +70,23 @@ export function createProjectActions(state, notify, helpers, dialogs) {
           await helpers.loadAnalytics();
         }
         if (helpers && helpers.restoreCheckpoint) {
-          await helpers.restoreCheckpoint();
+          if (isSwitch) {
+            // 显式指定新作品的下一章，禁止用旧作品的 editingChapterIndex 取断点。
+            await helpers.restoreCheckpoint(state.chapters.length + 1);
+          } else {
+            await helpers.restoreCheckpoint();
+          }
         }
+        return true;
       } catch (e) {
         console.error('select project error:', e);
+        // 加载失败时不留下“半切换”状态：若作品对象尚未换成目标作品，回退选中态。
+        if (state.currentProject?.id !== id) {
+          state.selectedProjectId = previousId;
+          state.currentProject = previousProject;
+        }
         notify('加载项目失败', e.message, 'error');
+        return false;
       }
     },
 
@@ -97,8 +137,8 @@ export function createProjectActions(state, notify, helpers, dialogs) {
         const c = concept || state.currentProject.framework?.theme_premise || state.currentProject.framework?.core_concept || state.currentProject.title;
         const res = await api.bootstrapFramework(state.currentProject.id, c);
         state.currentProject.framework = res.framework || res;
-        if (actionHelpers.loadCodexEntries) await actionHelpers.loadCodexEntries();
-        if (actionHelpers.loadCodexRelations) await actionHelpers.loadCodexRelations();
+        if (helpers && helpers.loadCodexEntries) await helpers.loadCodexEntries();
+        if (helpers && helpers.loadCodexRelations) await helpers.loadCodexRelations();
         notify('设定推演完成', '世界规则、战力阶梯与分卷大纲已构建', 'success', 4000, {
           isTask: true,
           taskType: 'framework',

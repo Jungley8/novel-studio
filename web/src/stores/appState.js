@@ -4,6 +4,7 @@ import { createProjectActions } from './domain/projectActions';
 import { createWorkbenchActions } from './domain/workbenchActions';
 import { createMatrixActions } from './domain/matrixActions';
 import { createCodexActions } from './domain/codexActions';
+import { createDefaultWorkbench, createDefaultLinterReport, createDefaultPipelineState } from './domain/projectScope';
 
 function loadStoredMessages() {
   if (typeof window === 'undefined') return [];
@@ -92,40 +93,12 @@ export const state = reactive({
   isSanitizing: false,
   isLinting: false,
   lastSavedAt: null,
-  workbench: {
-    coreConflict: '',
-    beats: [
-      { phase: '蓄力压迫', tension: 4, action: '', expectation_broken: '' },
-      { phase: '试探下套', tension: 6, action: '', expectation_broken: '' },
-      { phase: '绝地反转', tension: 9, action: '', expectation_broken: '' },
-      { phase: '章末留钩', tension: 8, action: '', expectation_broken: '' },
-    ],
-    stateMutation: {
-      inventory_delta: '',
-      power_delta: '',
-    },
-    content: '',
-  },
-  linterReport: {
-    burstiness_score: 50,
-    hit_banned_words: [],
-    empirical_tells: [],
-    passed: true,
-    message: '就绪',
-  },
+  workbench: createDefaultWorkbench(),
+  linterReport: createDefaultLinterReport(),
   reviewResult: null,
 
   // Pipeline State
-  pipelineState: {
-    active: false,
-    lastFinished: false,
-    justCommitted: false,
-    lastCommittedChapter: null,
-    phase: '',
-    message: '',
-    resumed: false,
-    tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-  },
+  pipelineState: createDefaultPipelineState(),
 
   // Modals & Panels Visibility
   showNewProjectModal: false,
@@ -333,6 +306,8 @@ export function notify(title, message = '', type = 'info', duration = 3500, meta
       type,
       timestamp: new Date().toISOString(),
       read: false,
+      // 消息跳转必须落在正确的作品上：记录消息产生时所属的作品
+      projectId: state.currentProject?.id || '',
       ...meta,
     };
     state.messages.unshift(newMsg);
@@ -425,11 +400,22 @@ export const dialogs = {
 // Assemble Domain Actions with Cross-Domain Coordination
 const actionHelpers = {};
 
-const configActs = createConfigActions(state, notify);
-const matrixActs = createMatrixActions(state, notify, actionHelpers, dialogs);
-const codexActs = createCodexActions(state, notify, dialogs);
-const projectActs = createProjectActions(state, notify, actionHelpers, dialogs);
-const workbenchActs = createWorkbenchActions(state, notify, actionHelpers, dialogs);
+// 域操作对象的方法统一绑定自身：即使以裸引用调用（如 @click="actions.foo"），
+// 方法内部依赖的 this 仍然指向所属域对象，杜绝 this undefined 崩溃。
+function bindActions(obj) {
+  for (const key of Object.keys(obj)) {
+    if (typeof obj[key] === 'function') {
+      obj[key] = obj[key].bind(obj);
+    }
+  }
+  return obj;
+}
+
+const configActs = bindActions(createConfigActions(state, notify));
+const matrixActs = bindActions(createMatrixActions(state, notify, actionHelpers, dialogs));
+const codexActs = bindActions(createCodexActions(state, notify, dialogs));
+const projectActs = bindActions(createProjectActions(state, notify, actionHelpers, dialogs));
+const workbenchActs = bindActions(createWorkbenchActions(state, notify, actionHelpers, dialogs));
 
 // Register cross-domain helper functions for inter-module workflows
 actionHelpers.loadMatrixOverview = matrixActs.loadMatrixOverview;
@@ -438,6 +424,8 @@ actionHelpers.loadCodexRelations = codexActs.loadCodexRelations;
 actionHelpers.loadAnalytics = matrixActs.loadAnalytics;
 actionHelpers.selectProject = projectActs.selectProject;
 actionHelpers.restoreCheckpoint = workbenchActs.restoreCheckpoint;
+actionHelpers.saveCheckpoint = workbenchActs.saveCheckpoint;
+actionHelpers.runLinter = workbenchActs.runLinter;
 
 export const actions = {
   ...configActs,
