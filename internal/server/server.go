@@ -112,6 +112,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/volumes/", s.handleVolumeRoutes)
 	s.mux.HandleFunc("/api/studio/library", s.handleStudioLibrary)
 	s.mux.HandleFunc("/api/studio/chat", s.handleStudioChat)
+	s.mux.HandleFunc("/api/studio/threads", s.handleStudioThreads)
+	s.mux.HandleFunc("/api/studio/threads/", s.handleStudioThreadRoutes)
 
 	// Static & SPA routes
 	fileServer := http.FileServer(http.FS(s.fs))
