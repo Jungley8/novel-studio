@@ -326,4 +326,46 @@
 - **人味注入建议弹窗 (`HumanTouchesModal.vue`)**：支持 4 类人味杂质筛选、破防原理透视与一键插入当前手稿；
 - **手稿顶栏与 Step 4 终审门禁集成**：快速触发质检、合规审查与人味建议。
 
+---
+
+## 跨作品串稿专项精炼（Cross-Project State Isolation）
+
+日期：2026-10-12
+触发症状：**工作台切换作品后，正文/分段/审校/停线横幅仍是上一个作品的**（用户报告）。
+方法论：`vibe-refine`（先锁定回归测试，再逐层修复）+ 批判式评审（全视图扫描同类串稿面）。
+
+### 根因定位（三层叠加）
+
+1. `selectProject` 只重载列表数据（chapters/hooks/codex/…），**未重置作品级瞬态状态**：`workbench.*`、`reviewResult`、`linterReport`、`editingChapterIndex`、`activeStep`、`pipelineState`、弹窗基质（`editingScene`/`editingCodexEntry`/`activeCodexForSub`/`activeSceneForMarkers`…）。
+2. `restoreCheckpoint` 的内容守卫 `if (content && !targetIndex) return;` 在切换场景下被旧正文触发 → **新作品的断点被跳过恢复**，旧正文原样留存；且无参调用会使用旧作品的 `editingChapterIndex` 取错章节断点。
+3. 画布防抖自动保存（1.5s）与划词改写缓冲在切换后仍有在途回调，`saveCheckpoint` 按“当前作品”取项目 id → **旧作品正文被写入新作品的断点**（数据串稿）。
+
+### 精炼操作（按提交序列）
+
+1. `fix(web): fail-closed project switch with full project-scoped state reset`
+   - 新增 `stores/domain/projectScope.js` 单一事实源：默认工作台/体检报告/流水线状态工厂 + `activeGenerationTask` 互斥任务探测 + `resetProjectScopedState` 整体重置；
+   - `selectProject` 重写：生成任务进行中拒绝切换（Fail-Closed，含友好提示）；切换前把旧作品在途草稿显式落盘回旧作品；加载失败回退选中态（杜绝半切换）；
+   - 恢复断点显式传 `chapters.length + 1`，彻底禁用旧 `editingChapterIndex` 串稿；
+   - `appState.bindActions`：域操作对象方法统一绑定自身，修复裸引用调用（`@click="actions.foo"`）导致的 `this` undefined 崩溃（一键成章/去机械壳受影响）。
+2. `fix(web): reset per-view local state and eliminate cross-project payload leaks`
+   - 10+ 视图/弹窗（章节目录、意图、百科、矩阵、图谱、指标、体检、时间线、角色对戏、人味建议、合规扰动…）增加作品切换重置；
+   - 通知消息记录 `projectId`，跨作品跳转前先切换、拒绝则不跳转；
+   - 修复 `bootstrapCurrentFramework` 的 `actionHelpers` ReferenceError（框架推演成功却被报“推演失败”）；
+   - 修复矩阵「智能拆解」payload 与后端契约不匹配（原发字符串 → 400），改为 `{chapter_index, chapter_title, core_conflict, prompt}`。
+3. `fix(server,store): reject codex updates with foreign-project entry id`
+   - 新增 `CodexEntryProjectID` 归属查询；`PUT /api/projects/:id/codex/:entryId` 对其它作品词条返回 409，杜绝越权覆盖。
+4. `test(web): add project-switch isolation regression tests`
+   - Node 原生测试 + 无扩展名 resolve loader（零新增依赖）：切换整体重置、旧草稿落盘、Fail-Closed 门禁、断点目标 = 新作品章节数 + 1。
+
+### 验证
+
+- `pnpm test`：3/3 通过；
+- `go test ./... -race -count=1`：全绿（含新增 `TestCodexUpdate_RejectsForeignProjectEntry`）；
+- `pnpm build` + `gofmt -w`：通过。
+
+### 后续待办（已识别，未在本轮处理）
+
+- 后端场景/标记/进度等 id 优先路由建议统一补作品归属校验（本轮已处理风险最高的 codex upsert 覆盖路径）；
+- 排程器后台生产与前端编辑并发时的服务端互斥（应用内单机场景暂以编辑器侧门禁兜底）。
+
 

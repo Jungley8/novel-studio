@@ -50,6 +50,28 @@
 
 ---
 
+## 跨作品串稿专项（Cross-Project State Isolation，2026-10-12）
+
+症状：工作台切换作品后正文/审校/断点仍停留在上一个作品（用户报告"切换作品正文没有重置"）。
+根因：`selectProject` 只重载了列表数据，未重置 ★作品级瞬态状态★；配合 `restoreCheckpoint` 的内容守卫（旧正文非空 → 直接 return）与延迟触发的防抖自动保存，形成完整的数据串稿链路（旧作品正文可被写进新作品的断点）。
+
+| # | 交付 | 模块 | 优先级 | 状态 |
+|---|------|------|--------|------|
+| 1 | **切换作品整体重置**（单一事实源 `projectScope.js`：workbench/审校/断点/停线/弹窗基质一次清空）| `stores/domain/projectScope.js` + `projectActions.selectProject` | P0 | 🟢 已完成 |
+| 2 | **Fail-Closed 切换门禁**（全自动成章/起草/体检/精修/定稿等任务进行中拒绝切换，含下拉框回退与所有跳转入口）| `projectActions` + `AppSidebar` + `PipelineView` + `StudioTodoView` | P0 | 🟢 已完成 |
+| 3 | **切换前落盘 + 断点守卫修正**（旧作品在途草稿先写回旧作品；恢复断点显式指定新作品下一章，禁用旧 `editingChapterIndex`；失败回退半切换）| `projectActions` + `workbenchActions` | P0 | 🟢 已完成 |
+| 4 | **防抖自动保存防串稿**（切换时取消在途 debounce 与划词改写缓冲）| `WorkbenchCanvasPanel` | P0 | 🟢 已完成 |
+| 5 | **视图/弹窗本地态重置**（章节选中/搜索、意图编辑表单、百科扫描、矩阵拆场、图谱搜索与关系弹窗、指标与体检报告）| 10+ 视图与弹窗组件 | P1 | 🟢 已完成 |
+| 6 | **通知跳转作品归属**（消息沉淀时记录 `projectId`，跨作品跳转前先切换，拒绝则不跳转）| `appState.notify` + `MessageCenterModal` | P1 | 🟢 已完成 |
+| 7 | **后端词条越权防护**（用其它作品的词条 ID 更新 → 409 拒绝，原数据不被覆盖）| `handlers_matrix.go` + `store` | P1 | 🟢 已完成 |
+| 8 | **域操作 this 绑定系统修复**（裸引用调用 `actions.foo` 不再因 `this` undefined 崩溃；一键成章/去机械壳等修复）| `appState.bindActions` | P1 | 🟢 已完成 |
+| 9 | **`actionHelpers` ReferenceError + 矩阵拆场 payload 修复**（框架推演后 Codex 刷新失效；AI 拆场 400）| `projectActions` + `MatrixView` | P1 | 🟢 已完成 |
+| 10 | **回归测试**（Node 原生测试 + resolve loader：切换重置/落盘/Fail-Closed 门禁/断点目标）| `web/test/project-switch.test.mjs`（`pnpm test`）| P0 | 🟢 已完成 |
+
+验证：`pnpm test`（3/3 通过）；`pnpm build` 通过；`go build ./... && go test ./... -race -count=1` 全绿（含新增 `TestCodexUpdate_RejectsForeignProjectEntry`）；`gofmt -w` 完成。
+
+---
+
 ## 精炼成果与总进度
 
 - 🟢 **已精炼完成**: 5/5 核心双轨制与割裂架构缺陷（主角、势力阵营、世界公理、关键人物影子、种子伏笔冗余）
