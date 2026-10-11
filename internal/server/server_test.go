@@ -269,6 +269,50 @@ func TestServer_ConfigAndProjects(t *testing.T) {
 	}
 }
 
+func TestServer_ConfigContextBudgetTokens(t *testing.T) {
+	srv, _, _ := setupTestServer(t)
+
+	post := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/config", strings.NewReader(body)))
+		return w
+	}
+
+	// 1. negative value rejected
+	if w := post(`{"context_budget_tokens": -5}`); w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for negative budget, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 2. positive value accepted and echoed by GET
+	if w := post(`{"context_budget_tokens": 8000}`); w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for valid budget, got %d: %s", w.Code, w.Body.String())
+	}
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /api/config failed: %d", w.Code)
+	}
+	var gotCfg config.Config
+	if err := json.Unmarshal(w.Body.Bytes(), &gotCfg); err != nil {
+		t.Fatalf("unmarshal config failed: %v", err)
+	}
+	if gotCfg.ContextBudgetTokens != 8000 {
+		t.Errorf("expected budget 8000 echoed by GET, got %d", gotCfg.ContextBudgetTokens)
+	}
+
+	// 3. zero value ignored (existing value preserved)
+	if w := post(`{"context_budget_tokens": 0}`); w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for zero budget (ignored), got %d: %s", w.Code, w.Body.String())
+	}
+	w2 := httptest.NewRecorder()
+	srv.ServeHTTP(w2, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	var gotCfg2 config.Config
+	_ = json.Unmarshal(w2.Body.Bytes(), &gotCfg2)
+	if gotCfg2.ContextBudgetTokens != 8000 {
+		t.Errorf("expected budget to remain 8000 after zero POST, got %d", gotCfg2.ContextBudgetTokens)
+	}
+}
+
 func TestServer_MatrixScenesAndAnalytics(t *testing.T) {
 	srv, s, _ := setupTestServer(t)
 	ctx := t.Context()
