@@ -44,16 +44,17 @@
 | 5 | Studio 对话持久化（线程/消息落库 + 线程栏 UI）| `internal/store/sqlite_store.go` + `handlers_studio.go` + `StudioChatView.vue` | P2 | 🟢 已完成（agy-novel12-chatpersist/chatweb，双变异验证）|
 | 6 | 成本与用量面板（跨作品 token/费用聚合）| `handlers_studio.go` + `StudioLibraryView.vue` | P2 | 🟢 已完成（agy-novel13-cost，引擎公式单一源 + 变异验证）|
 | 7 | 全局默认批产参数（words/style/loops/auto-lock 三档优先级解析）| `config.go` + `SettingsView.vue` + CLI/API | P2 | 🟢 已完成（agy-novel14-settings，双变异验证）|
-| 8 | 停线待办中心（停线 checkpoint 落盘 + `/api/studio/todos` + 视图）| `workshop.go` + `handlers_studio_todos.go` + `StudioTodoView.vue` | P3 | 🟢 已完成（agy-novel14-todos/console，双变异验证；排程/无人值守留后续）|
+| 8 | 停线待办中心（停线 checkpoint 落盘 + `/api/studio/todos` + 视图）| `workshop.go` + `handlers_studio_todos.go` + `StudioTodoView.vue` | P3 | 🟢 已完成（agy-novel14-todos/console，双变异验证）|
 | 9 | Web pipeline 控制台（表单→SSE 进度时间轴→halt 展示→跳工作台）| `PipelineView.vue` + 裸 `data:` SSE 消费者 | P3 | 🟢 已完成（agy-novel14-console）|
+| 10 | **排程/无人值守**（应用内调度器：作品续产+新书队列、每作品自定义时刻/配额、停线暂停待人工、macOS 系统通知、catch-up 补跑、串行执行）| `internal/scheduler` + `scheduler_runtime.go` + `internal/notify` + automation/queue API + `StudioAutomationView.vue` | P3 | 🟢 已完成（agy-novel15-schedcore/schedweb/scheduler，变异+自跑变异验证；冒烟通过）|
 
 ---
 
 ## 精炼成果与总进度
 
 - 🟢 **已精炼完成**: 5/5 核心双轨制与割裂架构缺陷（主角、势力阵营、世界公理、关键人物影子、种子伏笔冗余）
-- 🟢 **AI-First 改造**: 9/9 交付完成（编排器引擎/CLI/API、框架级级联、对话持久化全栈、成本面板、默认批产参数、停线待办中心、pipeline 控制台；仅"排程/无人值守"留后续）
+- 🟢 **AI-First 改造**: 10/10 交付完成（编排器引擎/CLI/API、框架级级联、对话持久化全栈、成本面板、默认批产参数、停线待办中心、pipeline 控制台、排程/无人值守）
 - 🟡 **进行中**: 0
-- 🔴 **待排期**: 排程/无人值守（launchd 定时）+ 5 模块 God File 拆分
+- 🔴 **待排期**: 5 模块 God File 拆分（见上表）
 - **Go 测试**: `go test ./... -race -count=1` 全绿通过
 - **前端构建**: `pnpm --dir web build` 纯净构建通过
