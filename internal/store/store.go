@@ -22,6 +22,7 @@ type Store interface {
 	GetChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.Chapter, error)
 	ListChapters(ctx context.Context, projectID string) ([]*domain.Chapter, error)
 	DeleteChapter(ctx context.Context, projectID string, chapterIndex int) error
+	ListStateSnapshots(ctx context.Context, projectID string) ([]*domain.ChapterStateSnapshot, error) // 快照链只读供给（bench 用，按 chapter_index 升序）
 
 	// Chapter Intents (章节意图卡)
 	SaveChapterIntent(ctx context.Context, intent *domain.ChapterIntent) error

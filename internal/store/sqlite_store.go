@@ -1368,6 +1368,36 @@ func (s *SQLiteStore) getStateSnapshotTx(ctx context.Context, tx *sql.Tx, projec
 	return &snap, nil
 }
 
+// ListStateSnapshots returns all post-commit state snapshots for a project ordered by chapter_index ascending.
+// Read-only supply for the bench snapshot chain; opens no transaction (mirrors ListChapters connection usage).
+func (s *SQLiteStore) ListStateSnapshots(ctx context.Context, projectID string) ([]*domain.ChapterStateSnapshot, error) {
+	query := `
+	SELECT id, project_id, chapter_index, protagonist_json, hooks_json, created_at
+	FROM chapter_state_snapshots
+	WHERE project_id = ? ORDER BY chapter_index ASC;
+	`
+	rows, err := s.db.QueryContext(ctx, query, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list chapter state snapshots: %w", err)
+	}
+	defer rows.Close()
+
+	list := make([]*domain.ChapterStateSnapshot, 0)
+	for rows.Next() {
+		var snap domain.ChapterStateSnapshot
+		if err := rows.Scan(
+			&snap.ID, &snap.ProjectID, &snap.ChapterIndex, &snap.ProtagonistJSON, &snap.HooksJSON, &snap.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan chapter state snapshot: %w", err)
+		}
+		list = append(list, &snap)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate chapter state snapshots: %w", err)
+	}
+	return list, nil
+}
+
 func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, *domain.Project, error) {
 	if projectID == "" {
 		return nil, nil, errors.New("projectID cannot be empty")

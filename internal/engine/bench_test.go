@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -28,7 +30,7 @@ func TestRunBenchProbes_WordCountStats(t *testing.T) {
 		{ChapterIndex: 4, WordCount: 0, Content: strings.Repeat("字", 1000)},
 	}
 
-	report := RunBenchProbes(proj, chapters, nil, nil, false)
+	report := RunBenchProbes(proj, chapters, nil, nil, false, nil)
 
 	if report.Chapters != 4 {
 		t.Fatalf("expected 4 chapters, got %d", report.Chapters)
@@ -78,7 +80,7 @@ func TestRunBenchProbes_ChapterTypesRhythm(t *testing.T) {
 		{ChapterIndex: 6, Beats: nil},
 	}
 
-	report := RunBenchProbes(proj, chapters, nil, nil, false)
+	report := RunBenchProbes(proj, chapters, nil, nil, false, nil)
 
 	if report.ChapterTypes.MaxConsecutive != 4 {
 		t.Errorf("expected MaxConsecutive=4, got %d", report.ChapterTypes.MaxConsecutive)
@@ -122,7 +124,7 @@ func TestRunBenchProbes_HooksOverdueAndCounts(t *testing.T) {
 		{ID: "h-abandoned", Title: "弃用暗线", Status: domain.HookStatusAbandoned, TargetChapter: 4},
 	}
 
-	report := RunBenchProbes(proj, chapters, hooks, nil, false)
+	report := RunBenchProbes(proj, chapters, hooks, nil, false, nil)
 
 	if report.Hooks.Open != 2 {
 		t.Errorf("expected Open=2, got %d", report.Hooks.Open)
@@ -148,68 +150,92 @@ func TestRunBenchProbes_HooksOverdueAndCounts(t *testing.T) {
 	}
 }
 
-// ④ 重放：两章 +5/-3 → 重放数量 2；当前主角数量 5 → 漂移行含 灵石；非法 mutation（消耗未持有）→ Drifts 有记录不 panic；空输入零值
-func TestRunBenchProbes_LedgerReplayAndZeroValues(t *testing.T) {
-	proj := &domain.Project{
-		ID:    "proj-ledger",
-		Title: "账本重放测试",
+// 快照链测试共用 helper：在副本上应用 mutation 并封成快照（模拟 CommitChapter 写入语义）。
+func benchApplyCopy(t *testing.T, base *domain.CodexEntry, m domain.StateMutation) *domain.CodexEntry {
+	t.Helper()
+	data, err := json.Marshal(base)
+	if err != nil {
+		t.Fatalf("marshal base protagonist failed: %v", err)
 	}
+	var cp domain.CodexEntry
+	if err := json.Unmarshal(data, &cp); err != nil {
+		t.Fatalf("unmarshal base protagonist failed: %v", err)
+	}
+	if _, err := domain.ApplyStateMutation(&cp, m); err != nil {
+		t.Fatalf("ApplyStateMutation failed: %v", err)
+	}
+	return &cp
+}
+
+func benchSnapOf(idx int, e *domain.CodexEntry) *domain.ChapterStateSnapshot {
+	b, err := json.Marshal(e)
+	if err != nil {
+		panic(fmt.Sprintf("marshal snapshot protagonist failed: %v", err))
+	}
+	return &domain.ChapterStateSnapshot{
+		ID:              fmt.Sprintf("snap-bench-%d", idx),
+		ProjectID:       "proj-ledger",
+		ChapterIndex:    idx,
+		ProtagonistJSON: string(b),
+		HooksJSON:       "[]",
+	}
+}
+
+// 三章快照链固件：base(灵石x2/炼气) → ch1(+灵石x5) → ch2(-灵石x3) → ch3(突破筑基)。
+// 返回 chapters、snapshots(1..3)、终态 protagonist（== snap3）。
+func benchSnapshotChainFixture(t *testing.T) ([]*domain.Chapter, []*domain.ChapterStateSnapshot, *domain.CodexEntry) {
+	t.Helper()
+	base := &domain.CodexEntry{
+		ID:              "prot-bench",
+		ProjectID:       "proj-ledger",
+		Name:            "顾渊",
+		Realm:           "炼气",
+		StructuredLevel: &domain.PowerLevel{Realm: "炼气"},
+		StructuredItems: []domain.InventoryItem{{Name: "灵石", Quantity: 2}},
+	}
+	mut1 := domain.StateMutation{InventoryDelta: "+灵石x5"}
+	mut2 := domain.StateMutation{InventoryDelta: "-灵石x3"}
+	mut3 := domain.StateMutation{PowerDelta: "突破筑基"}
+
+	s1 := benchApplyCopy(t, base, mut1)
+	s2 := benchApplyCopy(t, s1, mut2)
+	s3 := benchApplyCopy(t, s2, mut3)
 
 	chapters := []*domain.Chapter{
-		{
-			ChapterIndex: 1,
-			StateMutation: domain.StateMutation{
-				InventoryDelta: "+灵石x5",
-			},
-		},
-		{
-			ChapterIndex: 2,
-			StateMutation: domain.StateMutation{
-				InventoryDelta: "-灵石x3",
-			},
-		},
-		{
-			ChapterIndex: 3,
-			StateMutation: domain.StateMutation{
-				InventoryDelta: "-诛仙剑x1", // 非法：消耗未持有的道具
-			},
-		},
+		{ChapterIndex: 1, StateMutation: mut1},
+		{ChapterIndex: 2, StateMutation: mut2},
+		{ChapterIndex: 3, StateMutation: mut3},
 	}
+	snapshots := []*domain.ChapterStateSnapshot{benchSnapOf(1, s1), benchSnapOf(2, s2), benchSnapOf(3, s3)}
+	return chapters, snapshots, s3
+}
 
-	// 当前主角持有的道具与重放不一致（数量 5 vs 2）
-	protagonist := &domain.CodexEntry{
-		Name: "顾渊",
-		StructuredItems: []domain.InventoryItem{
-			{Name: "灵石", Quantity: 5},
-		},
+// ④(改写，快照链语义)：三章过渡精确一致 + 终态一致 → Clean、无漂移；
+// 第 1 章无前置快照仅记 Notes（旧"空基线重放"期望已按新语义改写：创世种子与 REMOVE 不再是系统性假阳性）。
+func TestRunBenchProbes_SnapshotChainClean(t *testing.T) {
+	proj := &domain.Project{ID: "proj-ledger", Title: "账本重放测试"}
+	chapters, snapshots, protagonist := benchSnapshotChainFixture(t)
+
+	report := RunBenchProbes(proj, chapters, nil, protagonist, false, snapshots)
+
+	if !report.LedgerReplay.Clean {
+		t.Errorf("expected Clean=true on exact snapshot chain, got drifts: %v", report.LedgerReplay.Drifts)
 	}
-
-	report := RunBenchProbes(proj, chapters, nil, protagonist, false)
-
-	if report.LedgerReplay.Clean {
-		t.Errorf("expected Clean=false on drift, got true")
+	if len(report.LedgerReplay.Drifts) != 0 {
+		t.Errorf("expected no drifts, got %v", report.LedgerReplay.Drifts)
 	}
-
-	foundLingshiDrift := false
-	foundIllegalWarning := false
-	for _, drift := range report.LedgerReplay.Drifts {
-		if strings.Contains(drift, "灵石") {
-			foundLingshiDrift = true
-		}
-		if strings.Contains(drift, "诛仙剑") || strings.Contains(drift, "未持有") || strings.Contains(drift, "异常") {
-			foundIllegalWarning = true
+	foundCh1Note := false
+	for _, n := range report.LedgerReplay.Notes {
+		if strings.Contains(n, "第1章缺前置/后置快照") {
+			foundCh1Note = true
 		}
 	}
-
-	if !foundLingshiDrift {
-		t.Errorf("expected drift row containing '灵石', got drifts: %v", report.LedgerReplay.Drifts)
-	}
-	if !foundIllegalWarning {
-		t.Errorf("expected drift row recording illegal consumption of 诛仙剑, got: %v", report.LedgerReplay.Drifts)
+	if !foundCh1Note {
+		t.Errorf("expected Notes to record ch1 skip (no snapshot[0]), got %v", report.LedgerReplay.Notes)
 	}
 
 	// 空输入零值测试（防御性防 panic）
-	zeroReport := RunBenchProbes(nil, nil, nil, nil, false)
+	zeroReport := RunBenchProbes(nil, nil, nil, nil, false, nil)
 	if zeroReport == nil {
 		t.Fatal("expected non-nil report on nil inputs")
 	}
@@ -221,6 +247,180 @@ func TestRunBenchProbes_LedgerReplayAndZeroValues(t *testing.T) {
 	}
 	if !strings.Contains(zeroReport.LedgerReplay.Caveat, "无主角实体，跳过") {
 		t.Errorf("expected caveat to contain '无主角实体，跳过', got %q", zeroReport.LedgerReplay.Caveat)
+	}
+}
+
+// 篡改检出：改 snap[3] 后态（灵石 4→99），终态 protagonist 保持被篡改态以隔离出过渡校验 → 第3章过渡漂移。
+func TestRunBenchProbes_SnapshotTamperDetected(t *testing.T) {
+	proj := &domain.Project{ID: "proj-ledger", Title: "账本篡改测试"}
+	chapters, snapshots, _ := benchSnapshotChainFixture(t)
+
+	var tampered domain.CodexEntry
+	if err := json.Unmarshal([]byte(snapshots[2].ProtagonistJSON), &tampered); err != nil {
+		t.Fatalf("unmarshal snap3 failed: %v", err)
+	}
+	for i := range tampered.StructuredItems {
+		if tampered.StructuredItems[i].Name == "灵石" {
+			tampered.StructuredItems[i].Quantity = 99
+		}
+	}
+	tamperedBytes, _ := json.Marshal(&tampered)
+	snapshots[2] = &domain.ChapterStateSnapshot{
+		ID:              snapshots[2].ID,
+		ProjectID:       snapshots[2].ProjectID,
+		ChapterIndex:    3,
+		ProtagonistJSON: string(tamperedBytes),
+		HooksJSON:       "[]",
+	}
+	// 终态 protagonist 取被篡改态：终态校验通过，只有第3章过渡校验应漂移。
+	protagonist := &tampered
+
+	report := RunBenchProbes(proj, chapters, nil, protagonist, false, snapshots)
+
+	if report.LedgerReplay.Clean {
+		t.Errorf("expected Clean=false on tampered snapshot, got true")
+	}
+	foundCh3Drift := false
+	for _, d := range report.LedgerReplay.Drifts {
+		if strings.Contains(d, "第3章") && strings.Contains(d, "灵石") {
+			foundCh3Drift = true
+		}
+	}
+	if !foundCh3Drift {
+		t.Errorf("expected drift row for ch3 灵石 mismatch, got %v", report.LedgerReplay.Drifts)
+	}
+}
+
+// 空快照：nil 快照 + 有 mutation 章 + 主角非空 → Clean=false + Notes 明示"无快照数据，无法验证"；
+// 零章 / 零 mutation 章 → Clean=true + Notes。
+func TestRunBenchProbes_EmptySnapshotsNotClean(t *testing.T) {
+	proj := &domain.Project{ID: "proj-ledger", Title: "空快照测试"}
+	chapters := []*domain.Chapter{
+		{ChapterIndex: 1, StateMutation: domain.StateMutation{InventoryDelta: "+灵石x5"}},
+		{ChapterIndex: 2, StateMutation: domain.StateMutation{InventoryDelta: "-灵石x3"}},
+	}
+	protagonist := &domain.CodexEntry{
+		Name:            "顾渊",
+		StructuredItems: []domain.InventoryItem{{Name: "灵石", Quantity: 5}},
+	}
+
+	report := RunBenchProbes(proj, chapters, nil, protagonist, false, nil)
+	if report.LedgerReplay.Clean {
+		t.Errorf("expected Clean=false with nil snapshots and mutation chapters, got true")
+	}
+	foundNoSnapNote := false
+	for _, n := range report.LedgerReplay.Notes {
+		if strings.Contains(n, "无快照数据，无法验证") {
+			foundNoSnapNote = true
+		}
+	}
+	if !foundNoSnapNote {
+		t.Errorf("expected Notes to contain '无快照数据，无法验证', got %v", report.LedgerReplay.Notes)
+	}
+	if len(report.LedgerReplay.Drifts) != 0 {
+		t.Errorf("expected no drifts on skip path, got %v", report.LedgerReplay.Drifts)
+	}
+
+	// 零章 + 主角非空 → Clean=true + Notes
+	emptyChapters := RunBenchProbes(proj, nil, nil, protagonist, false, nil)
+	if !emptyChapters.LedgerReplay.Clean {
+		t.Errorf("expected Clean=true for zero chapters, got false (notes=%v)", emptyChapters.LedgerReplay.Notes)
+	}
+	if len(emptyChapters.LedgerReplay.Notes) == 0 {
+		t.Errorf("expected Notes for zero chapters, got none")
+	}
+
+	// 零 mutation 章 + 主角非空 → Clean=true + Notes
+	plainChapters := []*domain.Chapter{{ChapterIndex: 1}, {ChapterIndex: 2}}
+	noMut := RunBenchProbes(proj, plainChapters, nil, protagonist, false, nil)
+	if !noMut.LedgerReplay.Clean {
+		t.Errorf("expected Clean=true for zero-mutation chapters, got false")
+	}
+	if len(noMut.LedgerReplay.Notes) == 0 {
+		t.Errorf("expected Notes for zero-mutation chapters, got none")
+	}
+}
+
+// 撤回残留：两章快照俱在但正史只剩 ch1（ch2 已撤回，主角恢复至 ch1 态），
+// 孤儿 snap[2] 超出正史前沿 → 忽略记 Notes，不报 drift，Clean。
+func TestRunBenchProbes_OrphanSnapshotBeyondFrontier(t *testing.T) {
+	proj := &domain.Project{ID: "proj-ledger", Title: "撤回残留测试"}
+	chapters, snapshots, _ := benchSnapshotChainFixture(t)
+
+	// 正史前沿退到 ch1：只测 ch1；主角为 snap[1] 解码态（UncommitChapter 恢复态）。
+	chapters = chapters[:1]
+	var restored domain.CodexEntry
+	if err := json.Unmarshal([]byte(snapshots[0].ProtagonistJSON), &restored); err != nil {
+		t.Fatalf("unmarshal snap1 failed: %v", err)
+	}
+
+	report := RunBenchProbes(proj, chapters, nil, &restored, false, snapshots)
+
+	if !report.LedgerReplay.Clean {
+		t.Errorf("expected Clean=true with orphan snapshot ignored, got drifts: %v", report.LedgerReplay.Drifts)
+	}
+	if len(report.LedgerReplay.Drifts) != 0 {
+		t.Errorf("expected no drifts, got %v", report.LedgerReplay.Drifts)
+	}
+	foundFrontierNote := false
+	for _, n := range report.LedgerReplay.Notes {
+		if strings.Contains(n, "第2章快照超出正史前沿") {
+			foundFrontierNote = true
+		}
+	}
+	if !foundFrontierNote {
+		t.Errorf("expected frontier note for snap[2], got %v", report.LedgerReplay.Notes)
+	}
+}
+
+// 终态校验：当前 protagonist 与末章快照不一致（模拟界面直接修改）→ drift 含"与末章快照不一致"。
+func TestRunBenchProbes_FinalStateDrift(t *testing.T) {
+	proj := &domain.Project{ID: "proj-ledger", Title: "终态校验测试"}
+	chapters, snapshots, protagonist := benchSnapshotChainFixture(t)
+
+	protagonist.StructuredItems = []domain.InventoryItem{{Name: "灵石", Quantity: 100}}
+
+	report := RunBenchProbes(proj, chapters, nil, protagonist, false, snapshots)
+
+	if report.LedgerReplay.Clean {
+		t.Errorf("expected Clean=false on final-state drift, got true")
+	}
+	foundFinal := false
+	for _, d := range report.LedgerReplay.Drifts {
+		if strings.Contains(d, "与末章快照不一致") {
+			foundFinal = true
+		}
+	}
+	if !foundFinal {
+		t.Errorf("expected drift containing '与末章快照不一致', got %v", report.LedgerReplay.Drifts)
+	}
+}
+
+// Lint 节：只读存量字段计数（LinterPassed 通过率 + BurstinessScore 均值 + Review 覆盖）。
+func TestRunBenchProbes_LintSection(t *testing.T) {
+	proj := &domain.Project{ID: "proj-lint", Title: "Lint 体检测试"}
+	chapters := []*domain.Chapter{
+		{ChapterIndex: 1, LinterPassed: true, BurstinessScore: 80, Review: &domain.ReviewResult{Verdict: domain.ReviewVerdictAccepted, Score: 90}},
+		{ChapterIndex: 2, LinterPassed: false, BurstinessScore: 60},
+		{ChapterIndex: 3, LinterPassed: true, BurstinessScore: 70, Review: &domain.ReviewResult{Verdict: domain.ReviewVerdictRevision, Score: 70}},
+	}
+
+	report := RunBenchProbes(proj, chapters, nil, nil, false, nil)
+
+	if report.Lint.Chapters != 3 {
+		t.Errorf("expected Lint.Chapters=3, got %d", report.Lint.Chapters)
+	}
+	if report.Lint.LinterPassed != 2 {
+		t.Errorf("expected Lint.LinterPassed=2, got %d", report.Lint.LinterPassed)
+	}
+	if want, got := 2.0/3.0, report.Lint.LinterPassRate; got != want {
+		t.Errorf("expected Lint.LinterPassRate=%v, got %v", want, got)
+	}
+	if want, got := 70.0, report.Lint.AvgBurstinessScore; got != want {
+		t.Errorf("expected Lint.AvgBurstinessScore=%v, got %v", want, got)
+	}
+	if report.Lint.ReviewCovered != 2 {
+		t.Errorf("expected Lint.ReviewCovered=2, got %d", report.Lint.ReviewCovered)
 	}
 }
 
@@ -244,7 +444,7 @@ func TestRunBenchProbes_EchoProbes(t *testing.T) {
 		{ChapterIndex: 7, Content: "风雪漫天席卷，寒风如刀。顾渊负手而立，冷眼看着敌人。"},
 	}
 
-	report := RunBenchProbes(proj, chapters, nil, nil, false)
+	report := RunBenchProbes(proj, chapters, nil, nil, false, nil)
 
 	if report.Echo.TotalPhrases < 1 {
 		t.Errorf("expected TotalPhrases >= 1, got %d", report.Echo.TotalPhrases)
@@ -260,7 +460,7 @@ func TestRunBenchProbes_EchoProbes(t *testing.T) {
 		{ChapterIndex: 3, Content: "天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收。"},
 		{ChapterIndex: 4, Content: "金生丽水玉出昆冈剑号巨阙珠称夜光果珍李柰菜重。"},
 	}
-	cleanReport := RunBenchProbes(proj, cleanChapters, nil, nil, false)
+	cleanReport := RunBenchProbes(proj, cleanChapters, nil, nil, false, nil)
 	if cleanReport.Echo.TotalPhrases != 0 {
 		t.Errorf("expected clean TotalPhrases=0, got %d", cleanReport.Echo.TotalPhrases)
 	}

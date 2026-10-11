@@ -151,23 +151,39 @@ func printBenchReport(w io.Writer, r *engine.BenchReport, asJSON bool, snapshotP
 	} else {
 		fmt.Fprintln(w, "  • 漂移明细:       无漂移")
 	}
+	if len(r.LedgerReplay.Notes) > 0 {
+		fmt.Fprintf(w, "  • 备注 (%d 条):\n", len(r.LedgerReplay.Notes))
+		for _, n := range r.LedgerReplay.Notes {
+			fmt.Fprintf(w, "    - %s\n", n)
+		}
+	}
+
+	// 【Lint 存量体检】（只读存量字段，不跑 LLM/linter）
+	fmt.Fprintln(w, "\n【Lint 存量体检】")
+	fmt.Fprintf(w, "  • Linter 通过率:   %.1f%% (%d/%d 章)\n", r.Lint.LinterPassRate*100, r.Lint.LinterPassed, r.Lint.Chapters)
+	fmt.Fprintf(w, "  • 平均 Burstiness: %.2f\n", r.Lint.AvgBurstinessScore)
+	fmt.Fprintf(w, "  • Review 覆盖:     %d 章\n", r.Lint.ReviewCovered)
 
 	// 【跨章回声】
 	fmt.Fprintln(w, "\n【跨章回声】")
 	fmt.Fprintf(w, "  • 跨章高频重复短语: %d 处\n", r.Echo.TotalPhrases)
 	fmt.Fprintf(w, "  • 命中重复章节数:   %d 章\n", r.Echo.ChaptersHit)
 
-	// 【文风契约】
+	// 【文风契约】（直读 report 字段；drift 前缀扫描仅作旧 report 兼容保留）
 	fmt.Fprintln(w, "\n【文风契约】")
 	seededStr := "未种子化"
-	for _, d := range r.LedgerReplay.Drifts {
-		if strings.HasPrefix(d, "风格库读取失败：") {
-			seededStr = d
-			break
-		}
-	}
-	if seededStr == "未种子化" && r.StyleVaultSeeded {
+	if r.StyleVaultSeeded {
 		seededStr = "已种子化"
+	}
+	if r.StyleVaultError != "" {
+		seededStr = fmt.Sprintf("风格库读取失败：%s", r.StyleVaultError)
+	} else {
+		for _, d := range r.LedgerReplay.Drifts {
+			if strings.HasPrefix(d, "风格库读取失败：") {
+				seededStr = d
+				break
+			}
+		}
 	}
 	fmt.Fprintf(w, "  • 文风保险库状态:   %s\n", seededStr)
 	fmt.Fprintln(w, "==================================================================")
@@ -233,11 +249,23 @@ func runBenchCLI(argv []string, defaultDataDir string) int {
 		return 1
 	}
 
+	snapshots, snapErr := s.ListStateSnapshots(ctx, projectID)
+	if snapErr != nil {
+		snapshots = nil
+	}
+
 	protagonist, protErr := s.GetProtagonistEntry(ctx, projectID)
 	styleVault, styleVaultErr := s.GetStyleVault(ctx, projectID)
 	styleVaultSeeded := (styleVault != nil)
 
-	report := engine.RunBenchProbes(project, chapters, hooks, protagonist, styleVaultSeeded)
+	report := engine.RunBenchProbes(project, chapters, hooks, protagonist, styleVaultSeeded, snapshots)
+	if snapErr != nil {
+		report.LedgerReplay.Notes = append(report.LedgerReplay.Notes, fmt.Sprintf("快照读取失败：%v", snapErr))
+		report.LedgerReplay.Clean = false
+	}
+	if styleVaultErr != nil {
+		report.StyleVaultError = styleVaultErr.Error()
+	}
 	if protErr != nil {
 		report.LedgerReplay.Clean = false
 		report.LedgerReplay.Drifts = append(report.LedgerReplay.Drifts, fmt.Sprintf("主角读取失败：%v", protErr))

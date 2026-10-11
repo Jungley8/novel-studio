@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
@@ -36,15 +37,30 @@ func (s *Server) handleProjectBench(w http.ResponseWriter, r *http.Request, proj
 
 	protagonist, _ := s.store.GetProtagonistEntry(ctx, projectID)
 
+	snapshots, snapErr := s.store.ListStateSnapshots(ctx, projectID)
+	if snapErr != nil {
+		snapshots = nil
+	}
+
 	styleVaultSeeded := false
+	var styleVaultErr error
 	if svStore, ok := s.store.(interface {
 		GetStyleVault(ctx context.Context, projectID string) (*domain.StyleVault, error)
 	}); ok {
-		if vault, err := svStore.GetStyleVault(ctx, projectID); err == nil && vault != nil {
+		if vault, err := svStore.GetStyleVault(ctx, projectID); err != nil {
+			styleVaultErr = err
+		} else if vault != nil {
 			styleVaultSeeded = true
 		}
 	}
 
-	report := engine.RunBenchProbes(project, chapters, hooks, protagonist, styleVaultSeeded)
+	report := engine.RunBenchProbes(project, chapters, hooks, protagonist, styleVaultSeeded, snapshots)
+	if snapErr != nil {
+		report.LedgerReplay.Notes = append(report.LedgerReplay.Notes, fmt.Sprintf("快照读取失败：%v", snapErr))
+		report.LedgerReplay.Clean = false
+	}
+	if styleVaultErr != nil {
+		report.StyleVaultError = styleVaultErr.Error()
+	}
 	jsonResponse(w, http.StatusOK, report)
 }
