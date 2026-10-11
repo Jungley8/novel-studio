@@ -157,6 +157,9 @@ func (m *mockChronicleStore) GetCheckpoint(ctx context.Context, projectID string
 func (m *mockChronicleStore) ClearCheckpoint(ctx context.Context, projectID string, chapterIndex int) error {
 	return nil
 }
+func (m *mockChronicleStore) ListNeedsHumanCheckpoints(ctx context.Context) ([]*domain.ChapterCheckpoint, error) {
+	return nil, nil
+}
 func (m *mockChronicleStore) SaveCodexEntry(ctx context.Context, entry *domain.CodexEntry) error {
 	return nil
 }

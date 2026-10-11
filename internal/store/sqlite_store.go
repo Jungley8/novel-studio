@@ -2162,6 +2162,38 @@ func (s *SQLiteStore) ClearCheckpoint(ctx context.Context, projectID string, cha
 	return nil
 }
 
+// ListNeedsHumanCheckpoints 返回全部带 NeedsHuman 审校标记的断点（跨项目，按 updated_at 降序）。
+func (s *SQLiteStore) ListNeedsHumanCheckpoints(ctx context.Context) ([]*domain.ChapterCheckpoint, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT payload_json, updated_at FROM chapter_checkpoints ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list needs human checkpoints: %w", err)
+	}
+	defer rows.Close()
+
+	var result []*domain.ChapterCheckpoint
+	for rows.Next() {
+		var payload string
+		var updatedAt time.Time
+		if err := rows.Scan(&payload, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan checkpoint row: %w", err)
+		}
+		var cp domain.ChapterCheckpoint
+		if err := json.Unmarshal([]byte(payload), &cp); err != nil {
+			return nil, fmt.Errorf("unmarshal checkpoint: %w", err)
+		}
+		if cp.UpdatedAt.IsZero() {
+			cp.UpdatedAt = updatedAt
+		}
+		if cp.AuditReport != nil && cp.AuditReport.NeedsHuman {
+			result = append(result, &cp)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("checkpoint rows: %w", err)
+	}
+	return result, nil
+}
+
 // -------------------------------------------------------------
 // Chapter Intents (章节意图卡) 存储实现
 // -------------------------------------------------------------

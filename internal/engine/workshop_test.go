@@ -268,6 +268,13 @@ func (m *mockCheckpointWorkshopStore) ClearCheckpoint(ctx context.Context, proje
 	return nil
 }
 
+func (m *mockCheckpointWorkshopStore) ListNeedsHumanCheckpoints(ctx context.Context) ([]*domain.ChapterCheckpoint, error) {
+	if m.cp != nil && m.cp.AuditReport != nil && m.cp.AuditReport.NeedsHuman {
+		return []*domain.ChapterCheckpoint{m.cp}, nil
+	}
+	return nil, nil
+}
+
 func (m *mockCheckpointWorkshopStore) GetActivePlan(ctx context.Context, projectID string) (*domain.ActivePlan, error) {
 	if m.activePlanErr != nil {
 		return nil, m.activePlanErr
@@ -2589,6 +2596,115 @@ func TestChapterWorkshop_TechnicalBlocked_SetsNeedsHuman(t *testing.T) {
 		t.Errorf("expected audit issues to contain '技术阻断停线', got %v", res.Audit.Issues)
 	}
 
+	if len(mockStore.chapters) != 0 {
+		t.Errorf("expected 0 chapters committed into store, got %d", len(mockStore.chapters))
+	}
+
+	if mockStore.cp == nil {
+		t.Fatalf("expected checkpoint to be saved on technical blocked")
+	}
+	if mockStore.cp.Phase != domain.CheckpointPhaseDrafted {
+		t.Errorf("expected checkpoint phase DRAFTED on technical blocked, got %s", mockStore.cp.Phase)
+	}
+	if mockStore.cp.AuditReport == nil || !mockStore.cp.AuditReport.NeedsHuman {
+		t.Fatalf("expected checkpoint.AuditReport.NeedsHuman == true, got %v", mockStore.cp.AuditReport)
+	}
+}
+
+func TestChapterWorkshop_SemanticHalted_SavesCheckpointWithNeedsHuman(t *testing.T) {
+	beatsResp := `{
+		"beats": [
+			{"phase": "蓄力压迫", "tension": 6, "action": "反派带队堵截主角洞府", "expectation_broken": "反派预料主角会求饶"},
+			{"phase": "绝地反转", "tension": 9, "action": "主角引动护山大阵反扣杀", "expectation_broken": "反派全部被镇压"}
+		],
+		"state_mutation": {
+			"inventory_delta": "",
+			"power_delta": ""
+		}
+	}`
+
+	// 始终返回 REVISION 审校结果，耗尽重写轮次触发语义停线
+	reviewResp := `{
+		"verdict": "REVISION",
+		"score": 75,
+		"issues": ["情节节奏偏慢，亟需压缩过渡语句"],
+		"suggestions": "加快节奏"
+	}`
+
+	mockClient := &mockWorkshopLLMClient{
+		beatsJSON:   beatsResp,
+		renderDraft: "夜幕低垂。三名黑衣修士逼近洞府门前。林凡指尖轻扣石壁。阵纹骤亮，雷光咆哮如龙！",
+		reviewJSON:  reviewResp,
+		settleJSON:  `{"inventory_delta":"","power_delta":"","character_mutations":[],"evidence":[]}`,
+	}
+
+	mockStore := &mockCheckpointWorkshopStore{
+		mockChronicleStore: &mockChronicleStore{
+			project: &domain.Project{
+				ID:             "p-sem-halt",
+				Title:          "语义停线测试",
+				TargetPlatform: "番茄脑洞",
+			},
+			chapters: []*domain.Chapter{},
+			codexEntries: []*domain.CodexEntry{
+				{
+					ID:           "c-prot-1",
+					ProjectID:    "p-sem-halt",
+					Category:     domain.CategoryCharacter,
+					Archetype:    "PROTAGONIST",
+					TrackingMode: domain.TrackingModeAlwaysInject,
+					Name:         "林凡",
+					Realm:        "练气圆满",
+					Inventory:    "青玉短剑",
+				},
+			},
+		},
+	}
+
+	orch := NewOrchestrator(mockClient)
+	qGate := NewQualityGate(mockClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-sem-halt",
+		ChapterIndex:    1,
+		CoreConflict:    "宗门反派夜袭抢夺古经",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if res.Committed {
+		t.Errorf("expected Committed == false on semantic halt, got true")
+	}
+	if res.TechnicalBlocked {
+		t.Errorf("expected TechnicalBlocked == false on semantic halt, got true")
+	}
+	if res.Audit == nil || !res.Audit.NeedsHuman {
+		t.Fatalf("expected res.Audit.NeedsHuman == true, got %v", res.Audit)
+	}
+
+	// 验证停线落盘的 checkpoint：存在、phase==AUDITED、report.NeedsHuman==true
+	if mockStore.cp == nil {
+		t.Fatalf("expected checkpoint to be saved on semantic halt")
+	}
+	if mockStore.cp.Phase != domain.CheckpointPhaseAudited {
+		t.Errorf("expected checkpoint phase AUDITED on semantic halt, got %s", mockStore.cp.Phase)
+	}
+	if mockStore.cp.AuditReport == nil || !mockStore.cp.AuditReport.NeedsHuman {
+		t.Fatalf("expected checkpoint.AuditReport.NeedsHuman == true, got %v", mockStore.cp.AuditReport)
+	}
+	if mockStore.cp.AuditReport.Verdict != domain.ReviewVerdictRevision {
+		t.Errorf("expected checkpoint.AuditReport.Verdict == REVISION, got %s", mockStore.cp.AuditReport.Verdict)
+	}
+	if mockStore.cp.RewriteLoops != 1 {
+		t.Errorf("expected checkpoint.RewriteLoops == 1, got %d", mockStore.cp.RewriteLoops)
+	}
 	if len(mockStore.chapters) != 0 {
 		t.Errorf("expected 0 chapters committed into store, got %d", len(mockStore.chapters))
 	}

@@ -246,6 +246,9 @@ func (a *AuditReport) ToReviewResult() *ReviewResult {
 }
 
 // CheckpointPhase indicates the progression stage reached in ChapterCheckpoint.
+// Note: 停线状态（技术阻断 / 语义耗尽停线）复用既有 CheckpointPhaseDrafted 与 CheckpointPhaseAudited，
+// 不新增 HALTED 常量，通过 AuditReport.NeedsHuman = true 标记待办。
+// 前端 workbenchActions 对 phase 有分支，resume 对 phase 不感知。
 type CheckpointPhase string
 
 const (

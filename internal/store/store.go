@@ -40,6 +40,7 @@ type Store interface {
 	SaveCheckpoint(ctx context.Context, checkpoint *domain.ChapterCheckpoint) error
 	GetCheckpoint(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, error)
 	ClearCheckpoint(ctx context.Context, projectID string, chapterIndex int) error
+	ListNeedsHumanCheckpoints(ctx context.Context) ([]*domain.ChapterCheckpoint, error)
 
 	// Activity Ledger (内容生产与变更事件账本, append-only)
 	AppendEvent(ctx context.Context, event *activity.ActivityEvent) error

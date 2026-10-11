@@ -854,19 +854,45 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 				Message:     fmt.Sprintf("停线待人工: 章节质检未通过 (评级 %s | 得分 %d)，已达最大重写轮次，拒绝自动入库", auditReport.Verdict, auditReport.Score),
 				TotalTokens: totalUsage.TotalTokens,
 			})
+			// 停线落盘供待办中心查询；resume 对 phase 不感知，语义不变。
+			var beats []domain.SceneBeat
+			var stateMutation domain.StateMutation
+			if beatsOut != nil {
+				beats = beatsOut.Beats
+				stateMutation = beatsOut.StateMutation
+			}
+			_ = w.store.SaveCheckpoint(activity.WithActor(ctx, activity.ActorAIReviewer), &domain.ChapterCheckpoint{
+				ProjectID:     req.ProjectID,
+				ChapterIndex:  req.ChapterIndex,
+				Phase:         domain.CheckpointPhaseAudited,
+				CoreConflict:  req.CoreConflict,
+				Beats:         beats,
+				StateMutation: stateMutation,
+				DraftText:     currentDraft,
+				AuditReport:   auditReport,
+				RewriteLoops:  rewriteLoops,
+			})
 		}
 	}
 
 	if technicalBlocked {
 		// When technical blocked, ensure checkpoint remains strictly at PhaseDrafted (do not advance or archive)
+		// 停线落盘供待办中心查询；resume 对 phase 不感知，语义不变。
+		var beats []domain.SceneBeat
+		var stateMutation domain.StateMutation
+		if beatsOut != nil {
+			beats = beatsOut.Beats
+			stateMutation = beatsOut.StateMutation
+		}
 		_ = w.store.SaveCheckpoint(activity.WithActor(ctx, activity.ActorAIWriter), &domain.ChapterCheckpoint{
 			ProjectID:     req.ProjectID,
 			ChapterIndex:  req.ChapterIndex,
 			Phase:         domain.CheckpointPhaseDrafted,
 			CoreConflict:  req.CoreConflict,
-			Beats:         beatsOut.Beats,
-			StateMutation: beatsOut.StateMutation,
+			Beats:         beats,
+			StateMutation: stateMutation,
 			DraftText:     currentDraft,
+			AuditReport:   auditReport,
 		})
 	}
 

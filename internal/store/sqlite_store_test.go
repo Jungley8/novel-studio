@@ -903,3 +903,94 @@ func TestSQLiteStore_UncommitChapter(t *testing.T) {
 		t.Errorf("expected 灵蛇胆 removed from inventory after rollback, got %s", protAfterUncommit.Inventory)
 	}
 }
+
+func TestSQLiteStore_ListNeedsHumanCheckpoints(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "needs_human_test.db")
+
+	s, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	p := &domain.Project{
+		ID:             "proj-nh",
+		Title:          "待办持久化测试",
+		TargetPlatform: "通用",
+	}
+	if err := s.SaveProject(ctx, p); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	// 1. 保存 2 个 checkpoint（1 带 NeedsHuman 报告、1 普通不带 NeedsHuman 报告）
+	cpNeedsHuman := &domain.ChapterCheckpoint{
+		ProjectID:    "proj-nh",
+		ChapterIndex: 1,
+		Phase:        domain.CheckpointPhaseAudited,
+		CoreConflict: "主角遭遇瓶颈",
+		DraftText:    "手稿1",
+		AuditReport: &domain.AuditReport{
+			Verdict:    domain.ReviewVerdictRevision,
+			Score:      68,
+			NeedsHuman: true,
+			Issues:     []string{"【ESCALATED】重写耗尽"},
+		},
+	}
+	if err := s.SaveCheckpoint(ctx, cpNeedsHuman); err != nil {
+		t.Fatalf("SaveCheckpoint cpNeedsHuman failed: %v", err)
+	}
+
+	cpNormal := &domain.ChapterCheckpoint{
+		ProjectID:    "proj-nh",
+		ChapterIndex: 2,
+		Phase:        domain.CheckpointPhaseDrafted,
+		CoreConflict: "主角顺利突破",
+		DraftText:    "手稿2",
+		AuditReport: &domain.AuditReport{
+			Verdict:    domain.ReviewVerdictAccepted,
+			Score:      92,
+			NeedsHuman: false,
+		},
+	}
+	if err := s.SaveCheckpoint(ctx, cpNormal); err != nil {
+		t.Fatalf("SaveCheckpoint cpNormal failed: %v", err)
+	}
+
+	// 2. 只返回带 NeedsHuman 的断点
+	list, err := s.ListNeedsHumanCheckpoints(ctx)
+	if err != nil {
+		t.Fatalf("ListNeedsHumanCheckpoints failed: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 checkpoint with NeedsHuman, got %d", len(list))
+	}
+	if list[0].ChapterIndex != 1 {
+		t.Errorf("expected chapter 1, got %d", list[0].ChapterIndex)
+	}
+	if list[0].AuditReport == nil || !list[0].AuditReport.NeedsHuman {
+		t.Errorf("expected NeedsHuman == true, got %v", list[0].AuditReport)
+	}
+
+	// 3. 坏 JSON 行行为：严格 Fail-Closed 返回错误以维护数据完整性
+	// 通过直接执行 SQL 写入损坏的 JSON 数据行
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db failed: %v", err)
+	}
+	_, err = rawDB.ExecContext(ctx, `INSERT INTO chapter_checkpoints (project_id, chapter_index, phase, core_conflict, payload_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		"proj-nh", 3, "DRAFTED", "", "{corrupt-payload", time.Now())
+	rawDB.Close()
+	if err != nil {
+		t.Fatalf("direct insert corrupt row failed: %v", err)
+	}
+
+	_, err = s.ListNeedsHumanCheckpoints(ctx)
+	if err == nil {
+		t.Fatalf("expected error on corrupt JSON payload (fail-closed), got nil")
+	}
+	if !strings.Contains(err.Error(), "unmarshal checkpoint") {
+		t.Errorf("expected error message mentioning unmarshal checkpoint, got: %v", err)
+	}
+}
