@@ -4,9 +4,9 @@
   "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --no-open",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview --no-open"
   },
   "dependencies": {
     "lucide-vue-next": "^0.475.0",
