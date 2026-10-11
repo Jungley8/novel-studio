@@ -19,15 +19,15 @@
 
 ---
 
-## 全局 God File 清理排期（后续优化）
+## 全局 God File 清理（已完成）
 
-| # | 模块路径 | 行数 | 测试? | 热度 | 症状数 | 优先级 | 状态 |
-|---|---------|------|-------|------|--------|--------|------|
-| 5 | `internal/store/sqlite_store.go` | 2890 | ✅ 78% | 🔥🔥🔥 | 4 (God file, 庞大单体) | P1 | 待开始 |
-| 6 | `web/src/views/WorkbenchView.vue` | 1582 | ❌ | 🔥🔥🔥 | 5 (巨型视图组件) | P1 | 待开始 |
-| 7 | `internal/engine/orchestrator.go` | 1456 | ✅ 78% | 🔥🔥 | 3 (God file, Prompt 拼接) | P2 | 待开始 |
-| 8 | `web/src/views/GraphView.vue` | 1073 | ❌ | 🔥🔥 | 3 (大单体视图) | P2 | 待开始 |
-| 9 | `internal/server/handlers_workshop.go` | 1020 | ✅ 35% | 🔥🔥 | 3 (庞大 Handler) | P2 | 待开始 |
+| # | 模块路径 | 拆分结果 | 测试? | 优先级 | 状态 |
+|---|---------|---------|-------|--------|------|
+| 5 | `internal/store/sqlite_store.go` | 4946 → 14 文件（核心 72 / migrate 451 / chapter 901 / codex 783 / forecast 596 / scene 416 / automation 387 / activity 278 / studio 238 / checkpoint 214 / project 212 / memory 201 / intent 179 / hook 177）| ✅ | P1 | 🟢 已完成（agy-novel16-storesplit，声明集零差异 + 全量 race）|
+| 6 | `web/src/views/WorkbenchView.vue` | 1656 → 260 + `components/workbench/` 2 组件（StepsPanel 823 / CanvasPanel 672）| ❌ | P1 | 🟢 已完成（agy-novel16-wbview，模板逐字节 + 引用审计零悬空）|
+| 7 | `internal/engine/orchestrator.go` | 1749 → 7 文件（核心 30 / matrix 459 / beats 371 / render 333 / codex 256 / review 187 / framework 172）| ✅ | P2 | 🟢 已完成（agy-novel16-orchsplit，声明集零差异 + 全量 race）|
+| 8 | `web/src/views/GraphView.vue` | 1073 → 795 + `components/graph/` 2 组件（DetailDrawer 231 / CreateRelationModal 159）| ❌ | P2 | 🟢 已完成（agy-novel16-graphview，模板逐字节 + 桥接行清单）|
+| 9 | `internal/server/handlers_workshop.go` | 1095 → 5 文件（核心 572 / prompt 233 / assist 118 / chat 116 / inline 92）| ✅ | P2 | 🟢 已完成（agy-novel16-wshsplit，声明集零差异 + 全量 race）|
 
 ---
 
@@ -54,7 +54,8 @@
 
 - 🟢 **已精炼完成**: 5/5 核心双轨制与割裂架构缺陷（主角、势力阵营、世界公理、关键人物影子、种子伏笔冗余）
 - 🟢 **AI-First 改造**: 10/10 交付完成（编排器引擎/CLI/API、框架级级联、对话持久化全栈、成本面板、默认批产参数、停线待办中心、pipeline 控制台、排程/无人值守）
+- 🟢 **God File 拆分**: 5/5 完成（sqlite_store 14 文件 / WorkbenchView 3 文件 / orchestrator 7 文件 / GraphView 3 文件 / handlers_workshop 5 文件；纯搬迁，声明集/模板零差异验证）
 - 🟡 **进行中**: 0
-- 🔴 **待排期**: 5 模块 God File 拆分（见上表）
+- 🔴 **待排期**: 无（全部交付完成）
 - **Go 测试**: `go test ./... -race -count=1` 全绿通过
 - **前端构建**: `pnpm --dir web build` 纯净构建通过
