@@ -1553,6 +1553,7 @@ func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, cha
 	}
 
 	// 6. Restore world state and plot hooks
+	var rollbackTrail []string
 	if chapterIndex >= 2 {
 		// chapterIndex >= 2 且快照存在：由第 N-1 章快照精确还原主角状态与伏笔状态
 		if snap.ProtagonistJSON != "" && snap.ProtagonistJSON != "{}" && snap.ProtagonistJSON != "null" {
@@ -1649,9 +1650,11 @@ func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, cha
 		// 伏笔部分：第 1 章时快照(0)不存在，保留现有的"已回收→OPEN"还原 + FERMENTING 重算（maxRemaining=0 时 FERMENTING 会全归 OPEN，现逻辑正确）。
 		protagonist, _ := s.getProtagonistTx(ctx, tx, projectID)
 		if protagonist != nil {
-			if _, err := rollbackStateMutation(protagonist, c.StateMutation); err != nil {
-				return nil, nil, fmt.Errorf("rollback protagonist mutation: %w", err)
+			trail, rerr := rollbackStateMutation(protagonist, c.StateMutation)
+			if rerr != nil {
+				return nil, nil, fmt.Errorf("rollback protagonist mutation: %w", rerr)
 			}
+			rollbackTrail = trail
 			protagonist.UpdatedAt = time.Now()
 			var levelJSON, itemsJSON string
 			if protagonist.StructuredLevel != nil {
@@ -1714,9 +1717,13 @@ func (s *SQLiteStore) UncommitChapter(ctx context.Context, projectID string, cha
 
 	// 8. Ledger: chapter.uncommitted keeps the full withdrawn draft inspectable.
 	beforeBytes, _ := json.Marshal(c)
+	summary := fmt.Sprintf("正文 %d 字回退至断点，伏笔回收已还原", len([]rune(c.Content)))
+	if len(rollbackTrail) > 0 {
+		summary += "；状态回滚明细: " + strings.Join(rollbackTrail, "；")
+	}
 	uncommitEvent := newEvent(ctx, projectID, activity.EntityChapter, c.ID, chapterIndex,
 		activity.EventChapterUncommitted, fmt.Sprintf("第 %d 章已撤回为草稿", chapterIndex),
-		fmt.Sprintf("正文 %d 字回退至断点，伏笔回收已还原", len([]rune(c.Content))))
+		summary)
 	withTextSnapshots(uncommitEvent, string(beforeBytes), "", []string{"content", "status"})
 	uncommitEvent.ExcerptBefore = activity.Excerpt(c.Content, activity.ExcerptRunes)
 	if err := insertEvent(ctx, tx, uncommitEvent); err != nil {
@@ -3496,11 +3503,13 @@ func (s *SQLiteStore) Close() error {
 // Clean switch (pre-v1.0, no dual-track, no migration code): the legacy "maxChapter:lastID:hookCount"
 // fingerprint never carries a "v2:" prefix, so any stored legacy fingerprint mismatches on first
 // compare and goes stale fail-closed (regenerate rather than hallucinate injections).
-func (s *SQLiteStore) ComputeFingerprint(ctx context.Context, projectID string) string {
+func (s *SQLiteStore) ComputeFingerprint(ctx context.Context, projectID string) (string, error) {
 	var frameworkRaw sql.NullString
-	_ = s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(framework_json, '')
-		FROM projects WHERE id = ?`, projectID).Scan(&frameworkRaw)
+		FROM projects WHERE id = ?`, projectID).Scan(&frameworkRaw); err != nil {
+		return "", fmt.Errorf("compute fingerprint: query framework: %w", err)
+	}
 	fwStr := ""
 	if frameworkRaw.Valid {
 		fwStr = frameworkRaw.String
@@ -3508,25 +3517,31 @@ func (s *SQLiteStore) ComputeFingerprint(ctx context.Context, projectID string) 
 	fwSum := sha256.Sum256([]byte(fwStr))
 	fwHex := hex.EncodeToString(fwSum[:])[:16]
 
-	var identities []string
-	if rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, created_chapter, target_chapter
-		FROM plot_hooks WHERE project_id = ?`, projectID); err == nil {
-		for rows.Next() {
-			var id string
-			var created, target int
-			if err := rows.Scan(&id, &created, &target); err != nil {
-				continue
-			}
-			identities = append(identities, fmt.Sprintf("%s:%d:%d", id, created, target))
+		FROM plot_hooks WHERE project_id = ?`, projectID)
+	if err != nil {
+		return "", fmt.Errorf("compute fingerprint: query hooks: %w", err)
+	}
+	defer rows.Close()
+
+	var identities []string
+	for rows.Next() {
+		var id string
+		var created, target int
+		if err := rows.Scan(&id, &created, &target); err != nil {
+			return "", fmt.Errorf("compute fingerprint: scan hook: %w", err)
 		}
-		_ = rows.Close()
+		identities = append(identities, fmt.Sprintf("%s:%d:%d", id, created, target))
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("compute fingerprint: hooks rows: %w", err)
 	}
 	sort.Strings(identities)
 	hooksSum := sha256.Sum256([]byte(strings.Join(identities, "|")))
 	hooksHex := hex.EncodeToString(hooksSum[:])[:16]
 
-	return fmt.Sprintf("v2:%s:%s", fwHex, hooksHex)
+	return fmt.Sprintf("v2:%s:%s", fwHex, hooksHex), nil
 }
 
 // forecastStaleByFingerprint reports whether an active forecast must transition to stale under v2 rules.
@@ -3569,7 +3584,11 @@ func (s *SQLiteStore) SaveForecast(ctx context.Context, f *domain.Forecast) erro
 		f.ID = fmt.Sprintf("fc_%d", time.Now().UnixNano())
 	}
 	if f.Fingerprint == "" {
-		f.Fingerprint = s.ComputeFingerprint(ctx, f.ProjectID)
+		fp, err := s.ComputeFingerprint(ctx, f.ProjectID)
+		if err != nil {
+			return fmt.Errorf("compute fingerprint for save forecast: %w", err)
+		}
+		f.Fingerprint = fp
 	}
 	if f.Status == "" {
 		f.Status = domain.ForecastStatusActive
@@ -3653,8 +3672,9 @@ func (s *SQLiteStore) LoadForecast(ctx context.Context, projectID, forecastID st
 
 	// Fingerprint check: v2 premise fingerprint plus fail-closed guard for history
 	// rewritten below base (see forecastStaleByFingerprint). Normal execution never stales.
-	currFP := s.ComputeFingerprint(ctx, projectID)
-	if f.Status == domain.ForecastStatusActive && s.forecastStaleByFingerprint(ctx, projectID, &f, currFP) {
+	currFP, fpErr := s.ComputeFingerprint(ctx, projectID)
+	// 指纹查询失败必须 Fail-Closed 判 stale，不许用残缺计算冒充合法指纹
+	if f.Status == domain.ForecastStatusActive && (fpErr != nil || s.forecastStaleByFingerprint(ctx, projectID, &f, currFP)) {
 		f.Status = domain.ForecastStatusStale
 		_, _ = s.db.ExecContext(ctx, `UPDATE narrative_forecasts SET status = ? WHERE id = ?`, domain.ForecastStatusStale, f.ID)
 		_, _ = s.db.ExecContext(ctx, `
@@ -3707,10 +3727,11 @@ func (s *SQLiteStore) ListForecasts(ctx context.Context, projectID string) ([]*d
 	_ = rows.Close()
 
 	if hasActive {
-		currFP := s.ComputeFingerprint(ctx, projectID)
+		currFP, fpErr := s.ComputeFingerprint(ctx, projectID)
 		now := time.Now()
 		for _, f := range list {
-			if f.Status == domain.ForecastStatusActive && s.forecastStaleByFingerprint(ctx, projectID, f, currFP) {
+			// 指纹查询失败必须 Fail-Closed 判 stale，不许用残缺计算冒充合法指纹
+			if f.Status == domain.ForecastStatusActive && (fpErr != nil || s.forecastStaleByFingerprint(ctx, projectID, f, currFP)) {
 				f.Status = domain.ForecastStatusStale
 				_, _ = s.db.ExecContext(ctx, `UPDATE narrative_forecasts SET status = ? WHERE id = ?`, domain.ForecastStatusStale, f.ID)
 				_, _ = s.db.ExecContext(ctx, `

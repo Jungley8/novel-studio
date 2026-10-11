@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/domain"
 )
 
@@ -1245,5 +1246,82 @@ func TestSQLiteStore_UncommitChapter_DeleteCodexProgressionsFailureRollback(t *t
 	storedCp, _ := s.GetCheckpoint(ctx, proj.ID, 1)
 	if storedCp != nil && storedCp.Phase == domain.CheckpointPhaseDrafted {
 		t.Errorf("unexpected draft checkpoint committed despite error: %+v", storedCp)
+	}
+}
+
+func TestSQLiteStore_UncommitChapter_RollbackTrailSurfacedInEvent(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test_uncommit_trail_surfaced.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	proj := &domain.Project{
+		ID:    "proj-trail-surfaced",
+		Title: "回滚明细可见化测试",
+	}
+	if err := s.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	prot := &domain.CodexEntry{
+		ID:        "codex_trail_pro",
+		ProjectID: proj.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "林尘",
+		Realm:     "练气一层",
+		Inventory: "粗布衣", // 明确不含"幻影剑"
+	}
+	if err := s.SaveCodexEntry(ctx, prot); err != nil {
+		t.Fatalf("SaveCodexEntry failed: %v", err)
+	}
+
+	ch1 := &domain.Chapter{
+		ID:           "ch_trail_1",
+		ProjectID:    proj.ID,
+		ChapterIndex: 1,
+		Title:        "第一章 异变",
+		Content:      "天地变色...",
+		StateMutation: domain.StateMutation{
+			InventoryDelta: "-幻影剑",
+		},
+	}
+	if _, err := s.CommitChapter(ctx, proj.ID, ch1); err != nil {
+		t.Fatalf("CommitChapter failed: %v", err)
+	}
+
+	if _, _, err := s.UncommitChapter(ctx, proj.ID, 1); err != nil {
+		t.Fatalf("UncommitChapter failed: %v", err)
+	}
+
+	events, _, err := s.ListEvents(ctx, activity.EventQuery{ProjectID: proj.ID})
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+
+	var uncommitEv *activity.ActivityEvent
+	for _, ev := range events {
+		if ev.EventType == activity.EventChapterUncommitted {
+			uncommitEv = ev
+			break
+		}
+	}
+	if uncommitEv == nil {
+		t.Fatalf("expected EventChapterUncommitted event, but none found")
+	}
+
+	if !strings.Contains(uncommitEv.Summary, "状态回滚明细") {
+		t.Errorf("expected Summary to contain '状态回滚明细', got %q", uncommitEv.Summary)
+	}
+	if !strings.Contains(uncommitEv.Summary, "回滚跳过") {
+		t.Errorf("expected Summary to contain '回滚跳过', got %q", uncommitEv.Summary)
+	}
+	if !strings.Contains(uncommitEv.Summary, "幻影剑") {
+		t.Errorf("expected Summary to contain '幻影剑', got %q", uncommitEv.Summary)
 	}
 }

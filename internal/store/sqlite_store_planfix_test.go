@@ -38,6 +38,10 @@ func TestSQLiteStore_GetActivePlan_LoadForecastErrorBubbles(t *testing.T) {
 		t.Fatalf("CommitChapter 1 failed: %v", err)
 	}
 
+	fp, err := s.ComputeFingerprint(ctx, projID)
+	if err != nil {
+		t.Fatalf("ComputeFingerprint failed: %v", err)
+	}
 	fc := &domain.Forecast{
 		ID:          "fc_planfix_1",
 		ProjectID:   projID,
@@ -45,7 +49,7 @@ func TestSQLiteStore_GetActivePlan_LoadForecastErrorBubbles(t *testing.T) {
 		Divergence:  "分歧验证",
 		BranchCount: 2,
 		Horizon:     3,
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: fp,
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{ID: "b1", BeatsSummary: "节拍1"},
