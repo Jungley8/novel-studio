@@ -49,7 +49,7 @@
     </div>
 
     <!-- 顶层指标汇总卡片 -->
-    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
       <div class="p-3.5 bg-atelier-900 border border-atelier-750 rounded-xl shadow-atelier-sm">
         <div class="text-[11px] font-mono text-ink-400">作品总数</div>
         <div class="text-lg font-serif font-bold text-ink-50 mt-1">{{ totalProjects }} 部</div>
@@ -80,6 +80,14 @@
           <span class="text-[9px] text-ink-400 font-normal">全库累计</span>
         </div>
         <div class="text-lg font-serif font-bold text-ink-50 mt-1">{{ totalTokens.toLocaleString() }}</div>
+      </div>
+
+      <div class="p-3.5 bg-atelier-900 border border-atelier-750 rounded-xl shadow-atelier-sm">
+        <div class="text-[11px] font-mono text-ink-400 flex items-center justify-between">
+          <span>预估费用</span>
+          <span class="text-[9px] text-ink-400 font-normal">全库累计</span>
+        </div>
+        <div class="text-lg font-serif font-bold text-ink-50 mt-1">${{ totalCostUSD.toFixed(4) }}</div>
       </div>
 
       <div class="p-3.5 bg-atelier-900 border border-atelier-750 rounded-xl shadow-atelier-sm">
@@ -139,7 +147,7 @@
               <th class="py-3 px-4 font-semibold">当前章 / 进度</th>
               <th class="py-3 px-4 font-semibold text-center">OPEN 钩数</th>
               <th class="py-3 px-4 font-semibold text-center">超期钩数 (钩债务)</th>
-              <th class="py-3 px-4 font-semibold text-center">Token 花费</th>
+              <th class="py-3 px-4 font-semibold text-center">Token / 预估费用</th>
               <th class="py-3 px-4 font-semibold text-center">评审通过率</th>
               <th class="py-3 px-4 font-semibold text-right">操作</th>
             </tr>
@@ -199,9 +207,14 @@
                 </span>
               </td>
 
-              <!-- Token 花费 -->
-              <td class="py-3.5 px-4 text-center font-mono text-ink-200">
-                {{ item.token_usage > 0 ? item.token_usage.toLocaleString() : '0' }}
+              <!-- Token 与预估费用 (双行紧凑显示，保持表格不溢出) -->
+              <td class="py-3.5 px-4 text-center font-mono">
+                <div class="text-ink-200">
+                  {{ item.token_usage > 0 ? item.token_usage.toLocaleString() : '0' }}
+                </div>
+                <div class="text-[11px] text-ink-400 mt-0.5">
+                  ${{ (item.estimated_cost_usd || 0).toFixed(4) }}
+                </div>
               </td>
 
               <!-- 评审通过率 -->
@@ -256,6 +269,9 @@ const totalOverdueHooks = computed(() => {
 });
 const totalTokens = computed(() => {
   return libraryItems.value.reduce((acc, curr) => acc + (curr.token_usage || 0), 0);
+});
+const totalCostUSD = computed(() => {
+  return libraryItems.value.reduce((acc, curr) => acc + (curr.estimated_cost_usd || 0), 0);
 });
 const avgReviewPassRate = computed(() => {
   const withChapters = libraryItems.value.filter(item => (item.archived_chapters || 0) > 0);

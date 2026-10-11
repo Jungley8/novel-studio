@@ -31,6 +31,9 @@ type StudioLibraryItem struct {
 	OpenHooks        int     `json:"open_hooks"`
 	OverdueHooks     int     `json:"overdue_hooks"`
 	TokenUsage       int     `json:"token_usage"`
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	EstimatedCostUSD float64 `json:"estimated_cost_usd"`
 	ReviewPassRate   float64 `json:"review_pass_rate"`
 }
 
@@ -135,15 +138,21 @@ func (s *Server) handleStudioLibrary(w http.ResponseWriter, r *http.Request) {
 			passRate = float64(passedCount) / float64(archivedCount)
 		}
 
-		// Sum token usage from activity events
+		// Sum token usage and estimated cost from activity events.
+		// 口径说明：聚合基于最近 500 条事件（ListEvents Limit 500 现状），非全量历史。
+		promptTokens := 0
+		completionTokens := 0
 		totalTokens := 0
 		if events, _, err := s.store.ListEvents(ctx, activity.EventQuery{ProjectID: snap.project.ID, Limit: 500}); err == nil {
 			for _, ev := range events {
 				if ev.TokenUsage != "" {
-					var tu struct {
-						TotalTokens int `json:"total_tokens"`
-					}
+					var tu engine.TokenUsage
 					if err := json.Unmarshal([]byte(ev.TokenUsage), &tu); err == nil {
+						if tu.TotalTokens == 0 && (tu.PromptTokens > 0 || tu.CompletionTokens > 0) {
+							tu.TotalTokens = tu.PromptTokens + tu.CompletionTokens
+						}
+						promptTokens += tu.PromptTokens
+						completionTokens += tu.CompletionTokens
 						totalTokens += tu.TotalTokens
 					}
 				}
@@ -163,7 +172,14 @@ func (s *Server) handleStudioLibrary(w http.ResponseWriter, r *http.Request) {
 			OpenHooks:        openHooks,
 			OverdueHooks:     overdueHooks,
 			TokenUsage:       totalTokens,
-			ReviewPassRate:   passRate,
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			EstimatedCostUSD: engine.EstimateCostUSD(engine.TokenUsage{
+				PromptTokens:     promptTokens,
+				CompletionTokens: completionTokens,
+				TotalTokens:      totalTokens,
+			}),
+			ReviewPassRate: passRate,
 		})
 	}
 
