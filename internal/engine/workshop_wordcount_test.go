@@ -21,6 +21,9 @@ type mockWordcountLLMClient struct {
 }
 
 func (m *mockWordcountLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	if strings.Contains(systemPrompt, "状态对账") {
+		return `{"consistent":true,"reconciliation_required":false,"observations":[]}`, nil
+	}
 	if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
 		if m.settleJSON != "" {
 			return m.settleJSON, nil

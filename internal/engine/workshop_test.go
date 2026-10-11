@@ -22,9 +22,16 @@ type mockWorkshopLLMClient struct {
 	suggestConflictText  string
 	suggestConflictCalls int
 	capturedBeatsPrompt  string
+	validationJSON       string
 }
 
 func (m *mockWorkshopLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	if strings.Contains(systemPrompt, "状态对账") {
+		if m.validationJSON != "" {
+			return m.validationJSON, nil
+		}
+		return `{"consistent":true,"reconciliation_required":false,"observations":[]}`, nil
+	}
 	if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
 		if m.settleJSON != "" {
 			return m.settleJSON, nil
@@ -294,6 +301,9 @@ type fakeQualityGateFailClosedLLMClient struct {
 }
 
 func (f *fakeQualityGateFailClosedLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	if strings.Contains(systemPrompt, "状态对账") {
+		return `{"consistent":true,"reconciliation_required":false,"observations":[]}`, nil
+	}
 	if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
 		if f.settleJSON != "" {
 			return f.settleJSON, nil
@@ -743,6 +753,9 @@ type fakeRewriteSettlerClient struct {
 }
 
 func (c *fakeRewriteSettlerClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	if strings.Contains(systemPrompt, "状态对账") {
+		return `{"consistent":true,"reconciliation_required":false,"observations":[]}`, nil
+	}
 	if strings.Contains(systemPrompt, "精修专家") {
 		return c.draft2Text, nil
 	}
@@ -1141,6 +1154,9 @@ func (f *fakeSummaryWorkshopLLMClient) ChatCompletion(ctx context.Context, model
 			"unresolved": "太上长老暗中勾结魔道，乱星海魔灾爆发的预兆已然浮现",
 			"text": "【发生】林凡初入仙门连破死局，于宗门大比夺魁并反杀执法堂叛逆\\n【留下】成功晋升内门并获古经认可，但得罪了宗门隐世太上长老\\n【未回收】太上长老暗中勾结魔道，乱星海魔灾爆发的预兆已然浮现"
 		}` + "\n```", nil
+	}
+	if strings.Contains(systemPrompt, "状态对账") {
+		return `{"consistent":true,"reconciliation_required":false,"observations":[]}`, nil
 	}
 	if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
 		if f.settleJSON != "" {
