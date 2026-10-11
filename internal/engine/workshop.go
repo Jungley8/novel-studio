@@ -860,6 +860,19 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		}
 	}
 
+	if auditReport != nil && len(auditReport.ResolvedHookClaims) > 0 {
+		validIDs, rejected := FilterResolvedHookClaims(auditReport.ResolvedHookClaims, horizon.AllActiveHooks, currentDraft)
+		auditReport.ResolvedHookIDs = validIDs
+		for _, r := range rejected {
+			auditReport.Issues = append(auditReport.Issues,
+				fmt.Sprintf("【伏笔兑现证据不足】ID %q 回收声明被拒（%s）", r.Claim.ID, r.Reason))
+		}
+		if len(rejected) > 0 {
+			emit(WorkshopEvent{Phase: PhaseDrafted,
+				Message: fmt.Sprintf("伏笔回收证据门：通过 %d / 声明 %d", len(validIDs), len(auditReport.ResolvedHookClaims))})
+		}
+	}
+
 	// Cost estimation: ~$0.00014 per 1k prompt tokens, ~$0.00028 per 1k completion tokens
 	estimatedCostUSD := EstimateCostUSD(totalUsage)
 

@@ -224,21 +224,28 @@ type ReviewResult struct {
 	ReviewedAt      time.Time     `json:"reviewed_at"`
 }
 
+// HookResolutionClaim 伏笔回收声明：reviewer 提出的回收 ID + 正文兑现引用（供证据门校验）。
+type HookResolutionClaim struct {
+	ID    string `json:"id"`
+	Quote string `json:"quote"`
+}
+
 // AuditReport unifies statistical heuristic metrics and semantic editor review verdicts into a single seam.
 type AuditReport struct {
-	Verdict            ReviewVerdict `json:"verdict"`
-	Score              int           `json:"score"` // 1-100
-	BurstinessScore    int           `json:"burstiness_score"`
-	HitBannedWords     []string      `json:"hit_banned_words"`
-	DialogueRatio      float64       `json:"dialogue_ratio,omitempty"`
-	ParagraphVariance  int           `json:"paragraph_variance,omitempty"`
-	TopRepeatedNgrams  []string      `json:"top_repeated_ngrams,omitempty"`
-	ExclamationDensity float64       `json:"exclamation_density,omitempty"`
-	NeedsHuman         bool          `json:"needs_human,omitempty"`
-	Issues             []string      `json:"issues"`
-	Suggestions        string        `json:"suggestions"`
-	ResolvedHookIDs    []string      `json:"resolved_hook_ids,omitempty"`
-	ReviewedAt         time.Time     `json:"reviewed_at"`
+	Verdict            ReviewVerdict         `json:"verdict"`
+	Score              int                   `json:"score"` // 1-100
+	BurstinessScore    int                   `json:"burstiness_score"`
+	HitBannedWords     []string              `json:"hit_banned_words"`
+	DialogueRatio      float64               `json:"dialogue_ratio,omitempty"`
+	ParagraphVariance  int                   `json:"paragraph_variance,omitempty"`
+	TopRepeatedNgrams  []string              `json:"top_repeated_ngrams,omitempty"`
+	ExclamationDensity float64               `json:"exclamation_density,omitempty"`
+	NeedsHuman         bool                  `json:"needs_human,omitempty"`
+	Issues             []string              `json:"issues"`
+	Suggestions        string                `json:"suggestions"`
+	ResolvedHookIDs    []string              `json:"resolved_hook_ids,omitempty"`
+	ResolvedHookClaims []HookResolutionClaim `json:"resolved_hook_claims,omitempty"`
+	ReviewedAt         time.Time             `json:"reviewed_at"`
 }
 
 func (a *AuditReport) ToReviewResult() *ReviewResult {

@@ -62,7 +62,7 @@ func TestReviewCourt_ChiefJudge_FailClosedGuard(t *testing.T) {
 			"score": 90,
 			"issues": [],
 			"suggestions": "逻辑因果严密，节拍履约良好",
-			"resolved_hook_ids": ["hook-101"]
+			"resolved_hooks": [{"id": "hook-101", "quote": "长街风冷。林玄按住剑柄，剑光骤然暴起"}]
 		}`,
 		styleResp: `{
 			"verdict": "REVISION_NEEDED",
@@ -128,6 +128,9 @@ func TestReviewCourt_ChiefJudge_FailClosedGuard(t *testing.T) {
 	if len(report.ResolvedHookIDs) != 1 || report.ResolvedHookIDs[0] != "hook-101" {
 		t.Errorf("expected resolved hook-101, got %v", report.ResolvedHookIDs)
 	}
+	if len(report.ResolvedHookClaims) != 1 || report.ResolvedHookClaims[0].ID != "hook-101" {
+		t.Errorf("expected resolved hook claim hook-101, got %v", report.ResolvedHookClaims)
+	}
 }
 
 // TestReviewCourt_ChiefJudge_UnanimousAccept verifies that when all three divisions agree on ACCEPTED >= 80,
@@ -139,7 +142,7 @@ func TestReviewCourt_ChiefJudge_UnanimousAccept(t *testing.T) {
 			"score": 85,
 			"issues": [],
 			"suggestions": "逻辑顺畅",
-			"resolved_hook_ids": []
+			"resolved_hooks": []
 		}`,
 		styleResp: `{
 			"verdict": "ACCEPTED",
@@ -282,7 +285,7 @@ func TestReviewCourt_IndividualDivisions(t *testing.T) {
 			"score": 88,
 			"issues": ["伏笔暂未闭环"],
 			"suggestions": "可在下一章展开",
-			"resolved_hook_ids": ["h1"]
+			"resolved_hooks": [{"id": "h1", "quote": "草稿文本内容足够八个字以上"}]
 		}`,
 		styleResp: `{
 			"verdict": "ACCEPTED",
@@ -309,8 +312,8 @@ func TestReviewCourt_IndividualDivisions(t *testing.T) {
 	if lRes.DivisionName != DivisionLogic || lRes.Verdict != domain.ReviewVerdictAccepted || lRes.Score != 88 {
 		t.Errorf("unexpected LogicDivision result: %+v", lRes)
 	}
-	if len(lRes.ResolvedHookIDs) != 1 || lRes.ResolvedHookIDs[0] != "h1" {
-		t.Errorf("unexpected resolved hooks: %v", lRes.ResolvedHookIDs)
+	if len(lRes.ResolvedHooks) != 1 || lRes.ResolvedHooks[0].ID != "h1" {
+		t.Errorf("unexpected resolved hooks: %v", lRes.ResolvedHooks)
 	}
 	if lUsage.TotalTokens <= 0 || lUsage.PromptTokens+lUsage.CompletionTokens != lUsage.TotalTokens {
 		t.Errorf("inconsistent logic division token accounting: %+v", lUsage)
