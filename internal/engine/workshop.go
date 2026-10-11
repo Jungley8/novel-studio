@@ -30,6 +30,10 @@ const (
 	PhaseComplete  WorkshopPhase = "COMPLETE"
 )
 
+// WordCountRevisionFloor 生产行为门：低于目标此比例触发定向扩写重写。
+// 与 BenchWordCountPassRatio（评测常量）刻意解耦——语义不同：一个驱动生产行为，一个供 bench 评判。
+const WordCountRevisionFloor = 0.8
+
 // WorkshopEvent carries real-time streaming progress to SSE or CLI consumers.
 type WorkshopEvent struct {
 	Phase        WorkshopPhase       `json:"phase"`
@@ -697,7 +701,34 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 
 	// 5. Targeted Rewrite Loop if revision needed
 	currentDraft := draftText
-	for auditReport.Verdict == domain.ReviewVerdictRevision && rewriteLoops < req.MaxRewriteLoops {
+	wordcountUnderTarget := func() bool {
+		if req.WordsTarget <= 0 {
+			return false
+		}
+		return float64(len([]rune(currentDraft)))/float64(req.WordsTarget) < WordCountRevisionFloor
+	}
+	appendWordcountIssue := func(report *domain.AuditReport, triggered bool) {
+		if report == nil {
+			return
+		}
+		for _, iss := range report.Issues {
+			if strings.HasPrefix(iss, "【字数遥测】") {
+				return // 前缀去重：每份报告最多一条字数 issue
+			}
+		}
+		words := len([]rune(currentDraft))
+		ratio := float64(words) / float64(req.WordsTarget) * 100
+		if triggered {
+			report.Issues = append(report.Issues, fmt.Sprintf("【字数遥测】实际 %d 字低于目标 %d 字的 80%%（%.1f%%），已触发定向扩写", words, req.WordsTarget, ratio))
+		} else {
+			report.Issues = append(report.Issues, fmt.Sprintf("【字数遥测】实际 %d 字低于目标 %d 字的 80%% 及格线（%.1f%%）", words, req.WordsTarget, ratio))
+		}
+	}
+	if wordcountUnderTarget() && req.MaxRewriteLoops > 0 {
+		appendWordcountIssue(auditReport, true)
+	}
+
+	for (auditReport.Verdict == domain.ReviewVerdictRevision || wordcountUnderTarget()) && rewriteLoops < req.MaxRewriteLoops {
 		rewriteLoops++
 		emit(WorkshopEvent{
 			Phase:       PhaseRewriting,
@@ -720,6 +751,9 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		if aerr == nil {
 			auditReport = newAudit
 			addUsage(auditUsage)
+			if wordcountUnderTarget() {
+				appendWordcountIssue(auditReport, true) // 让下一轮重写看到字数指令
+			}
 		}
 
 		// Save checkpoint for rewrite loop
@@ -864,6 +898,36 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			auditReport.Issues = append(auditReport.Issues, intentWarning)
 		}
 	}
+	// 压缩警告与状态对账跨重写存活：重写复检会整体替换 auditReport，此处按来源重挂（精确去重）。
+	if auditReport != nil && compactionWarning != "" {
+		hasWarn := false
+		for _, iss := range auditReport.Issues {
+			if iss == compactionWarning {
+				hasWarn = true
+				break
+			}
+		}
+		if !hasWarn {
+			auditReport.Issues = append(auditReport.Issues, compactionWarning)
+		}
+	}
+	if auditReport != nil && len(unresolvedObservations) > 0 {
+		var obsParts []string
+		for _, o := range unresolvedObservations {
+			obsParts = append(obsParts, fmt.Sprintf("[%s] %s", o.Code, o.Summary))
+		}
+		statusIssue := fmt.Sprintf("【状态对账】%s", strings.Join(obsParts, "；"))
+		hasWarn := false
+		for _, iss := range auditReport.Issues {
+			if iss == statusIssue {
+				hasWarn = true
+				break
+			}
+		}
+		if !hasWarn {
+			auditReport.Issues = append(auditReport.Issues, statusIssue)
+		}
+	}
 
 	if auditReport != nil && len(auditReport.ResolvedHookClaims) > 0 {
 		validIDs, rejected := FilterResolvedHookClaims(auditReport.ResolvedHookClaims, horizon.AllActiveHooks, currentDraft)
@@ -891,9 +955,9 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		Phase:   PhaseDrafted,
 		Message: fmt.Sprintf("字数遥测：实际 %d 字 / 目标 %d 字（%.1f%%）", actualWords, targetWords, ratio*100),
 	})
-	underTarget := ratio < BenchWordCountPassRatio
-	if underTarget && auditReport != nil {
-		auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【字数遥测】实际 %d 字低于目标 %d 字的 80%% 及格线（%.1f%%）", actualWords, targetWords, ratio*100))
+	underTarget := targetWords > 0 && ratio < BenchWordCountPassRatio
+	if underTarget {
+		appendWordcountIssue(auditReport, false)
 	}
 
 	chapterTitle := fmt.Sprintf("第 %d 章", req.ChapterIndex)
