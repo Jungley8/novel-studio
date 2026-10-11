@@ -218,36 +218,6 @@ func TestOrchestrator_RenderSceneWithHorizon(t *testing.T) {
 	})
 }
 
-func TestOrchestrator_ReviewDraft(t *testing.T) {
-	mockJSON := `{
-		"verdict": "REVISION_NEEDED",
-		"score": 72,
-		"issues": ["主角未携带玄重尺却施展了该兵器技能"],
-		"suggestions": "改为徒手拳法"
-	}`
-	mock := &mockLLMClient{response: mockJSON}
-	orch := engine.NewOrchestrator(mock)
-
-	p := &domain.Project{Title: "斗破苍穹"}
-	rev, usage, err := orch.ReviewDraft(context.Background(), "deepseek-reasoner", p, nil, 1, nil, "草稿正文...")
-	if err != nil {
-		t.Fatalf("ReviewDraft failed: %v", err)
-	}
-
-	if rev.Verdict != domain.ReviewVerdictRevision {
-		t.Errorf("expected REVISION_NEEDED, got %s", rev.Verdict)
-	}
-	if rev.Score != 72 {
-		t.Errorf("expected score 72, got %d", rev.Score)
-	}
-	if len(rev.Issues) != 1 {
-		t.Errorf("expected 1 issue, got %d", len(rev.Issues))
-	}
-	if usage.TotalTokens != 300 {
-		t.Errorf("expected usage 300, got %d", usage.TotalTokens)
-	}
-}
-
 func TestOrchestrator_RewriteDraft(t *testing.T) {
 	mock := &mockLLMClient{response: "重修后的正文：陆青翻掌成印，呼啸破风。"}
 	orch := engine.NewOrchestrator(mock)

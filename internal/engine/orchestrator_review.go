@@ -2,102 +2,11 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
 )
-
-func (o *Orchestrator) ReviewDraft(
-	ctx context.Context,
-	reviewerModel string,
-	project *domain.Project,
-	protagonist *domain.CodexEntry,
-	chapterIndex int,
-	beats []domain.SceneBeat,
-	draftText string,
-) (*domain.ReviewResult, TokenUsage, error) {
-	systemPrompt := `你是一名极其挑剔、拥有十余年网文编辑经验的总编审（Reviewer）。
-你的任务是对送审的裸正文草稿进行严格审查，寻找：
-1. 战力崩坏与设定矛盾：主角是否使用了物品栏中没有的道具？是否违反了世界法则？
-2. 节拍偏差：是否漏掉了规定的核心动作或反转？
-3. 声口与AI套路：是否有AI模式化空洞叙述或情绪悬浮？
-
-输出格式：必须且仅输出标准 JSON：
-{
-  "verdict": "ACCEPTED" 或 "REVISION_NEEDED",
-  "score": 1到100的整数 (80分及以上方可通过),
-  "issues": ["具体问题1", "具体问题2"],
-  "suggestions": "具体的修改整改指令"
-}`
-
-	beatsJSON, _ := json.Marshal(beats)
-
-	userPrompt := fmt.Sprintf(`【送审章节】《%s》 第 %d 章
-【世界法则公理】%s
-【主角当前状态】%s | 物品栏: %s
-【要求履行的节拍】%s
-
-【待审正文草稿】
-%s
-
-请给出你的审阅判决。`,
-		project.Title, chapterIndex,
-		project.WorldRules,
-		protNameLevel(protagonist), protInventory(protagonist),
-		string(beatsJSON),
-		draftText,
-	)
-
-	ctxRole := ContextWithRole(ctx, RoleReviewer)
-	resp, usage, err := SafeChatCompletionWithStreamFallback(ctxRole, o.client, reviewerModel, systemPrompt, userPrompt, 0.3, nil)
-	if err != nil {
-		return nil, usage, fmt.Errorf("review draft LLM call failed: %w", err)
-	}
-
-	cleanJSON, err := ExtractAndCleanJSON(resp)
-	if err != nil {
-		cleanJSON = extractJSON(resp)
-	}
-
-	var out struct {
-		Verdict         domain.ReviewVerdict `json:"verdict"`
-		Score           int                  `json:"score"`
-		Issues          []string             `json:"issues"`
-		Suggestions     string               `json:"suggestions"`
-		ResolvedHookIDs []string             `json:"resolved_hook_ids"`
-	}
-	if err := json.Unmarshal([]byte(cleanJSON), &out); err != nil {
-		return nil, usage, fmt.Errorf("parse review JSON failed (raw: %s): %w", resp, err)
-	}
-
-	heuristic := NewLinter(nil).Analyze(draftText)
-	finalScore := out.Score
-	if len(heuristic.HitBannedWords) > 0 {
-		finalScore -= len(heuristic.HitBannedWords) * 4
-	}
-	if IsExclamationExcessive(draftText, heuristic.ExclamationDensity) {
-		finalScore -= 6
-	}
-	if len(heuristic.TopRepeatedNgrams) >= 3 {
-		finalScore -= 4
-	}
-	if finalScore < 0 {
-		finalScore = 0
-	}
-	out.Verdict = decideVerdict(out.Verdict, finalScore, draftText, heuristic)
-
-	return &domain.ReviewResult{
-		Verdict:         out.Verdict,
-		Score:           finalScore,
-		Issues:          out.Issues,
-		Suggestions:     out.Suggestions,
-		ResolvedHookIDs: out.ResolvedHookIDs,
-		ReviewedAt:      time.Now(),
-	}, usage, nil
-}
 
 // RewriteOptions configures targeted rewrite criteria.
 type RewriteOptions struct {
