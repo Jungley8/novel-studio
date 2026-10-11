@@ -48,6 +48,21 @@ func setupTestServerForVolume(t *testing.T) (*server.Server, store.Store, *httpt
 				to, _ = strconv.Atoi(m[2])
 			}
 			content = fmt.Sprintf(`{"sections":[{"title":"主线推进","from_chapter":%d,"to_chapter":%d,"goal":"推进本卷主线","key_events":["关键推进"]}]}`, from, to)
+		} else if strings.Contains(systemPrompt, "剧情规划师") {
+			var cards []string
+			if m := regexp.MustCompile(`(?:请为以下目标章号逐章推演意图卡：|推演意图卡：)(.*)`).FindStringSubmatch(userPrompt); len(m) == 2 {
+				chStrs := strings.Split(strings.TrimSpace(m[1]), ",")
+				for _, chStr := range chStrs {
+					chNum, _ := strconv.Atoi(strings.TrimSpace(chStr))
+					if chNum > 0 {
+						cards = append(cards, fmt.Sprintf(`{"chapter_index":%d,"conflict":"推进主线冲突","tension_target":5}`, chNum))
+					}
+				}
+			}
+			if len(cards) == 0 {
+				cards = append(cards, `{"chapter_index":1,"conflict":"推进主线冲突","tension_target":5}`)
+			}
+			content = fmt.Sprintf("[%s]", strings.Join(cards, ","))
 		} else if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
 			content = `{"inventory_delta":"","power_delta":"","character_mutations":[],"evidence":[]}`
 		} else if strings.Contains(systemPrompt, "分庭总审编") || strings.Contains(systemPrompt, "总审编") || strings.Contains(systemPrompt, "总编审") || strings.Contains(systemPrompt, "QualityGate") {

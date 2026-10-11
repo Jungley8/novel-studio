@@ -2,6 +2,9 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +24,30 @@ type mockRhythmLLMClient struct {
 }
 
 func (m *mockRhythmLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	if strings.Contains(systemPrompt, "分卷分节架构师") {
+		from, to := 1, 1
+		if sm := regexp.MustCompile(`章节范围：第 (\d+) 章 ~ 第 (\d+) 章`).FindStringSubmatch(userPrompt); len(sm) == 3 {
+			from, _ = strconv.Atoi(sm[1])
+			to, _ = strconv.Atoi(sm[2])
+		}
+		return fmt.Sprintf(`{"sections":[{"title":"主线推进","from_chapter":%d,"to_chapter":%d,"goal":"推进本卷主线","key_events":["关键推进"]}]}`, from, to), nil
+	}
+	if strings.Contains(systemPrompt, "剧情规划师") {
+		var cards []string
+		if sm := regexp.MustCompile(`(?:请为以下目标章号逐章推演意图卡：|推演意图卡：)(.*)`).FindStringSubmatch(userPrompt); len(sm) == 2 {
+			chStrs := strings.Split(strings.TrimSpace(sm[1]), ",")
+			for _, chStr := range chStrs {
+				chNum, _ := strconv.Atoi(strings.TrimSpace(chStr))
+				if chNum > 0 {
+					cards = append(cards, fmt.Sprintf(`{"chapter_index":%d,"conflict":"推进主线冲突","tension_target":5}`, chNum))
+				}
+			}
+		}
+		if len(cards) == 0 {
+			cards = append(cards, `{"chapter_index":1,"conflict":"推进主线冲突","tension_target":5}`)
+		}
+		return fmt.Sprintf("[%s]", strings.Join(cards, ",")), nil
+	}
 	if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
 		if m.settleJSON != "" {
 			return m.settleJSON, nil

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1155,6 +1157,30 @@ func (f *fakeSummaryWorkshopLLMClient) ChatCompletion(ctx context.Context, model
 			"text": "【发生】林凡初入仙门连破死局，于宗门大比夺魁并反杀执法堂叛逆\\n【留下】成功晋升内门并获古经认可，但得罪了宗门隐世太上长老\\n【未回收】太上长老暗中勾结魔道，乱星海魔灾爆发的预兆已然浮现"
 		}` + "\n```", nil
 	}
+	if strings.Contains(systemPrompt, "分卷分节架构师") {
+		from, to := 1, 1
+		if m := regexp.MustCompile(`章节范围：第 (\d+) 章 ~ 第 (\d+) 章`).FindStringSubmatch(userPrompt); len(m) == 3 {
+			from, _ = strconv.Atoi(m[1])
+			to, _ = strconv.Atoi(m[2])
+		}
+		return fmt.Sprintf(`{"sections":[{"title":"主线推进","from_chapter":%d,"to_chapter":%d,"goal":"推进本卷主线","key_events":["关键推进"]}]}`, from, to), nil
+	}
+	if strings.Contains(systemPrompt, "剧情规划师") {
+		var cards []string
+		if m := regexp.MustCompile(`(?:请为以下目标章号逐章推演意图卡：|推演意图卡：)(.*)`).FindStringSubmatch(userPrompt); len(m) == 2 {
+			chStrs := strings.Split(strings.TrimSpace(m[1]), ",")
+			for _, chStr := range chStrs {
+				chNum, _ := strconv.Atoi(strings.TrimSpace(chStr))
+				if chNum > 0 {
+					cards = append(cards, fmt.Sprintf(`{"chapter_index":%d,"conflict":"推进主线冲突","tension_target":5}`, chNum))
+				}
+			}
+		}
+		if len(cards) == 0 {
+			cards = append(cards, `{"chapter_index":1,"conflict":"推进主线冲突","tension_target":5}`)
+		}
+		return fmt.Sprintf("[%s]", strings.Join(cards, ",")), nil
+	}
 	if strings.Contains(systemPrompt, "状态对账") {
 		return `{"consistent":true,"reconciliation_required":false,"observations":[]}`, nil
 	}
@@ -1701,10 +1727,10 @@ func TestChapterWorkshop_VolumeRetrospective_FailurePathTokenAccounting(t *testi
 	}
 
 	// 验证 token 记账：
-	// 前序流程 6 次（840）+ 章节摘要 1 次（140）+ 失败的卷回顾 1 次（140）= 8 次调用 = 1120 tokens
-	const expectedTotalTokens = 1120
-	const expectedPromptTokens = 480
-	const expectedCompletionTokens = 640
+	// 前置（意图+分节）2 次（280）+ 前序流程 6 次（840）+ 章节摘要 1 次（140）+ 失败的卷回顾 1 次（140）= 10 次调用 = 1400 tokens
+	const expectedTotalTokens = 1400
+	const expectedPromptTokens = 600
+	const expectedCompletionTokens = 800
 	if res.TotalUsage.TotalTokens != expectedTotalTokens {
 		t.Errorf("expected TotalUsage.TotalTokens == %d (including failed volume retrospective usage), got %d", expectedTotalTokens, res.TotalUsage.TotalTokens)
 	}

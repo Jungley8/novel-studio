@@ -144,14 +144,7 @@ func (b *VolumeBatch) Produce(ctx context.Context, req VolumeProduceRequest) (*V
 		Message: fmt.Sprintf("开始批量生产第 %d 卷 (第 %d-%d 章)...", req.VolumeIndex, startChapter, endChapter),
 	})
 
-	sections, sectionsUsage, sErr := b.workshop.EnsureVolumeSections(ctx, req.ProjectID, req.VolumeIndex, req.ReasoningModel)
-	if sErr != nil {
-		return nil, fmt.Errorf("ensure volume sections for volume %d: %w", req.VolumeIndex, sErr)
-	}
-	addTokenUsage(&result.TotalUsage, sectionsUsage)
-	targetArc.Sections = sections
-
-	emit(VolumeEvent{Phase: "VOLUME_SECTIONS", Message: fmt.Sprintf("本卷分节大纲就绪（%d 节）", len(sections))})
+	// 生产前置（意图补齐与分节确保）由 ChapterWorkshop.ProduceChapter 统一确保（全入口唯一路径，幂等且 fail-closed）
 
 	for chIdx := startChapter; chIdx <= endChapter; chIdx++ {
 		if ctxErr := ctx.Err(); ctxErr != nil {
