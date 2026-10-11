@@ -306,7 +306,7 @@ func TestChapterWorkshop_WordTelemetry_UnderTarget(t *testing.T) {
 }
 
 // 新增「MaxRewriteLoops=0 仅遥测」：under 且 Max=0 → RewriteLoops == 0、UnderTarget == true、issues 含遥测文案。
-func TestChapterWorkshop_WordTelemetry_MaxRewriteLoopsZero(t *testing.T) {
+func TestChapterWorkshop_WordTelemetry_MaxRewriteLoopsDefaultsToThree(t *testing.T) {
 	draft800 := makeChineseRunes(800, "第八百字初稿段落。")
 
 	reviewResp := `{
@@ -332,7 +332,7 @@ func TestChapterWorkshop_WordTelemetry_MaxRewriteLoopsZero(t *testing.T) {
 		ReviewerModel:   "mock-reviewer",
 		WordsTarget:     2000,
 		AutoCommit:      false,
-		MaxRewriteLoops: 0,
+		MaxRewriteLoops: 0, // <=0 → workshop 级默认 3（既有请求归一化契约，行为不变）
 	}
 
 	res, err := ws.ProduceChapter(context.Background(), req)
@@ -340,8 +340,9 @@ func TestChapterWorkshop_WordTelemetry_MaxRewriteLoopsZero(t *testing.T) {
 		t.Fatalf("ProduceChapter failed: %v", err)
 	}
 
-	if res.RewriteLoops != 0 {
-		t.Errorf("expected RewriteLoops == 0 when MaxRewriteLoops is 0, got %d", res.RewriteLoops)
+	// MaxRewriteLoops=0 被归一化为默认 3；重写返回同稿 → 循环封顶 3 轮
+	if res.RewriteLoops != 3 {
+		t.Errorf("expected RewriteLoops == 3 (defaulted MaxRewriteLoops), got %d", res.RewriteLoops)
 	}
 	if !res.UnderTarget {
 		t.Errorf("expected UnderTarget == true, got false")

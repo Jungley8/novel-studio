@@ -212,6 +212,8 @@ func TestChapterWorkshop_ResumeCheckpoint(t *testing.T) {
 		ProjectID:        "p-cp",
 		ChapterIndex:     2,
 		ResumeCheckpoint: true,
+		// 本用例焦点是断点恢复语义，字数门刻意不触发（避免重写替换恢复稿）
+		WordsTarget: 30,
 	}
 
 	res, err := workshop.ProduceChapter(context.Background(), req)
@@ -250,6 +252,8 @@ func TestChapterWorkshop_ResumeCheckpoint(t *testing.T) {
 		ChapterIndex:     2,
 		ResumeCheckpoint: true,
 		InitialDraft:     "这是用户在工坊中手动精修修改的最新稿子，必须以此为准。",
+		// 本用例焦点是草稿来源优先级（用户稿必须覆盖断点），字数门刻意不触发
+		WordsTarget: 30,
 	}
 	resUserDraft, err := workshop.ProduceChapter(context.Background(), reqUserDraft)
 	if err != nil {
@@ -1655,10 +1659,11 @@ func TestChapterWorkshop_Summary_FailurePathTokenAccounting(t *testing.T) {
 
 	// 验证 token 记账：
 	// 前序流程（beats + draft + ReviewCourt + settle）共 6 次调用（840 tokens）
-	// 加上失败的章节摘要 1 次调用（140 tokens），总计 7 次调用 = 980 tokens
-	const expectedTotalTokens = 980
-	const expectedPromptTokens = 420
-	const expectedCompletionTokens = 560
+	// + 失败的章节摘要 1 次调用（140 tokens）+ 字数驱动重写 1 次（140）+ 重写后三庭复检 3 次（420）
+	// = 11 次调用 = 1540 tokens
+	const expectedTotalTokens = 1540
+	const expectedPromptTokens = 660
+	const expectedCompletionTokens = 880
 	if res.TotalUsage.TotalTokens != expectedTotalTokens {
 		t.Errorf("expected TotalUsage.TotalTokens == %d (including failed summary usage), got %d", expectedTotalTokens, res.TotalUsage.TotalTokens)
 	}
@@ -1727,10 +1732,11 @@ func TestChapterWorkshop_VolumeRetrospective_FailurePathTokenAccounting(t *testi
 	}
 
 	// 验证 token 记账：
-	// 前置（意图+分节）2 次（280）+ 前序流程 6 次（840）+ 章节摘要 1 次（140）+ 失败的卷回顾 1 次（140）= 10 次调用 = 1400 tokens
-	const expectedTotalTokens = 1400
-	const expectedPromptTokens = 600
-	const expectedCompletionTokens = 800
+	// 前置（意图+分节）2 次（280）+ 前序流程 6 次（840）+ 章节摘要 1 次（140）+ 失败的卷回顾 1 次（140）
+	// + 字数驱动重写 1 次（140）+ 重写后三庭复检 3 次（420）= 14 次调用 = 1960 tokens
+	const expectedTotalTokens = 1960
+	const expectedPromptTokens = 840
+	const expectedCompletionTokens = 1120
 	if res.TotalUsage.TotalTokens != expectedTotalTokens {
 		t.Errorf("expected TotalUsage.TotalTokens == %d (including failed volume retrospective usage), got %d", expectedTotalTokens, res.TotalUsage.TotalTokens)
 	}
@@ -3528,7 +3534,7 @@ func TestChapterWorkshop_CompactionFailureWarnsInIssues(t *testing.T) {
 		ReasoningModel:  "mock-r1",
 		WriterModel:     "mock-v3",
 		ReviewerModel:   "mock-reviewer",
-		WordsTarget:     0,
+		WordsTarget:     2000,
 		AutoCommit:      true,
 		MaxRewriteLoops: 2,
 		OnProgress: func(ev WorkshopEvent) {

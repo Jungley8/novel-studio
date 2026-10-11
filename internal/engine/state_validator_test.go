@@ -444,7 +444,7 @@ func TestChapterWorkshop_SettlerReconciliation_Unresolved_NotBlocking(t *testing
 		ReasoningModel:  "mock-r1",
 		WriterModel:     "mock-v3",
 		ReviewerModel:   "mock-rev",
-		WordsTarget:     0,
+		WordsTarget:     2000,
 		AutoCommit:      true,
 		MaxRewriteLoops: 1,
 	}

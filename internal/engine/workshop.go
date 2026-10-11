@@ -143,6 +143,12 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	if req.ChapterIndex <= 0 {
 		req.ChapterIndex = 1
 	}
+	if req.WordsTarget <= 0 {
+		req.WordsTarget = 2000
+	}
+	if req.MaxRewriteLoops <= 0 {
+		req.MaxRewriteLoops = 3
+	}
 
 	// Ledger correlation: every event of this run shares one run id so the
 	// timeline can fold beats/drafts/audits/rewrites into a single group.
@@ -890,6 +896,36 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		}
 		if !hasWarn {
 			auditReport.Issues = append(auditReport.Issues, intentWarning)
+		}
+	}
+	// 压缩警告与状态对账跨重写存活：重写复检会整体替换 auditReport，此处按来源重挂（精确去重）。
+	if auditReport != nil && compactionWarning != "" {
+		hasWarn := false
+		for _, iss := range auditReport.Issues {
+			if iss == compactionWarning {
+				hasWarn = true
+				break
+			}
+		}
+		if !hasWarn {
+			auditReport.Issues = append(auditReport.Issues, compactionWarning)
+		}
+	}
+	if auditReport != nil && len(unresolvedObservations) > 0 {
+		var obsParts []string
+		for _, o := range unresolvedObservations {
+			obsParts = append(obsParts, fmt.Sprintf("[%s] %s", o.Code, o.Summary))
+		}
+		statusIssue := fmt.Sprintf("【状态对账】%s", strings.Join(obsParts, "；"))
+		hasWarn := false
+		for _, iss := range auditReport.Issues {
+			if iss == statusIssue {
+				hasWarn = true
+				break
+			}
+		}
+		if !hasWarn {
+			auditReport.Issues = append(auditReport.Issues, statusIssue)
 		}
 	}
 
