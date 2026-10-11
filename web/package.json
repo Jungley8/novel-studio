@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --no-open",
     "build": "vite build",
-    "preview": "vite preview --no-open"
+    "preview": "vite preview --no-open",
+    "test": "node --import ./test/register-loader.mjs --test test/project-switch.test.mjs"
   },
   "dependencies": {
     "lucide-vue-next": "^0.475.0",
