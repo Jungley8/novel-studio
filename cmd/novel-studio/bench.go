@@ -9,16 +9,75 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/Jungley8/novel-studio/internal/engine"
 	"github.com/Jungley8/novel-studio/internal/store"
 )
 
+type benchJSONReport struct {
+	SnapshotPath string `json:"snapshot_path,omitempty"`
+	*engine.BenchReport
+}
+
+// openBenchSnapshot copies the source SQLite database file to an isolated temporary directory
+// and returns the snapshot file path along with a cleanup function to remove the directory.
+func openBenchSnapshot(src string) (string, func(), error) {
+	if _, err := os.Stat(src); err != nil {
+		return "", nil, err
+	}
+
+	tmpDir, err := os.MkdirTemp("", "novel-bench-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("创建临时目录失败: %w", err)
+	}
+
+	snapshotPath := filepath.Join(tmpDir, "novel.db")
+	cleanup := func() {
+		_ = os.RemoveAll(tmpDir)
+	}
+
+	srcFile, err := os.Open(src)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("打开源数据库失败: %w", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(snapshotPath)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("创建快照文件失败: %w", err)
+	}
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		_ = dstFile.Close()
+		cleanup()
+		return "", nil, fmt.Errorf("复制快照文件失败: %w", err)
+	}
+	if err := dstFile.Close(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("关闭快照文件失败: %w", err)
+	}
+
+	return snapshotPath, cleanup, nil
+}
+
 // printBenchReport formats and renders a BenchReport to the given writer.
+// 在临时快照上运行，不触碰生产库。
 // Supports both structured human-readable Chinese text and indented JSON format.
-func printBenchReport(w io.Writer, r *engine.BenchReport, asJSON bool) {
+func printBenchReport(w io.Writer, r *engine.BenchReport, asJSON bool, snapshotPath ...string) {
+	snap := ""
+	if len(snapshotPath) > 0 {
+		snap = snapshotPath[0]
+	}
+
 	if asJSON {
-		data, err := json.MarshalIndent(r, "", "  ")
+		wrapper := benchJSONReport{
+			SnapshotPath: snap,
+			BenchReport:  r,
+		}
+		data, err := json.MarshalIndent(wrapper, "", "  ")
 		if err != nil {
 			fmt.Fprintf(w, "JSON 序列化失败: %v\n", err)
 			return
@@ -27,8 +86,11 @@ func printBenchReport(w io.Writer, r *engine.BenchReport, asJSON bool) {
 		return
 	}
 
+	if snap != "" {
+		fmt.Fprintf(w, "快照路径: %s\n", snap)
+	}
 	fmt.Fprintln(w, "==================================================================")
-	fmt.Fprintf(w, "  NovelStudio Bench 长篇质量回归只读体检报告\n")
+	fmt.Fprintf(w, "  NovelStudio Bench 长篇质量回归体检报告\n")
 	fmt.Fprintf(w, "  作品: 《%s》 (ID: %s) | 已归档: %d 章\n", r.ProjectTitle, r.ProjectID, r.Chapters)
 	fmt.Fprintln(w, "==================================================================")
 
@@ -98,7 +160,13 @@ func printBenchReport(w io.Writer, r *engine.BenchReport, asJSON bool) {
 	// 【文风契约】
 	fmt.Fprintln(w, "\n【文风契约】")
 	seededStr := "未种子化"
-	if r.StyleVaultSeeded {
+	for _, d := range r.LedgerReplay.Drifts {
+		if strings.HasPrefix(d, "风格库读取失败：") {
+			seededStr = d
+			break
+		}
+	}
+	if seededStr == "未种子化" && r.StyleVaultSeeded {
 		seededStr = "已种子化"
 	}
 	fmt.Fprintf(w, "  • 文风保险库状态:   %s\n", seededStr)
@@ -109,10 +177,11 @@ func printBenchReport(w io.Writer, r *engine.BenchReport, asJSON bool) {
 func runBenchCLI(argv []string, defaultDataDir string) int {
 	fs := flag.NewFlagSet("bench", flag.ContinueOnError)
 	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "NovelStudio bench: 在临时快照上运行，不触碰生产库（将复制到临时目录）。\n\n")
 		fmt.Fprintf(fs.Output(), "Usage of bench:\n")
 		fs.PrintDefaults()
 	}
-	dataDirFlag := fs.String("data-dir", defaultDataDir, "数据持久化目录")
+	dataDirFlag := fs.String("data-dir", defaultDataDir, "数据持久化目录（将复制到临时目录进行快照体检）")
 	projectIDFlag := fs.String("project", "", "作品 ID (默认首个已有作品)")
 	jsonFlag := fs.Bool("json", false, "以 JSON 格式输出体检报告")
 	if err := fs.Parse(argv); err != nil {
@@ -121,7 +190,14 @@ func runBenchCLI(argv []string, defaultDataDir string) int {
 
 	dataDir := *dataDirFlag
 	dbPath := filepath.Join(dataDir, "novel.db")
-	s, err := store.NewSQLiteStore(dbPath)
+	snapshotPath, cleanup, err := openBenchSnapshot(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "✗ 打开 SQLite 数据库失败: %v\n", err)
+		return 1
+	}
+	defer cleanup()
+
+	s, err := store.NewSQLiteStore(snapshotPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "✗ 打开 SQLite 数据库失败: %v\n", err)
 		return 1
@@ -157,11 +233,21 @@ func runBenchCLI(argv []string, defaultDataDir string) int {
 		return 1
 	}
 
-	protagonist, _ := s.GetProtagonistEntry(ctx, projectID)
-	styleVault, _ := s.GetStyleVault(ctx, projectID)
+	protagonist, protErr := s.GetProtagonistEntry(ctx, projectID)
+	styleVault, styleVaultErr := s.GetStyleVault(ctx, projectID)
 	styleVaultSeeded := (styleVault != nil)
 
 	report := engine.RunBenchProbes(project, chapters, hooks, protagonist, styleVaultSeeded)
-	printBenchReport(os.Stdout, report, *jsonFlag)
+	if protErr != nil {
+		report.LedgerReplay.Clean = false
+		report.LedgerReplay.Drifts = append(report.LedgerReplay.Drifts, fmt.Sprintf("主角读取失败：%v", protErr))
+		report.LedgerReplay.Caveat = engine.BenchLedgerCaveat + fmt.Sprintf("（主角读取失败：%v）", protErr)
+	}
+	if styleVaultErr != nil {
+		report.LedgerReplay.Clean = false
+		report.LedgerReplay.Drifts = append(report.LedgerReplay.Drifts, fmt.Sprintf("风格库读取失败：%v", styleVaultErr))
+	}
+
+	printBenchReport(os.Stdout, report, *jsonFlag, snapshotPath)
 	return 0
 }
