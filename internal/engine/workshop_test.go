@@ -2028,7 +2028,7 @@ func TestChapterWorkshop_ChapterIntent_Integration(t *testing.T) {
 		}
 	})
 
-	t.Run("case4_stale_intent_warning_in_audit_issues", func(t *testing.T) {
+	t.Run("case4_stale_intent_skipped_with_warning", func(t *testing.T) {
 		intent := &domain.ChapterIntent{
 			ProjectID:     "p-intent",
 			ChapterIndex:  1,
@@ -2037,11 +2037,12 @@ func TestChapterWorkshop_ChapterIntent_Integration(t *testing.T) {
 			TensionTarget: 6,
 			Status:        domain.IntentStatusStale,
 		}
-		ws, _, _ := setup(intent)
+		ws, client, _ := setup(intent)
 
 		res, err := ws.ProduceChapter(context.Background(), WorkshopProduceRequest{
 			ProjectID:       "p-intent",
 			ChapterIndex:    1,
+			CoreConflict:    "常规冲突",
 			ReasoningModel:  "mock-r1",
 			WriterModel:     "mock-v3",
 			ReviewerModel:   "mock-reviewer",
@@ -2056,15 +2057,76 @@ func TestChapterWorkshop_ChapterIntent_Integration(t *testing.T) {
 		if res.Audit == nil {
 			t.Fatalf("expected non-nil Audit report")
 		}
+		expectedWarning := "【意图卡警告】第 1 章意图卡已过期（STALE，上游卷纲已变更），已跳过注入；请重推意图卡并重新锁定后再生产"
 		hasWarning := false
 		for _, iss := range res.Audit.Issues {
-			if strings.Contains(iss, "【意图卡警告】本章意图卡处于 STALE（上游卷纲已变更），建议重推意图卡后再生产") {
+			if strings.Contains(iss, expectedWarning) {
 				hasWarning = true
 				break
 			}
 		}
 		if !hasWarning {
-			t.Errorf("expected Audit.Issues to contain stale intent warning, got: %v", res.Audit.Issues)
+			t.Errorf("expected Audit.Issues to contain %q, got: %v", expectedWarning, res.Audit.Issues)
+		}
+		if strings.Contains(client.capturedBeatsPrompt, "【本章意图卡") {
+			t.Errorf("expected beats prompt NOT to contain '【本章意图卡', got: %s", client.capturedBeatsPrompt)
+		}
+		if strings.Contains(client.capturedBeatsPrompt, "旧版过时冲突") {
+			t.Errorf("expected beats prompt NOT to contain '旧版过时冲突', got: %s", client.capturedBeatsPrompt)
+		}
+		if res.CoreConflict != "常规冲突" {
+			t.Errorf("expected res.CoreConflict '常规冲突', got: %q", res.CoreConflict)
+		}
+	})
+
+	t.Run("case5_draft_intent_skipped_with_hint", func(t *testing.T) {
+		intent := &domain.ChapterIntent{
+			ProjectID:     "p-intent",
+			ChapterIndex:  1,
+			VolumeIndex:   1,
+			Conflict:      "草稿冲突",
+			TensionTarget: 6,
+			Status:        domain.IntentStatusDraft,
+		}
+		ws, client, _ := setup(intent)
+
+		res, err := ws.ProduceChapter(context.Background(), WorkshopProduceRequest{
+			ProjectID:       "p-intent",
+			ChapterIndex:    1,
+			CoreConflict:    "常规冲突",
+			ReasoningModel:  "mock-r1",
+			WriterModel:     "mock-v3",
+			ReviewerModel:   "mock-reviewer",
+			WordsTarget:     2000,
+			AutoCommit:      true,
+			MaxRewriteLoops: 1,
+		})
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+
+		if res.Audit == nil {
+			t.Fatalf("expected non-nil Audit report")
+		}
+		expectedHint := "【意图卡提示】第 1 章意图卡为草稿（DRAFT，未锁定），已跳过注入；锁定后本章节拍才会对齐该意图"
+		hasHint := false
+		for _, iss := range res.Audit.Issues {
+			if strings.Contains(iss, expectedHint) {
+				hasHint = true
+				break
+			}
+		}
+		if !hasHint {
+			t.Errorf("expected Audit.Issues to contain %q, got: %v", expectedHint, res.Audit.Issues)
+		}
+		if strings.Contains(client.capturedBeatsPrompt, "【本章意图卡") {
+			t.Errorf("expected beats prompt NOT to contain '【本章意图卡', got: %s", client.capturedBeatsPrompt)
+		}
+		if strings.Contains(client.capturedBeatsPrompt, "草稿冲突") {
+			t.Errorf("expected beats prompt NOT to contain '草稿冲突', got: %s", client.capturedBeatsPrompt)
+		}
+		if res.CoreConflict != "常规冲突" {
+			t.Errorf("expected res.CoreConflict '常规冲突', got: %q", res.CoreConflict)
 		}
 	})
 }
@@ -2104,7 +2166,7 @@ func TestBuildChapterIntentPromptBlock(t *testing.T) {
 			"张力目标：8/10",
 			"埋设伏笔：黑衣人遗留令牌、拍卖行暗印",
 			"回收伏笔：此前获得的残破阵盘",
-			"预期状态变迁：",
+			"预期状态变迁（作者预期，仅供参考；严禁为迁就预期扭曲因果与人物行为，最终以写后结算为准）：",
 			`"inventory_delta":"获得残破阵盘，消耗灵石百枚"`,
 			`"power_delta":"神念突破"`,
 			`"name":"赵执事"`,

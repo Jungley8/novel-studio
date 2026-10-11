@@ -268,11 +268,22 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		}
 	}
 
-	if intent, iErr := w.store.GetChapterIntent(ctx, req.ProjectID, req.ChapterIndex); iErr == nil && intent != nil {
-		horizon.ConsumedIntent = intent
-		emit(WorkshopEvent{Phase: PhaseHorizon, Message: fmt.Sprintf("已装载第 %d 章意图卡（状态 %s）", req.ChapterIndex, intent.Status)})
-		if intent.Status == domain.IntentStatusStale {
-			intentWarning = "【意图卡警告】本章意图卡处于 STALE（上游卷纲已变更），建议重推意图卡后再生产"
+	if intent, iErr := w.store.GetChapterIntent(ctx, req.ProjectID, req.ChapterIndex); iErr != nil {
+		intentWarning = fmt.Sprintf("【意图卡警告】读取意图卡失败: %v", iErr)
+	} else if intent != nil {
+		switch intent.Status {
+		case domain.IntentStatusLocked:
+			horizon.ConsumedIntent = intent
+			emit(WorkshopEvent{Phase: PhaseHorizon, Message: fmt.Sprintf("已装载第 %d 章意图卡（状态 LOCKED）", req.ChapterIndex)})
+		case domain.IntentStatusDraft:
+			intentWarning = fmt.Sprintf("【意图卡提示】第 %d 章意图卡为草稿（DRAFT，未锁定），已跳过注入；锁定后本章节拍才会对齐该意图", req.ChapterIndex)
+			emit(WorkshopEvent{Phase: PhaseHorizon, Message: fmt.Sprintf("第 %d 章意图卡为草稿（DRAFT，未锁定），已跳过注入", req.ChapterIndex)})
+		case domain.IntentStatusStale:
+			intentWarning = fmt.Sprintf("【意图卡警告】第 %d 章意图卡已过期（STALE，上游卷纲已变更），已跳过注入；请重推意图卡并重新锁定后再生产", req.ChapterIndex)
+			emit(WorkshopEvent{Phase: PhaseHorizon, Message: fmt.Sprintf("第 %d 章意图卡已过期（STALE，上游卷纲已变更），已跳过注入", req.ChapterIndex)})
+		default:
+			intentWarning = fmt.Sprintf("【意图卡警告】第 %d 章意图卡状态非法（%q），已跳过注入（Fail-Closed）", req.ChapterIndex, intent.Status)
+			emit(WorkshopEvent{Phase: PhaseHorizon, Message: fmt.Sprintf("第 %d 章意图卡状态非法（%q），已跳过注入", req.ChapterIndex, intent.Status)})
 		}
 	}
 
