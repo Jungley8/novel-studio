@@ -260,7 +260,21 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request, proje
 	}
 
 	prot, _ := s.store.GetProtagonistEntry(r.Context(), projectID)
-	audit, _, err := s.qualityGate.Audit(r.Context(), reviewerModel, p, prot, req.ChapterIndex, req.Beats, req.DraftText)
+
+	// 伏笔证据门前置：手动审阅与生产路径同口径——注入 open/fermenting 伏笔，评审声明须过确定性证据门。
+	hooks, herr := s.store.ListPlotHooks(r.Context(), projectID)
+	if herr != nil {
+		errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("伏笔台账读取失败，拒绝审阅（Fail-Closed）: %v", herr))
+		return
+	}
+	activeHooks := make([]*domain.PlotHook, 0, len(hooks))
+	for _, h := range hooks {
+		if h != nil && (h.Status == domain.HookStatusOpen || h.Status == domain.HookStatusFermenting) {
+			activeHooks = append(activeHooks, h)
+		}
+	}
+
+	audit, _, err := s.qualityGate.AuditWithHooks(r.Context(), reviewerModel, p, prot, req.ChapterIndex, req.Beats, activeHooks, req.DraftText)
 	if err != nil {
 		errStr := err.Error()
 		if strings.Contains(errStr, "Model is unavailable") {
@@ -269,6 +283,8 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request, proje
 		errorResponse(w, http.StatusInternalServerError, errStr)
 		return
 	}
+
+	engine.GateResolvedHookClaims(audit, activeHooks, req.DraftText)
 
 	// Auto-persist checkpoint on review
 	existingAuditCp, _ := s.store.GetCheckpoint(r.Context(), projectID, req.ChapterIndex)
