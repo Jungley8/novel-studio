@@ -309,6 +309,15 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			})
 		}
 	}
+	// render 侧指令段记账（planacct 残余），与 RenderSceneStream 同源（同一 helper），防漂移。
+	if consumedIntent != nil && consumedIntent.Status == domain.IntentStatusLocked {
+		if block := buildRenderIntentDirective(consumedIntent); block != "" {
+			extras = append(extras, AccountedExtra{
+				ID:   "inject/intent-render",
+				Text: block,
+			})
+		}
+	}
 
 	// 1.3 Synthesize Canon Horizon with accounted extras
 	if w.orch != nil && w.orch.client != nil {
