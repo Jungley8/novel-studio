@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -96,4 +97,18 @@ func FilterResolvedHookClaims(claims []domain.HookResolutionClaim, activeHooks [
 	}
 
 	return validIDs, rejected
+}
+
+// GateResolvedHookClaims 对报告中的回收声明执行证据门（ID 精确命中 + quote 正文子串），
+// 以通过者重写 ResolvedHookIDs，并把拒绝以可见 issue 追加（与 workshop 生产路径同口径）。
+func GateResolvedHookClaims(report *domain.AuditReport, activeHooks []*domain.PlotHook, draftText string) []string {
+	if report == nil {
+		return nil
+	}
+	validIDs, rejected := FilterResolvedHookClaims(report.ResolvedHookClaims, activeHooks, draftText)
+	report.ResolvedHookIDs = validIDs
+	for _, r := range rejected {
+		report.Issues = append(report.Issues, fmt.Sprintf("【伏笔兑现证据不足】ID %q 回收声明被拒（%s）", r.Claim.ID, r.Reason))
+	}
+	return validIDs
 }

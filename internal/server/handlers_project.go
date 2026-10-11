@@ -255,6 +255,8 @@ func (s *Server) handleProjectChapters(w http.ResponseWriter, r *http.Request, p
 			c.ID = fmt.Sprintf("ch_%s_%d", projectID, c.ChapterIndex)
 		}
 
+		// 手动入库路径（有意设计）：以人工判断为准——状态变更仅经 DryRunStateMutation 账本证据检查，
+		// 不跑自动状态验证器；伏笔回收声明已在 /review-draft 经证据门过滤。
 		hasMutation := strings.TrimSpace(c.StateMutation.InventoryDelta) != "" ||
 			strings.TrimSpace(c.StateMutation.PowerDelta) != "" ||
 			len(c.StateMutation.CharacterMutations) > 0
