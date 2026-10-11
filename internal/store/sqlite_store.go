@@ -1717,6 +1717,38 @@ func (s *SQLiteStore) DeleteChapter(ctx context.Context, projectID string, chapt
 		}
 	}()
 
+	// Guard: only the latest chapter can be hard-deleted (mirrors UncommitChapter).
+	// Deleting a non-latest chapter would leave its state-mutation effects
+	// permanently applied while the chapter itself is gone.
+	var maxChapter int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(chapter_index), 0) FROM chapters WHERE project_id = ?`, projectID).Scan(&maxChapter); err != nil {
+		return fmt.Errorf("query max chapter: %w", err)
+	}
+	if chapterIndex < maxChapter {
+		rows, err := tx.QueryContext(ctx, `SELECT chapter_index FROM chapters WHERE project_id = ? AND chapter_index > ? ORDER BY chapter_index ASC`, projectID, chapterIndex)
+		if err != nil {
+			return fmt.Errorf("query downstream chapters: %w", err)
+		}
+		var downstream []int
+		for rows.Next() {
+			var idx int
+			if err := rows.Scan(&idx); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan downstream chapter: %w", err)
+			}
+			downstream = append(downstream, idx)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("downstream chapters rows: %w", err)
+		}
+		return &NonLatestChapterError{
+			ChapterIndex: chapterIndex,
+			MaxChapter:   maxChapter,
+			Downstream:   downstream,
+		}
+	}
+
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chapters WHERE project_id = ? AND chapter_index = ?`, projectID, chapterIndex); err != nil {
 		return err
 	}
@@ -3769,11 +3801,16 @@ func (s *SQLiteStore) GetActivePlan(ctx context.Context, projectID string) (*dom
 	}
 
 	if chaptersJSON != "" {
-		_ = json.Unmarshal([]byte(chaptersJSON), &plan.PlanChapters)
+		if err := json.Unmarshal([]byte(chaptersJSON), &plan.PlanChapters); err != nil {
+			return nil, fmt.Errorf("decode plan chapters for active plan check failed: %w", err)
+		}
 	}
 
 	// Check forecast fingerprint status
 	fc, err := s.LoadForecast(ctx, projectID, plan.ForecastID)
+	if err != nil {
+		return nil, fmt.Errorf("load forecast for active plan check failed: %w", err)
+	}
 
 	// Read chapters for memory-derived consumed status & divergence check
 	chapters, err := s.ListChapters(ctx, projectID)
