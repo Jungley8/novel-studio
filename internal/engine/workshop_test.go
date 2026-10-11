@@ -2878,3 +2878,155 @@ func TestChapterWorkshop_VolumeRetrospective_FallbackUpdatedProjectRequiresBackf
 		t.Fatalf("expected retro range 1..2, got %+v", retro)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// P2-9 altType fallback tests (workshop.go rhythm-retry block).
+//
+// The `if altType == ""` fallback below the alt-candidate loop was dead code:
+// altType used to be initialised to ChapterTypeEscalation (non-empty), so the
+// fallback could never fire. It is now declared as the zero value
+// (`var altType domain.ChapterType`) so the fallback is armed. The fallback
+// itself is unchanged: actual==Escalation -> Setup, otherwise -> Escalation.
+// An empty value can never leak into DeriveBeatsForChapterType: the fallback
+// runs unconditionally when altType == "", and DeriveBeatsForChapterType also
+// fail-closes "" to Escalation (orchestrator.go).
+// ---------------------------------------------------------------------------
+
+// Regression (normal path): hook-repeat triggers one retry and the retry uses
+// the first eligible alt candidate. Preceding chapter is SETUP/CLIFFHANGER,
+// first derivation returns ESCALATION/CLIFFHANGER (same hook -> retry);
+// with no volume framework targetType is ESCALATION, so actual==target and
+// the loop skips both -> first eligible pick is CLIMAX.
+func TestChapterWorkshop_AltRetry_PicksFirstEligibleCandidate(t *testing.T) {
+	setupBeats := []domain.SceneBeat{
+		{Phase: "暗流涌动", Tension: 4, Action: "暗中打探消息"},
+		{Phase: "局势隐变", Tension: 5, Action: "收到密信", HookType: "CLIFFHANGER"},
+	}
+	if got := domain.ClassifyChapterType(setupBeats); got != domain.ChapterTypeSetup {
+		t.Fatalf("test premise broken: preceding beats classify as %s, want SETUP", got)
+	}
+
+	escalationJSON := `{
+		"beats": [
+			{"phase": "蓄力压迫", "tension": 6, "action": "反派集结人手", "expectation_broken": "反派自以为隐秘"},
+			{"phase": "章末留钩", "tension": 7, "action": "阵法封锁四方", "expectation_broken": "局势胶着", "hook_type": "CLIFFHANGER"}
+		],
+		"state_mutation": {"inventory_delta": "", "power_delta": ""}
+	}`
+
+	mockClient := &mockRhythmLLMClient{beatsJSON: escalationJSON}
+	orch := NewOrchestrator(mockClient)
+	qGate := NewQualityGate(mockClient, nil)
+
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p-alt-normal",
+			Title:          "九天剑主",
+			TargetPlatform: "番茄脑洞",
+		},
+		chapters: []*domain.Chapter{
+			{ID: "c1", ProjectID: "p-alt-normal", ChapterIndex: 1, Title: "第1章", Beats: setupBeats},
+		},
+		hooks: []*domain.PlotHook{},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	_, err := workshop.ProduceChapter(context.Background(), WorkshopProduceRequest{
+		ProjectID:      "p-alt-normal",
+		ChapterIndex:   2,
+		CoreConflict:   "宗门执法堂决战",
+		ReasoningModel: "mock-reasoner",
+		WriterModel:    "mock-writer",
+		ReviewerModel:  "mock-reviewer",
+		WordsTarget:    2000,
+	})
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if mockClient.beatsCalls != 2 {
+		t.Fatalf("expected 2 beats LLM calls (hook-repeat retry), got %d", mockClient.beatsCalls)
+	}
+	if !strings.Contains(mockClient.beatsSys[0], "【本章节奏定位：ESCALATION") {
+		t.Errorf("expected first derivation to use ESCALATION, got sys=%q", mockClient.beatsSys[0])
+	}
+	if !strings.Contains(mockClient.beatsSys[1], "【本章节奏定位：CLIMAX") {
+		t.Errorf("expected retry (altType) to use CLIMAX, got sys=%q", mockClient.beatsSys[1])
+	}
+}
+
+// Fallback-armed path, maximally-blocked history: 3 trailing ESCALATION
+// chapters block ESCALATION in both the target-candidate loop (target becomes
+// CLIMAX) and as the first alt skip (actual==ESCALATION). The alt loop must
+// still pick the next eligible candidate (AFTERMATH) — the `altType == ""`
+// fallback only fires when the loop assigns nothing, which the trailing-run
+// counting makes unreachable while the candidate/skip sets stay 5-choose-2
+// (at most one type can hold a trailing run >= 3, so at least two eligible
+// candidates always have consec == 1). This pins the fixed declaration's
+// observable behaviour: loop pick wins, fallback stays dormant.
+func TestChapterWorkshop_AltRetry_BlockedHistoryStillPicksLoopCandidate(t *testing.T) {
+	escalationJSON := `{
+		"beats": [
+			{"phase": "蓄力压迫", "tension": 6, "action": "反派集结人手", "expectation_broken": "反派自以为隐秘"},
+			{"phase": "章末留钩", "tension": 7, "action": "阵法封锁四方", "expectation_broken": "局势胶着", "hook_type": "CLIFFHANGER"}
+		],
+		"state_mutation": {"inventory_delta": "", "power_delta": ""}
+	}`
+
+	mockClient := &mockRhythmLLMClient{beatsJSON: escalationJSON}
+	orch := NewOrchestrator(mockClient)
+	qGate := NewQualityGate(mockClient, nil)
+
+	escBeats := []domain.SceneBeat{
+		{Phase: "蓄力压迫", Tension: 5, Action: "反派施压"},
+		{Phase: "试探下套", Tension: 6, Action: "主角反击"},
+		{Phase: "矛盾激化", Tension: 7, Action: "激战正酣"},
+		{Phase: "章末留钩", Tension: 7, Action: "留下悬念", HookType: "REVERSAL"},
+	}
+	if got := domain.ClassifyChapterType(escBeats); got != domain.ChapterTypeEscalation {
+		t.Fatalf("test premise broken: preceding beats classify as %s, want ESCALATION", got)
+	}
+
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p-alt-blocked",
+			Title:          "九天剑主",
+			TargetPlatform: "番茄脑洞",
+		},
+		chapters: []*domain.Chapter{
+			{ID: "c1", ProjectID: "p-alt-blocked", ChapterIndex: 1, Title: "第1章", Beats: escBeats},
+			{ID: "c2", ProjectID: "p-alt-blocked", ChapterIndex: 2, Title: "第2章", Beats: escBeats},
+			{ID: "c3", ProjectID: "p-alt-blocked", ChapterIndex: 3, Title: "第3章", Beats: escBeats},
+		},
+		hooks: []*domain.PlotHook{},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	_, err := workshop.ProduceChapter(context.Background(), WorkshopProduceRequest{
+		ProjectID:      "p-alt-blocked",
+		ChapterIndex:   4,
+		CoreConflict:   "宗门执法堂决战",
+		ReasoningModel: "mock-reasoner",
+		WriterModel:    "mock-writer",
+		ReviewerModel:  "mock-reviewer",
+		WordsTarget:    2000,
+	})
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if mockClient.beatsCalls != 2 {
+		t.Fatalf("expected 2 beats LLM calls (consec>=4 retry), got %d", mockClient.beatsCalls)
+	}
+	// Target loop skips consec-blocked ESCALATION -> CLIMAX; retry skips
+	// actual(ESCALATION)+target(CLIMAX) -> AFTERMATH. The "" fallback would
+	// have produced SETUP here (actual==ESCALATION); asserting AFTERMATH pins
+	// that the loop pick wins and no empty/unexpected type leaks through.
+	if !strings.Contains(mockClient.beatsSys[1], "【本章节奏定位：AFTERMATH") {
+		t.Errorf("expected retry (altType) to use AFTERMATH, got sys=%q", mockClient.beatsSys[1])
+	}
+}
