@@ -75,6 +75,9 @@ func (m *mockChronicleStore) GetChapter(ctx context.Context, projectID string, c
 func (m *mockChronicleStore) ListChapters(ctx context.Context, projectID string) ([]*domain.Chapter, error) {
 	return m.chapters, nil
 }
+func (m *mockChronicleStore) ListStateSnapshots(ctx context.Context, projectID string) ([]*domain.ChapterStateSnapshot, error) {
+	return nil, nil
+}
 
 // Chapter Intents (章节意图卡) — 内存实现，与 sqlite_store 语义对齐
 func (m *mockChronicleStore) SaveChapterIntent(ctx context.Context, intent *domain.ChapterIntent) error {
