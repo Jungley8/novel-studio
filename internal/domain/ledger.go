@@ -183,11 +183,13 @@ func RollbackStateMutation(e *CodexEntry, mutation StateMutation) ([]string, err
 					items[foundIndex].Quantity += deltaQty
 					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger Rollback] 回滚归还已消耗物品: %s (增加 %d, 当前: %d)", itemName, deltaQty, items[foundIndex].Quantity))
 				} else {
-					items = append(items, InventoryItem{
-						Name:     itemName,
-						Quantity: deltaQty,
-					})
-					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger Rollback] 回滚恢复物品: %s (数量: %d)", itemName, deltaQty))
+					// Fail-closed guard (P2-2): reversing a consumption of an item the
+					// entity never held must not conjure it out of thin air. A phantom
+					// REMOVE can land in the store via the commit path (ApplyStateMutation
+					// only logs a warning for unheld removals), and blindly re-adding it
+					// here would turn consumed "air" into real inventory on uncommit.
+					// Record a warning trail instead and leave the inventory untouched.
+					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger Warning] 回滚跳过: 尝试归还未持有的物品 '%s'，拒绝凭空补发", itemName))
 				}
 			}
 		}

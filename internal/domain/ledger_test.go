@@ -254,3 +254,82 @@ func TestRollbackStateMutation_PowerDeltaGuard(t *testing.T) {
 		t.Errorf("expected power rollback audit log, got %v", auditPower)
 	}
 }
+
+func TestRollbackStateMutation_RemoveMissingItemNoConjure(t *testing.T) {
+	entry := &CodexEntry{
+		Name:      "林尘",
+		Realm:     "筑基初期",
+		Inventory: "",
+		Archetype: "PROTAGONIST",
+	}
+
+	mutation := StateMutation{
+		InventoryDelta: "-诛仙剑; -灵石x5",
+	}
+	audit, err := RollbackStateMutation(entry, mutation)
+	if err != nil {
+		t.Fatalf("RollbackStateMutation failed: %v", err)
+	}
+
+	for _, itm := range entry.StructuredItems {
+		if itm.Name == "诛仙剑" || itm.Name == "灵石" {
+			t.Fatalf("phantom item conjured by rollback: %+v (inventory: %q)", itm, entry.Inventory)
+		}
+	}
+	if strings.Contains(entry.Inventory, "诛仙剑") || strings.Contains(entry.Inventory, "灵石") {
+		t.Fatalf("phantom item conjured in inventory string: %q", entry.Inventory)
+	}
+
+	warnings := 0
+	for _, a := range audit {
+		if strings.Contains(a, "[Ledger Warning]") {
+			warnings++
+		}
+	}
+	if warnings != 2 {
+		t.Errorf("expected 2 [Ledger Warning] trail entries, got %d: %v", warnings, audit)
+	}
+}
+
+func TestRollbackStateMutation_RemoveHeldItemRestoresQuantity(t *testing.T) {
+	entry := &CodexEntry{
+		Name:      "楚枫",
+		Realm:     "炼气一层",
+		Inventory: "洗髓丹x3",
+		Archetype: "PROTAGONIST",
+		StructuredItems: []InventoryItem{
+			{Name: "洗髓丹", Quantity: 3},
+		},
+	}
+
+	mutation := StateMutation{
+		InventoryDelta: "消耗 洗髓丹x1",
+	}
+	if _, err := ApplyStateMutation(entry, mutation); err != nil {
+		t.Fatalf("ApplyStateMutation failed: %v", err)
+	}
+	if len(entry.StructuredItems) != 1 || entry.StructuredItems[0].Quantity != 2 {
+		t.Fatalf("expected 洗髓丹 quantity 2 after consume, got %+v", entry.StructuredItems)
+	}
+
+	audit, err := RollbackStateMutation(entry, mutation)
+	if err != nil {
+		t.Fatalf("RollbackStateMutation failed: %v", err)
+	}
+	if len(entry.StructuredItems) != 1 || entry.StructuredItems[0].Quantity != 3 {
+		t.Fatalf("expected 洗髓丹 quantity 3 after rollback, got %+v", entry.StructuredItems)
+	}
+	if !strings.Contains(entry.Inventory, "洗髓丹x3") {
+		t.Errorf("expected 洗髓丹x3 in inventory string, got: %s", entry.Inventory)
+	}
+	foundRestore := false
+	for _, a := range audit {
+		if strings.Contains(a, "回滚归还") {
+			foundRestore = true
+			break
+		}
+	}
+	if !foundRestore {
+		t.Errorf("expected rollback restore audit log, got %v", audit)
+	}
+}
