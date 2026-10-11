@@ -26,10 +26,11 @@ type TokenUsage struct {
 
 // StreamChunk represents a streamed token or final usage report.
 type StreamChunk struct {
-	Delta string      `json:"delta"`
-	Usage *TokenUsage `json:"usage,omitempty"`
-	Done  bool        `json:"done"`
-	Err   error       `json:"err,omitempty"`
+	Delta        string      `json:"delta"`
+	Usage        *TokenUsage `json:"usage,omitempty"`
+	FinishReason string      `json:"finish_reason,omitempty"`
+	Done         bool        `json:"done"`
+	Err          error       `json:"err,omitempty"`
 }
 
 // LLMClient represents a standard chat completion provider supporting sync, usage, and streaming.
@@ -165,10 +166,12 @@ type chatResponse struct {
 		Message struct {
 			Content string `json:"content"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
-	OutputText string          `json:"output_text"`
-	Output     json.RawMessage `json:"output"`
-	Usage      *struct {
+	OutputText   string          `json:"output_text"`
+	Output       json.RawMessage `json:"output"`
+	FinishReason string          `json:"finish_reason"`
+	Usage        *struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 		InputTokens      int `json:"input_tokens"`
@@ -179,6 +182,19 @@ type chatResponse struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
 	} `json:"error"`
+}
+
+func extractFinishReason(resp *chatResponse) string {
+	if resp == nil {
+		return ""
+	}
+	if len(resp.Choices) > 0 && resp.Choices[0].FinishReason != "" {
+		return resp.Choices[0].FinishReason
+	}
+	if resp.FinishReason != "" {
+		return resp.FinishReason
+	}
+	return ""
 }
 
 func extractOutputText(raw json.RawMessage) string {
@@ -284,6 +300,47 @@ func (c *HTTPLLMClient) ChatCompletion(ctx context.Context, model string, system
 }
 
 func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (string, TokenUsage, error) {
+	initialMessages := []chatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+	content, usage, finishReason, err := c.chatCompletionOnce(ctx, model, initialMessages, temperature)
+	if err != nil {
+		return "", usage, err
+	}
+
+	if !isOutputLimitFinishReason(finishReason) {
+		return content, usage, nil
+	}
+
+	accumulated := content
+	totalUsage := usage
+
+	for continuationCount := 1; continuationCount <= maxOutputLimitContinuations; continuationCount++ {
+		contMessages := []chatMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
+			{Role: "assistant", Content: accumulated},
+			{Role: "user", Content: continuationInstruction()},
+		}
+
+		newText, roundUsage, roundFinishReason, roundErr := c.chatCompletionOnce(ctx, model, contMessages, temperature)
+		if roundErr != nil {
+			return "", totalUsage, roundErr
+		}
+
+		addTokenUsage(&totalUsage, roundUsage)
+		accumulated = mergeExactContinuation(accumulated, newText)
+
+		if !isOutputLimitFinishReason(roundFinishReason) {
+			return accumulated, totalUsage, nil
+		}
+	}
+
+	return "", totalUsage, fmt.Errorf("模型 [%s] 续写 %d 次后仍被截断", model, maxOutputLimitContinuations)
+}
+
+func (c *HTTPLLMClient) chatCompletionOnce(ctx context.Context, model string, messages []chatMessage, temperature float64) (string, TokenUsage, string, error) {
 	c.mu.RLock()
 	apiKey := c.apiKey
 	baseURL := c.baseURL
@@ -291,40 +348,64 @@ func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 
 	var zeroUsage TokenUsage
 	if apiKey == "mock" || apiKey == "offline" || strings.HasPrefix(model, "mock") {
-		return c.generateMockResponse(model, systemPrompt, userPrompt)
+		var sys, user string
+		for _, m := range messages {
+			if m.Role == "system" && sys == "" {
+				sys = m.Content
+			} else if m.Role == "user" {
+				user = m.Content
+			}
+		}
+		content, usage, err := c.generateMockResponse(model, sys, user)
+		return content, usage, "stop", err
 	}
 	if apiKey == "" {
-		return "", zeroUsage, errors.New("missing API key: please configure your API key in settings (or use 'mock' for offline testing)")
+		return "", zeroUsage, "", errors.New("missing API key: please configure your API key in settings (or use 'mock' for offline testing)")
 	}
 
 	endpoint := c.endpointFor(baseURL)
 	var reqBody chatRequest
 	if strings.HasSuffix(endpoint, "/responses") {
-		reqBody = chatRequest{
-			Model:        model,
-			Instructions: systemPrompt,
-			Input:        userPrompt,
-			Temperature:  temperature,
+		var instructions string
+		var nonSystemMsgs []chatMessage
+		for _, m := range messages {
+			if m.Role == "system" && instructions == "" {
+				instructions = m.Content
+			} else {
+				nonSystemMsgs = append(nonSystemMsgs, m)
+			}
+		}
+		if len(nonSystemMsgs) == 1 && nonSystemMsgs[0].Role == "user" {
+			reqBody = chatRequest{
+				Model:        model,
+				Instructions: instructions,
+				Input:        nonSystemMsgs[0].Content,
+				Temperature:  temperature,
+			}
+		} else {
+			reqBody = chatRequest{
+				Model:        model,
+				Instructions: instructions,
+				Input:        nonSystemMsgs,
+				Temperature:  temperature,
+			}
 		}
 	} else {
 		reqBody = chatRequest{
-			Model: model,
-			Messages: []chatMessage{
-				{Role: "system", Content: systemPrompt},
-				{Role: "user", Content: userPrompt},
-			},
+			Model:       model,
+			Messages:    messages,
 			Temperature: temperature,
 		}
 	}
 
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", zeroUsage, fmt.Errorf("marshal request failed: %w", err)
+		return "", zeroUsage, "", fmt.Errorf("marshal request failed: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return "", zeroUsage, fmt.Errorf("create request failed: %w", err)
+		return "", zeroUsage, "", fmt.Errorf("create request failed: %w", err)
 	}
 
 	c.applyHeaders(req, apiKey, endpoint)
@@ -332,34 +413,34 @@ func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return "", zeroUsage, ctx.Err()
+			return "", zeroUsage, "", ctx.Err()
 		}
 		if isTimeoutError(err) {
-			return "", zeroUsage, fmt.Errorf("模型 [%s] 请求超时: 上游等待首字返回耗时过长 (通常由公用/免费模型并发队列拥堵或长文本推理算力不足引起，建议检查网络或切换为主力写作模型): %w", model, err)
+			return "", zeroUsage, "", fmt.Errorf("模型 [%s] 请求超时: 上游等待首字返回耗时过长 (通常由公用/免费模型并发队列拥堵或长文本推理算力不足引起，建议检查网络或切换为主力写作模型): %w", model, err)
 		}
-		return "", zeroUsage, fmt.Errorf("do HTTP request failed: %w", err)
+		return "", zeroUsage, "", fmt.Errorf("do HTTP request failed: %w", err)
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	if err != nil {
 		if isTimeoutError(err) {
-			return "", zeroUsage, fmt.Errorf("模型 [%s] 读取响应超时 (连接过早中断): %w", model, err)
+			return "", zeroUsage, "", fmt.Errorf("模型 [%s] 读取响应超时 (连接过早中断): %w", model, err)
 		}
-		return "", zeroUsage, fmt.Errorf("read response body failed: %w", err)
+		return "", zeroUsage, "", fmt.Errorf("read response body failed: %w", err)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", zeroUsage, fmt.Errorf("LLM API returned HTTP %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", zeroUsage, "", fmt.Errorf("LLM API returned HTTP %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var chatResp chatResponse
 	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return "", zeroUsage, fmt.Errorf("unmarshal LLM response failed: %w", err)
+		return "", zeroUsage, "", fmt.Errorf("unmarshal LLM response failed: %w", err)
 	}
 
 	if chatResp.Error != nil {
-		return "", zeroUsage, fmt.Errorf("LLM API error: %s", chatResp.Error.Message)
+		return "", zeroUsage, "", fmt.Errorf("LLM API error: %s", chatResp.Error.Message)
 	}
 
 	var content string
@@ -370,11 +451,12 @@ func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 	} else if extracted := extractOutputText(chatResp.Output); extracted != "" {
 		content = extracted
 	} else {
-		return "", zeroUsage, errors.New("LLM returned no choices or output content")
+		return "", zeroUsage, "", errors.New("LLM returned no choices or output content")
 	}
 
 	usage := extractTokenUsage(chatResp.Usage)
-	return content, usage, nil
+	finishReason := extractFinishReason(&chatResp)
+	return content, usage, finishReason, nil
 }
 
 func extractStreamDelta(rawMap map[string]interface{}) string {
@@ -446,7 +528,34 @@ func extractStreamUsage(rawMap map[string]interface{}) *TokenUsage {
 	}
 }
 
+func extractStreamFinishReason(rawMap map[string]interface{}) string {
+	if choices, ok := rawMap["choices"].([]interface{}); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]interface{}); ok {
+			if fr, ok := choice["finish_reason"].(string); ok && fr != "" {
+				return fr
+			}
+		}
+	}
+	if fr, ok := rawMap["finish_reason"].(string); ok && fr != "" {
+		return fr
+	}
+	if respMap, ok := rawMap["response"].(map[string]interface{}); ok {
+		if fr, ok := respMap["finish_reason"].(string); ok && fr != "" {
+			return fr
+		}
+	}
+	return ""
+}
+
 func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
+	messages := []chatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+	return c.ChatCompletionStreamMessages(ctx, model, messages, temperature)
+}
+
+func (c *HTTPLLMClient) ChatCompletionStreamMessages(ctx context.Context, model string, messages []chatMessage, temperature float64) (<-chan StreamChunk, error) {
 	c.mu.RLock()
 	apiKey := c.apiKey
 	baseURL := c.baseURL
@@ -456,8 +565,16 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 		out := make(chan StreamChunk, 4)
 		go func() {
 			defer close(out)
-			resp, usage, _ := c.generateMockResponse(model, systemPrompt, userPrompt)
-			out <- StreamChunk{Delta: resp, Usage: &usage}
+			var sys, user string
+			for _, m := range messages {
+				if m.Role == "system" && sys == "" {
+					sys = m.Content
+				} else if m.Role == "user" {
+					user = m.Content
+				}
+			}
+			resp, usage, _ := c.generateMockResponse(model, sys, user)
+			out <- StreamChunk{Delta: resp, Usage: &usage, FinishReason: "stop"}
 		}()
 		return out, nil
 	}
@@ -468,20 +585,36 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 	endpoint := c.endpointFor(baseURL)
 	var reqBody chatRequest
 	if strings.HasSuffix(endpoint, "/responses") {
-		reqBody = chatRequest{
-			Model:        model,
-			Instructions: systemPrompt,
-			Input:        userPrompt,
-			Temperature:  temperature,
-			Stream:       true,
+		var instructions string
+		var nonSystemMsgs []chatMessage
+		for _, m := range messages {
+			if m.Role == "system" && instructions == "" {
+				instructions = m.Content
+			} else {
+				nonSystemMsgs = append(nonSystemMsgs, m)
+			}
+		}
+		if len(nonSystemMsgs) == 1 && nonSystemMsgs[0].Role == "user" {
+			reqBody = chatRequest{
+				Model:        model,
+				Instructions: instructions,
+				Input:        nonSystemMsgs[0].Content,
+				Temperature:  temperature,
+				Stream:       true,
+			}
+		} else {
+			reqBody = chatRequest{
+				Model:        model,
+				Instructions: instructions,
+				Input:        nonSystemMsgs,
+				Temperature:  temperature,
+				Stream:       true,
+			}
 		}
 	} else {
 		reqBody = chatRequest{
-			Model: model,
-			Messages: []chatMessage{
-				{Role: "system", Content: systemPrompt},
-				{Role: "user", Content: userPrompt},
-			},
+			Model:       model,
+			Messages:    messages,
 			Temperature: temperature,
 			Stream:      true,
 		}
@@ -565,11 +698,13 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 
 				deltaText := extractStreamDelta(rawMap)
 				usage := extractStreamUsage(rawMap)
+				finishReason := extractStreamFinishReason(rawMap)
 
-				if deltaText != "" || usage != nil {
+				if deltaText != "" || usage != nil || finishReason != "" {
 					if !sendChunk(StreamChunk{
-						Delta: deltaText,
-						Usage: usage,
+						Delta:        deltaText,
+						Usage:        usage,
+						FinishReason: finishReason,
 					}) {
 						return
 					}
@@ -589,6 +724,101 @@ func (c *HTTPLLMClient) ChatCompletionStream(ctx context.Context, model string, 
 	return out, nil
 }
 
+func streamOnce(
+	ctx context.Context,
+	client LLMClient,
+	model string,
+	messages []chatMessage,
+	temperature float64,
+	onDelta func(string),
+) (string, TokenUsage, string, error) {
+	var streamCh <-chan StreamChunk
+	var err error
+
+	type messageStreamer interface {
+		ChatCompletionStreamMessages(ctx context.Context, model string, messages []chatMessage, temperature float64) (<-chan StreamChunk, error)
+	}
+
+	if ms, ok := client.(messageStreamer); ok {
+		streamCh, err = ms.ChatCompletionStreamMessages(ctx, model, messages, temperature)
+	} else {
+		var sys, user string
+		if len(messages) == 2 && messages[0].Role == "system" && messages[1].Role == "user" {
+			sys = messages[0].Content
+			user = messages[1].Content
+		} else {
+			for _, m := range messages {
+				if m.Role == "system" && sys == "" {
+					sys = m.Content
+				} else if user == "" {
+					user = m.Content
+				} else {
+					user += "\n\n" + m.Content
+				}
+			}
+		}
+		streamCh, err = client.ChatCompletionStream(ctx, model, sys, user, temperature)
+	}
+
+	if err != nil {
+		if isTimeoutError(err) {
+			return "", TokenUsage{}, "", fmt.Errorf("模型 [%s] 流式请求等待首字超时 (未在时限内收到响应头): %w", model, err)
+		}
+		return "", TokenUsage{}, "", err
+	}
+
+	var sb strings.Builder
+	var finalUsage TokenUsage
+	var finalFinishReason string
+	hasUsage := false
+	streamFailed := false
+	var streamErr error
+
+	for chunk := range streamCh {
+		if chunk.Err != nil {
+			streamFailed = true
+			streamErr = chunk.Err
+			break
+		}
+		if chunk.Delta != "" {
+			sb.WriteString(chunk.Delta)
+			if onDelta != nil {
+				onDelta(chunk.Delta)
+			}
+		}
+		if chunk.Usage != nil {
+			finalUsage = *chunk.Usage
+			hasUsage = true
+		}
+		if chunk.FinishReason != "" {
+			finalFinishReason = chunk.FinishReason
+		}
+	}
+
+	if streamFailed {
+		if isTimeoutError(streamErr) {
+			return "", finalUsage, "", fmt.Errorf("模型 [%s] 流式生成中断 (等待首字或长文本传输超时): %w", model, streamErr)
+		}
+		return "", finalUsage, "", streamErr
+	}
+
+	if !hasUsage {
+		var promptRunes int
+		for _, m := range messages {
+			promptRunes += len([]rune(m.Content))
+		}
+		pTokens := promptRunes * 3 / 2
+		cTokens := len([]rune(sb.String())) * 3 / 2
+		finalUsage = TokenUsage{
+			PromptTokens:     pTokens,
+			CompletionTokens: cTokens,
+			TotalTokens:      pTokens + cTokens,
+		}
+	}
+
+	return sb.String(), finalUsage, finalFinishReason, nil
+}
+
 // SafeChatCompletionWithStreamFallback executes an LLM request using streaming first to eliminate
 // 'awaiting headers' timeouts on gateways. If streaming succeeds, tokens are aggregated in memory.
 // If streaming is unsupported or encounters an upstream non-streaming error, it falls back to ChatCompletionWithUsage.
@@ -604,49 +834,46 @@ func SafeChatCompletionWithStreamFallback(
 		return "", TokenUsage{}, errors.New("nil llm client")
 	}
 
-	streamCh, err := client.ChatCompletionStream(ctx, model, systemPrompt, userPrompt, temperature)
-	if err == nil {
-		var sb strings.Builder
-		var finalUsage TokenUsage
-		hasUsage := false
-		streamFailed := false
-		var streamErr error
+	initialMessages := []chatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
 
-		for chunk := range streamCh {
-			if chunk.Err != nil {
-				streamFailed = true
-				streamErr = chunk.Err
-				break
+	content, usage, finishReason, err := streamOnce(ctx, client, model, initialMessages, temperature, onDelta)
+	if err == nil && content != "" {
+		if !isOutputLimitFinishReason(finishReason) {
+			return content, usage, nil
+		}
+
+		accumulated := content
+		totalUsage := usage
+
+		for continuationCount := 1; continuationCount <= maxOutputLimitContinuations; continuationCount++ {
+			contMessages := []chatMessage{
+				{Role: "system", Content: systemPrompt},
+				{Role: "user", Content: userPrompt},
+				{Role: "assistant", Content: accumulated},
+				{Role: "user", Content: continuationInstruction()},
 			}
-			if chunk.Delta != "" {
-				sb.WriteString(chunk.Delta)
-				if onDelta != nil {
-					onDelta(chunk.Delta)
-				}
+
+			newText, roundUsage, roundFinishReason, roundErr := streamOnce(ctx, client, model, contMessages, temperature, onDelta)
+			if roundErr != nil {
+				return "", totalUsage, roundErr
 			}
-			if chunk.Usage != nil {
-				finalUsage = *chunk.Usage
-				hasUsage = true
+
+			addTokenUsage(&totalUsage, roundUsage)
+			accumulated = mergeExactContinuation(accumulated, newText)
+
+			if !isOutputLimitFinishReason(roundFinishReason) {
+				return accumulated, totalUsage, nil
 			}
 		}
 
-		if !streamFailed && sb.Len() > 0 {
-			if !hasUsage {
-				pTokens := (len([]rune(systemPrompt)) + len([]rune(userPrompt))) * 3 / 2
-				cTokens := len([]rune(sb.String())) * 3 / 2
-				finalUsage = TokenUsage{
-					PromptTokens:     pTokens,
-					CompletionTokens: cTokens,
-					TotalTokens:      pTokens + cTokens,
-				}
-			}
-			return sb.String(), finalUsage, nil
-		}
+		return "", totalUsage, fmt.Errorf("模型 [%s] 续写 %d 次后仍被截断", model, maxOutputLimitContinuations)
+	}
 
-		// If stream was interrupted due to a real timeout error, fail fast without fallback retry storm
-		if streamFailed && isTimeoutError(streamErr) {
-			return sb.String(), finalUsage, fmt.Errorf("模型 [%s] 流式生成中断 (等待首字或长文本传输超时): %w", model, streamErr)
-		}
+	if err != nil {
+		return "", TokenUsage{}, err
 	}
 
 	// Fallback to sync ChatCompletionWithUsage
@@ -793,6 +1020,26 @@ func (r *LLMRouter) ChatCompletionWithUsage(ctx context.Context, model string, s
 func (r *LLMRouter) ChatCompletionStream(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
 	cl, targetModel := r.resolveClientAndModel(ctx, model)
 	return cl.ChatCompletionStream(ctx, targetModel, systemPrompt, userPrompt, temperature)
+}
+
+func (r *LLMRouter) ChatCompletionStreamMessages(ctx context.Context, model string, messages []chatMessage, temperature float64) (<-chan StreamChunk, error) {
+	cl, targetModel := r.resolveClientAndModel(ctx, model)
+	if ms, ok := cl.(interface {
+		ChatCompletionStreamMessages(context.Context, string, []chatMessage, float64) (<-chan StreamChunk, error)
+	}); ok {
+		return ms.ChatCompletionStreamMessages(ctx, targetModel, messages, temperature)
+	}
+	var sys, user string
+	for _, m := range messages {
+		if m.Role == "system" && sys == "" {
+			sys = m.Content
+		} else if user == "" {
+			user = m.Content
+		} else {
+			user += "\n\n" + m.Content
+		}
+	}
+	return cl.ChatCompletionStream(ctx, targetModel, sys, user, temperature)
 }
 
 func (r *LLMRouter) ChatCompletionForRole(ctx context.Context, role LLMRole, model string, systemPrompt, userPrompt string, temperature float64) (string, TokenUsage, error) {
