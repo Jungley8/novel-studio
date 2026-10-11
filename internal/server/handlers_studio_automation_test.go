@@ -238,6 +238,9 @@ func TestQueue_Lifecycle(t *testing.T) {
 	if item1.ID == "" || item1.Title != "剑开天门" || item1.Status != domain.QueueStatusPending || !item1.AutoLock {
 		t.Errorf("unexpected item1 attributes: %+v", item1)
 	}
+	if item1.CreatedAt == "" || item1.UpdatedAt == "" {
+		t.Errorf("expected timestamps populated on POST response, got created_at=%q updated_at=%q", item1.CreatedAt, item1.UpdatedAt)
+	}
 
 	// 2. POST second item with explicit auto_lock=false
 	postBody2 := `{"title": "星际拓荒", "concept": "硬科幻", "platform": "番茄", "volumes": 1, "auto_lock": false}`

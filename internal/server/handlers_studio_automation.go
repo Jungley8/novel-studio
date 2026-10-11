@@ -173,6 +173,11 @@ func (s *Server) handleStudioQueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// 回读以带出 store 落库的时间戳（created_at/updated_at），与 PUT 分支一致
+		if reloaded, err := s.store.GetBookQueueItem(r.Context(), item.ID); err == nil {
+			item = reloaded
+		}
+
 		jsonResponse(w, http.StatusCreated, item)
 
 	default:
