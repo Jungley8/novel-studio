@@ -59,6 +59,7 @@ type Store interface {
 	GetProtagonistEntry(ctx context.Context, projectID string) (*domain.CodexEntry, error)
 	SaveCodexEntry(ctx context.Context, entry *domain.CodexEntry) error
 	GetCodexEntry(ctx context.Context, projectID, id string) (*domain.CodexEntry, error)
+	CodexEntryProjectID(ctx context.Context, id string) (string, error)
 	ListCodexEntries(ctx context.Context, projectID string, category domain.CodexCategory) ([]*domain.CodexEntry, error)
 	DeleteCodexEntry(ctx context.Context, projectID, id string) error
 	SaveCodexProgression(ctx context.Context, entryID string, prog *domain.Progression) error

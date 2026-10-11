@@ -177,6 +177,14 @@ func (m *mockChronicleStore) SaveCodexEntry(ctx context.Context, entry *domain.C
 func (m *mockChronicleStore) GetCodexEntry(ctx context.Context, projectID, id string) (*domain.CodexEntry, error) {
 	return nil, nil
 }
+func (m *mockChronicleStore) CodexEntryProjectID(ctx context.Context, id string) (string, error) {
+	for _, e := range m.codexEntries {
+		if e.ID == id {
+			return e.ProjectID, nil
+		}
+	}
+	return "", nil
+}
 func (m *mockChronicleStore) ListCodexEntries(ctx context.Context, projectID string, category domain.CodexCategory) ([]*domain.CodexEntry, error) {
 	return m.codexEntries, nil
 }

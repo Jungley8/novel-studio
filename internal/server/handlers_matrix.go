@@ -523,6 +523,16 @@ func (s *Server) handleProjectCodex(w http.ResponseWriter, r *http.Request, proj
 				errorResponse(w, http.StatusBadRequest, "invalid json: "+err.Error())
 				return
 			}
+			// Fail-Closed：词条必须归属本作品，严禁用其它作品的词条 ID 覆盖其数据。
+			ownerProjectID, err := s.store.CodexEntryProjectID(ctx, entryID)
+			if err != nil {
+				errorResponse(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if ownerProjectID != "" && ownerProjectID != projectID {
+				errorResponse(w, http.StatusConflict, "codex entry belongs to another project")
+				return
+			}
 			entry.ID = entryID
 			entry.ProjectID = projectID
 			if err := s.store.SaveCodexEntry(ctx, &entry); err != nil {

@@ -262,6 +262,20 @@ func (s *SQLiteStore) GetCodexEntry(ctx context.Context, projectID, id string) (
 	return &e, nil
 }
 
+// CodexEntryProjectID 返回指定词条实际归属的作品 ID；词条不存在时返回空字符串。
+// 用于请求侧 Fail-Closed 校验：禁止用其它作品的词条 ID 覆盖其数据。
+func (s *SQLiteStore) CodexEntryProjectID(ctx context.Context, id string) (string, error) {
+	var projectID string
+	err := s.db.QueryRowContext(ctx, `SELECT project_id FROM codex_entries WHERE id = ?`, id).Scan(&projectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("query codex entry project: %w", err)
+	}
+	return projectID, nil
+}
+
 func (s *SQLiteStore) GetProtagonistEntry(ctx context.Context, projectID string) (*domain.CodexEntry, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
