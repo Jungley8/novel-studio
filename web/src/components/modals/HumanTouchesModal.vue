@@ -181,6 +181,12 @@ watch(() => state.showHumanTouchesModal, async (open) => {
   }
 });
 
+// 切换作品时丢弃旧作品的人味建议，防止插入到新作品正文
+watch(() => state.currentProject?.id, () => {
+  suggestions.value = [];
+  activeCategory.value = 'ALL';
+});
+
 async function fetchSuggestions() {
   if (!state.currentProject || !state.workbench.content.trim()) {
     return notify('手稿为空', '请先在手稿区生成或编写章节内容', 'info');

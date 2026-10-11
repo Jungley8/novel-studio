@@ -275,7 +275,13 @@ async function toggleDetail(ev) {
   }
 }
 
-watch(() => state.selectedProjectId, () => { if (state.activeTab === 'activity') reload(); });
+watch(() => state.selectedProjectId, () => {
+  // 清空作品级过滤与展开态，防止旧作品的筛选条件过滤新作品时间线
+  filters.entity_type = '';
+  filters.chapter_index = '';
+  openRuns.value = new Set();
+  if (state.activeTab === 'activity') reload();
+});
 watch(() => state.activeTab, (tab) => { if (tab === 'activity') reload(); });
 onMounted(() => { if (state.activeTab === 'activity' && state.currentProject) reload(); });
 </script>

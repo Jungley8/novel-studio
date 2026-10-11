@@ -566,6 +566,7 @@
 <script setup>
 import { ref, computed } from 'vue';
 import { state, computedState, actions, notify, dialogs } from '../../stores/appState';
+import { createDefaultWorkbench } from '../../stores/domain/projectScope';
 import { api } from '../../api/client';
 import {
   Sparkles,
@@ -805,8 +806,7 @@ async function handleCommitChapter() {
     state.pipelineState.halted = false;
     state.pipelineState.haltInfo = null;
     await actions.selectProject(state.currentProject.id);
-    state.workbench.content = '';
-    state.workbench.coreConflict = '';
+    state.workbench = createDefaultWorkbench();
     state.reviewResult = null;
     state.activeStep = 1;
   } catch (e) {

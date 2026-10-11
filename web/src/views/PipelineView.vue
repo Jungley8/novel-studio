@@ -611,14 +611,11 @@ async function handleStartPipeline() {
 
 // 跳转至作品工作台
 async function goToWorkbench(projectId) {
-  try {
-    if (projectId) {
-      await actions.selectProject(projectId);
-    }
-  } catch (err) {
-    console.error('Failed to select project:', err);
+  if (projectId) {
+    // Fail-Closed：切换被拒绝（例如当前作品正在生成）时保持原地，不强行改写选中作品。
+    const ok = await actions.selectProject(projectId);
+    if (!ok) return;
   }
-  state.selectedProjectId = projectId;
   state.activeTab = 'workbench';
 }
 

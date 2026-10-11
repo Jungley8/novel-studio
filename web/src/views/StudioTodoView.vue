@@ -204,18 +204,23 @@ async function fetchTodos() {
   }
 }
 
-// 去处理：切换当前选中项目并跳转到 workbench
+// 去处理：切换当前选中项目并跳转到 workbench，载入停线章节的在途草稿
 async function handleTodo(todo) {
-  try {
-    if (todo?.project_id) {
-      await actions.selectProject(todo.project_id);
-    }
-  } catch (e) {
-    console.error('Failed to select project:', e);
+  if (todo?.project_id) {
+    // Fail-Closed：切换被拒绝（例如当前作品正在生成）时保持原地。
+    const ok = await actions.selectProject(todo.project_id);
+    if (!ok) return;
   }
-  state.selectedProjectId = todo.project_id;
   if (todo?.chapter_index) {
+    // 先把当前在途内容落盘，再载入待办章节的停线草稿与体检建议
+    if (state.workbench.content.trim() || state.workbench.coreConflict.trim()) {
+      if (actions.saveCheckpoint) await actions.saveCheckpoint({}, true);
+    }
     state.editingChapterIndex = todo.chapter_index;
+    if (actions.restoreCheckpoint) {
+      await actions.restoreCheckpoint(todo.chapter_index);
+    }
+    state.activeStep = 5;
   }
   state.activeTab = 'workbench';
 }

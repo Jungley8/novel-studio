@@ -324,9 +324,15 @@ function copyMessageText(msg) {
   notify('已复制到剪贴板', text.slice(0, 40) + '...', 'info', 1500);
 }
 
-function executePrimaryAction(msg) {
+async function executePrimaryAction(msg) {
   if (!msg.primaryAction) return;
   const { targetTab, chapterIndex, step } = msg.primaryAction;
+  // Fail-Closed：消息可能来自其它作品（例如排程/后台生产完成），
+  // 跳转前必须切到消息所属作品；切换被拒绝或失败时不跳转，防止把提示误落到当前作品。
+  if (msg.projectId && msg.projectId !== state.selectedProjectId) {
+    const ok = await actions.selectProject(msg.projectId);
+    if (!ok) return;
+  }
   if (targetTab) {
     actions.selectTab ? actions.selectTab(targetTab) : (state.activeTab = targetTab);
   }

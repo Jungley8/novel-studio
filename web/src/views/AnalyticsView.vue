@@ -598,6 +598,10 @@ async function handleRefresh() {
 watch(
   () => [state.currentProject?.id, state.activeTab],
   ([newProjId, newTab], [oldProjId, oldTab]) => {
+    if (newProjId !== oldProjId) {
+      // 作品切换：先清空旧报告，避免加载期间展示上一个作品的数据
+      benchReport.value = null;
+    }
     if (!newProjId) {
       benchReport.value = null;
       return;

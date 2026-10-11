@@ -110,7 +110,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue';
+import { ref, watch, nextTick } from 'vue';
 import { state, computedState, notify } from '../../stores/appState';
 import { api } from '../../api/client';
 import { MessageSquare, X, Sparkles } from 'lucide-vue-next';
@@ -131,6 +131,13 @@ const messagesContainer = ref(null);
 function clearMessages() {
   messages.value = [];
 }
+
+// 切换作品时清空对话历史与角色绑定，防止对旧作品角色发消息/上下文串稿。
+watch(() => state.currentProject?.id, () => {
+  messages.value = [];
+  inputContent.value = '';
+  chatCharacterId.value = '';
+});
 
 async function sendMessage() {
   const text = inputContent.value.trim();

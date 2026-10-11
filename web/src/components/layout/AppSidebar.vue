@@ -32,7 +32,7 @@
         <div v-if="state.projects.length > 0" class="relative">
           <select 
             :value="state.selectedProjectId" 
-            @change="actions.selectProject($event.target.value)"
+            @change="handleProjectChange($event)"
             class="w-full bg-atelier-850 border border-atelier-700 rounded-md px-2.5 py-1.5 text-xs text-ink-100 font-medium appearance-none focus:outline-none focus:border-brand-amber/60 focus:ring-1 focus:ring-brand-amber/40 transition truncate pr-6 cursor-pointer">
             <option v-for="p in state.projects" :key="p.id" :value="p.id">{{ p.title }}</option>
           </select>
@@ -198,5 +198,13 @@ function selectTab(tabId) {
     actions.loadCodexRelations();
   }
   if (tabId === 'analytics') actions.loadAnalytics();
+}
+
+// 切换作品；被拒绝（存在进行中的生成任务）时把下拉框恢复为当前作品。
+async function handleProjectChange(event) {
+  const ok = await actions.selectProject(event.target.value);
+  if (!ok) {
+    event.target.value = state.selectedProjectId;
+  }
 }
 </script>

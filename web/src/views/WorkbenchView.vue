@@ -68,7 +68,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { state, computedState, actions, notify } from '../stores/appState';
 import { api } from '../api/client';
 import { Plus, Settings, Minimize2 } from 'lucide-vue-next';
@@ -250,6 +250,21 @@ function openHumanTouchesModal() {
 onMounted(() => {
   if (actions.restoreCheckpoint) {
     actions.restoreCheckpoint(computedState.currentWorkingChapterIndex.value);
+  }
+});
+
+// 切换作品时清空本视图的瞬态渲染状态，防止上一个作品的错误横幅/计时残留。
+watch(() => state.currentProject?.id, () => {
+  renderError.value = null;
+  renderElapsedSec.value = 0;
+  rewriteElapsedSec.value = 0;
+  if (renderTimer) {
+    clearInterval(renderTimer);
+    renderTimer = null;
+  }
+  if (rewriteTimer) {
+    clearInterval(rewriteTimer);
+    rewriteTimer = null;
   }
 });
 

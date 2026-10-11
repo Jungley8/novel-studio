@@ -274,7 +274,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { state, computedState, actions } from '../stores/appState';
 import { api } from '../api/client';
 import { 
@@ -384,4 +384,13 @@ function openRelationManager(entry) {
   state.activeCodexForSub = entry;
   state.showRelationModal = true;
 }
+
+// 切换作品时清空本视图的本地扫描/生成状态，避免旧作品的扫描结果残留。
+watch(() => state.currentProject?.id, () => {
+  showMentionScanner.value = false;
+  mentionScanText.value = '';
+  mentionScanResult.value = null;
+  showAIGenerateModal.value = false;
+  aiGenForm.value = { category: 'CHARACTER', name: '', concept: '' };
+});
 </script>

@@ -384,10 +384,10 @@ async function load() {
 watch(
   () => state.currentProject?.id,
   (newId) => {
+    // 先清空旧作品指标，避免加载期间展示上一个作品的数据
+    metricsData.value = null;
     if (newId) {
       load();
-    } else {
-      metricsData.value = null;
     }
   }
 );

@@ -153,7 +153,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { state, actions, notify } from '../../stores/appState';
 import { api } from '../../api/client';
 import { ShieldCheck, ShieldAlert, Sparkles, Sliders, X, Check, Copy, Loader2 } from 'lucide-vue-next';
@@ -161,6 +161,11 @@ import { ShieldCheck, ShieldAlert, Sparkles, Sliders, X, Check, Copy, Loader2 } 
 const intensity = ref(0.6);
 const isLoading = ref(false);
 const result = ref(null);
+
+// 切换作品时丢弃上一个作品的处理结果（切作品时本弹窗会被全局重置关闭）
+watch(() => state.currentProject?.id, () => {
+  result.value = null;
+});
 
 async function runHarmonize() {
   if (!state.currentProject || !state.workbench.content.trim()) {

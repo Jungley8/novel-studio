@@ -432,8 +432,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onUnmounted } from 'vue';
+import { ref, computed, watch, onUnmounted } from 'vue';
 import { state, computedState, actions, notify, dialogs } from '../../stores/appState';
+import { createDefaultWorkbench } from '../../stores/domain/projectScope';
 import { api } from '../../api/client';
 import {
   AlertCircle,
@@ -554,14 +555,7 @@ async function resetToNewChapter() {
   state.editingChapterIndex = null;
   state.pipelineState.halted = false;
   state.pipelineState.haltInfo = null;
-  state.workbench.content = '';
-  state.workbench.coreConflict = '';
-  state.workbench.beats = [
-    { phase: '蓄力压迫', tension: 4, action: '', expectation_broken: '' },
-    { phase: '试探下套', tension: 6, action: '', expectation_broken: '' },
-    { phase: '绝地反转', tension: 9, action: '', expectation_broken: '' },
-    { phase: '章末留钩', tension: 8, action: '', expectation_broken: '' },
-  ];
+  state.workbench = createDefaultWorkbench();
   state.reviewResult = null;
   state.activeStep = 1;
   notify('已切换', '已重置画布为创作最新章节', 'info');
@@ -659,6 +653,18 @@ function handleProseInput() {
     }
   }, 1500);
 }
+
+// 切换作品时取消在途的防抖自动保存与划词改写缓冲，
+// 防止旧作品的正文在延迟触发时被写入新作品的断点。
+watch(() => state.currentProject?.id, () => {
+  if (proseDebounceTimer) {
+    clearTimeout(proseDebounceTimer);
+    proseDebounceTimer = null;
+  }
+  inlineActionResult.value = null;
+  showInlineDiff.value = false;
+  lastSelectedText = '';
+});
 
 function formatSaveTime(ts) {
   if (!ts) return '';

@@ -609,6 +609,14 @@ async function deleteIntent(intent) {
 watch(
   () => state.selectedProjectId,
   () => {
+    // 清空编辑态，防止旧作品的章节编辑表单残留（chapter_index 在不同作品间会重号）
+    editingId.value = null;
+    editForm.conflict = '';
+    editForm.pov = '';
+    editForm.tension_target = 5;
+    editForm.emotion_curve = '';
+    editForm.hook_plants = '';
+    editForm.hook_payoffs = '';
     if (volumeArcs.value.length > 0) {
       selectedVolumeIndex.value = volumeArcs.value[0].volume_index || 1;
     } else {

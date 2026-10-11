@@ -286,7 +286,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { state, actions, notify } from '../stores/appState';
 import { api } from '../api/client';
 import { 
@@ -319,7 +319,12 @@ async function submitAISplitScenes() {
   if (!targetChapter.value) return;
   isSplitting.value = true;
   try {
-    await actions.generateMatrixScenes(targetChapter.value.id, aiSplitGoalHint.value.trim());
+    await actions.generateMatrixScenes({
+      chapter_index: targetChapter.value.chapter_index,
+      chapter_title: targetChapter.value.title || '',
+      core_conflict: targetChapter.value.core_conflict || '',
+      prompt: aiSplitGoalHint.value.trim(),
+    });
     showAISplitModal.value = false;
   } finally {
     isSplitting.value = false;
@@ -397,4 +402,15 @@ async function submitBatchSplitScenes() {
     isBatchSplitting.value = false;
   }
 }
+
+// 切换作品时关闭本视图弹窗并清空章节/分卷引用，防止旧作品 id 被提交。
+watch(() => state.currentProject?.id, () => {
+  showAISplitModal.value = false;
+  isSplitting.value = false;
+  targetChapter.value = null;
+  aiSplitGoalHint.value = '';
+  showBatchSplitModal.value = false;
+  isBatchSplitting.value = false;
+  batchSplitVolume.value = 1;
+});
 </script>

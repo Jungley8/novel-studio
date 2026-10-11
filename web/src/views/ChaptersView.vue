@@ -593,12 +593,26 @@ const currentSelectedChapter = computed(() => {
   return state.chapters.find(c => c.id === selectedChapterId.value) || state.chapters[0] || null;
 });
 
-// 监听并在有章节时默认选中第一个
+// 监听章节目录变化：切换到新作品或所选章节已不存在时，重新定位到首章
 watch(() => state.chapters, (newChs) => {
-  if (newChs.length > 0 && !selectedChapterId.value) {
+  if (newChs.length === 0) {
+    selectedChapterId.value = '';
+    return;
+  }
+  if (!selectedChapterId.value || !newChs.some(c => c.id === selectedChapterId.value)) {
     selectedChapterId.value = newChs[0].id;
   }
 }, { immediate: true });
+
+// 切换作品时清空搜索词与展开状态，防止旧作品的过滤条件/展开态串入新作品
+watch(() => state.currentProject?.id, () => {
+  searchQuery.value = '';
+  copied.value = false;
+  isAllExpanded.value = false;
+  for (const map of [expandedMap, volExpandedMap, chapterBeatsExpandedMap]) {
+    Object.keys(map).forEach(k => delete map[k]);
+  }
+});
 
 function selectChapter(id) {
   selectedChapterId.value = id;

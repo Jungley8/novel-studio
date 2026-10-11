@@ -724,6 +724,11 @@ watch(() => state.activeTab, (tab) => {
 
 watch(() => state.currentProject?.id, async (projId) => {
   if (projId) {
+    // 清空旧作品的搜索词与关系创建弹窗，防止用旧实体 id 提交关系
+    searchQuery.value = '';
+    selectedCategory.value = 'ALL';
+    showCreateRelationModal.value = false;
+    createRelationSourceId.value = '';
     await actions.loadCodexEntries();
     await actions.loadCodexRelations();
     nextTick(() => {
