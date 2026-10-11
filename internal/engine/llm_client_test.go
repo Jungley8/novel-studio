@@ -3,8 +3,10 @@ package engine_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -389,5 +391,349 @@ func TestSafeChatCompletionWithStreamFallback(t *testing.T) {
 	}
 	if usage.TotalTokens != 30 {
 		t.Fatalf("expected 30 tokens, got %d", usage.TotalTokens)
+	}
+}
+
+func TestStream_OutputLimitContinuation(t *testing.T) {
+	var requestCount atomic.Int32
+	contentA := "长篇故事第一回，风雪交加之时，主角在破庙中避寒待续"
+	contentB := "避寒待续。忽闻庙门外传来一阵急促马蹄声，踏雪而来。"
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqNum := requestCount.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+
+		if reqNum == 1 {
+			_, _ = w.Write([]byte(fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", contentA)))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			_, _ = w.Write([]byte("data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":20,\"total_tokens\":30}}\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return
+		}
+
+		if reqNum == 2 {
+			var body map[string]interface{}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			msgs, _ := body["messages"].([]interface{})
+			if len(msgs) != 4 {
+				t.Errorf("expected 4 messages on continuation, got %d", len(msgs))
+			}
+
+			_, _ = w.Write([]byte(fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", contentB)))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			_, _ = w.Write([]byte("data: {\"usage\":{\"prompt_tokens\":30,\"completion_tokens\":40,\"total_tokens\":70}}\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return
+		}
+
+		t.Errorf("unexpected request count: %d", reqNum)
+	}))
+	defer ts.Close()
+
+	client := engine.NewHTTPLLMClient(ts.URL, "test-key")
+	got, usage, err := engine.SafeChatCompletionWithStreamFallback(
+		context.Background(),
+		client,
+		"writer-model",
+		"sys",
+		"user",
+		0.7,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := engine.MergeExactContinuation(contentA, contentB)
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if requestCount.Load() != 2 {
+		t.Fatalf("expected 2 requests, got %d", requestCount.Load())
+	}
+	if usage.TotalTokens != 100 {
+		t.Fatalf("expected usage.TotalTokens 100 (30+70), got %d", usage.TotalTokens)
+	}
+	if usage.PromptTokens != 40 || usage.CompletionTokens != 60 {
+		t.Fatalf("expected prompt 40, comp 60, got prompt %d, comp %d", usage.PromptTokens, usage.CompletionTokens)
+	}
+}
+
+func TestStream_OutputLimitExhausted(t *testing.T) {
+	var requestCount atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"截断片段\"}}]}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":10,\"total_tokens\":20}}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer ts.Close()
+
+	client := engine.NewHTTPLLMClient(ts.URL, "test-key")
+	modelName := "deepseek-writer"
+	content, _, err := engine.SafeChatCompletionWithStreamFallback(
+		context.Background(),
+		client,
+		modelName,
+		"sys",
+		"user",
+		0.7,
+		nil,
+	)
+	if err == nil {
+		t.Fatalf("expected error when output limit is exhausted after 3 continuations, got content %q", content)
+	}
+	if !strings.Contains(err.Error(), "续写 3 次后仍被截断") {
+		t.Errorf("expected error message to contain '续写 3 次后仍被截断', got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), modelName) {
+		t.Errorf("expected error message to contain model name %q, got %q", modelName, err.Error())
+	}
+	// Initial request (1) + 3 continuation requests (3) = 4 total requests
+	if requestCount.Load() != 4 {
+		t.Fatalf("expected strictly 4 requests (1 initial + 3 continuations), got %d", requestCount.Load())
+	}
+}
+
+func TestStream_NetworkErrorNoContinuation(t *testing.T) {
+	var requestCount atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"开始生成一部分\"}}]}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		// Abruptly close underlying connection
+		hj, ok := w.(http.Hijacker)
+		if ok {
+			conn, _, _ := hj.Hijack()
+			_ = conn.Close()
+			return
+		}
+	}))
+	defer ts.Close()
+
+	client := engine.NewHTTPLLMClient(ts.URL, "test-key")
+	_, _, err := engine.SafeChatCompletionWithStreamFallback(
+		context.Background(),
+		client,
+		"writer-model",
+		"sys",
+		"user",
+		0.7,
+		nil,
+	)
+	if err == nil {
+		t.Fatalf("expected error on stream network disconnection, got nil")
+	}
+	if requestCount.Load() != 1 {
+		t.Fatalf("expected strictly 1 request (network error must bubble up without continuation), got %d", requestCount.Load())
+	}
+}
+
+func TestSync_OutputLimitContinuation(t *testing.T) {
+	var requestCount atomic.Int32
+	part1 := "非流式正文第一段，夜幕降临待续"
+	part2 := "夜幕降临待续。烛火摇曳，杀机四伏。"
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqNum := requestCount.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+
+		if reqNum == 1 {
+			_, _ = w.Write([]byte(fmt.Sprintf(`{
+				"choices": [
+					{
+						"message": {"content": %q},
+						"finish_reason": "length"
+					}
+				],
+				"usage": {"prompt_tokens": 15, "completion_tokens": 25, "total_tokens": 40}
+			}`, part1)))
+			return
+		}
+
+		if reqNum == 2 {
+			var body map[string]interface{}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			msgs, _ := body["messages"].([]interface{})
+			if len(msgs) != 4 {
+				t.Errorf("expected 4 messages on continuation, got %d", len(msgs))
+			}
+
+			_, _ = w.Write([]byte(fmt.Sprintf(`{
+				"choices": [
+					{
+						"message": {"content": %q},
+						"finish_reason": "stop"
+					}
+				],
+				"usage": {"prompt_tokens": 35, "completion_tokens": 45, "total_tokens": 80}
+			}`, part2)))
+			return
+		}
+
+		t.Errorf("unexpected request count: %d", reqNum)
+	}))
+	defer ts.Close()
+
+	client := engine.NewHTTPLLMClient(ts.URL, "test-key")
+	got, usage, err := client.ChatCompletionWithUsage(
+		context.Background(),
+		"writer-model",
+		"sys",
+		"user",
+		0.7,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := engine.MergeExactContinuation(part1, part2)
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if requestCount.Load() != 2 {
+		t.Fatalf("expected 2 requests, got %d", requestCount.Load())
+	}
+	if usage.TotalTokens != 120 {
+		t.Fatalf("expected usage.TotalTokens 120 (40+80), got %d", usage.TotalTokens)
+	}
+	if usage.PromptTokens != 50 || usage.CompletionTokens != 70 {
+		t.Fatalf("expected prompt 50, comp 70, got prompt %d, comp %d", usage.PromptTokens, usage.CompletionTokens)
+	}
+}
+
+func TestStream_FinishReasonStopNoContinuation(t *testing.T) {
+	var streamRequests atomic.Int32
+	var syncRequests atomic.Int32
+
+	tsStream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		streamRequests.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"完整流式内容\"}}]}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":15,\"total_tokens\":25}}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer tsStream.Close()
+
+	tsSync := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		syncRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices": [
+				{
+					"message": {"content": "完整非流式内容"},
+					"finish_reason": "stop"
+				}
+			],
+			"usage": {"prompt_tokens": 12, "completion_tokens": 18, "total_tokens": 30}
+		}`))
+	}))
+	defer tsSync.Close()
+
+	ctx := context.Background()
+
+	// 1. Stream regression test
+	clientStream := engine.NewHTTPLLMClient(tsStream.URL, "test-key")
+	gotStream, usageStream, errStream := engine.SafeChatCompletionWithStreamFallback(
+		ctx,
+		clientStream,
+		"model",
+		"sys",
+		"user",
+		0.7,
+		nil,
+	)
+	if errStream != nil {
+		t.Fatalf("SafeChatCompletionWithStreamFallback failed: %v", errStream)
+	}
+	if gotStream != "完整流式内容" {
+		t.Errorf("got %q, want '完整流式内容'", gotStream)
+	}
+	if streamRequests.Load() != 1 {
+		t.Errorf("expected strictly 1 stream request on finish_reason:stop, got %d", streamRequests.Load())
+	}
+	if usageStream.TotalTokens != 25 {
+		t.Errorf("expected 25 total tokens, got %d", usageStream.TotalTokens)
+	}
+
+	// 2. Sync regression test
+	clientSync := engine.NewHTTPLLMClient(tsSync.URL, "test-key")
+	gotSync, usageSync, errSync := clientSync.ChatCompletionWithUsage(
+		ctx,
+		"model",
+		"sys",
+		"user",
+		0.7,
+	)
+	if errSync != nil {
+		t.Fatalf("ChatCompletionWithUsage failed: %v", errSync)
+	}
+	if gotSync != "完整非流式内容" {
+		t.Errorf("got %q, want '完整非流式内容'", gotSync)
+	}
+	if syncRequests.Load() != 1 {
+		t.Errorf("expected strictly 1 sync request on finish_reason:stop, got %d", syncRequests.Load())
+	}
+	if usageSync.TotalTokens != 30 {
+		t.Errorf("expected 30 total tokens, got %d", usageSync.TotalTokens)
 	}
 }
