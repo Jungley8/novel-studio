@@ -62,10 +62,18 @@ func (m *mockVolBatchStore) ClearCheckpoint(ctx context.Context, projectID strin
 	return nil
 }
 
+func (m *mockVolBatchStore) SaveProject(ctx context.Context, project *domain.Project) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.project = project
+	return nil
+}
+
 type mockVolBatchLLMClient struct {
 	mu             sync.Mutex
 	failChapter    int
 	currentChapter int
+	sectionsJSON   string
 }
 
 func (m *mockVolBatchLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
@@ -78,6 +86,10 @@ func (m *mockVolBatchLLMClient) ChatCompletion(ctx context.Context, model, syste
 	}
 	cur := m.currentChapter
 	m.mu.Unlock()
+
+	if strings.Contains(systemPrompt, "分卷分节架构师") {
+		return m.sectionsJSON, nil
+	}
 
 	if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
 		return `{"inventory_delta":"","power_delta":"","character_mutations":[],"evidence":[]}`, nil
@@ -153,7 +165,9 @@ func TestVolumeBatch_ThreeChaptersAllPass(t *testing.T) {
 		},
 	}
 	mockStore := newMockVolBatchStore(proj)
-	client := &mockVolBatchLLMClient{}
+	client := &mockVolBatchLLMClient{
+		sectionsJSON: `{"sections":[{"title":"第一节 宗门初涉","from_chapter":1,"to_chapter":2,"goal":"立足外门","key_events":["报到"]},{"title":"第二节 试炼争锋","from_chapter":3,"to_chapter":3,"goal":"通过试炼","key_events":["大比"]}]}`,
+	}
 	workshop := setupTestVolumeWorkshop(client, mockStore)
 	batch := NewVolumeBatch(workshop, mockStore)
 
@@ -235,7 +249,8 @@ func TestVolumeBatch_ChapterTwoNeedsHuman_Halts(t *testing.T) {
 	}
 	mockStore := newMockVolBatchStore(proj)
 	client := &mockVolBatchLLMClient{
-		failChapter: 2, // Chapter 2 will fail review and trigger NeedsHuman
+		failChapter:  2, // Chapter 2 will fail review and trigger NeedsHuman
+		sectionsJSON: `{"sections":[{"title":"第一节 宗门初涉","from_chapter":1,"to_chapter":2,"goal":"立足外门","key_events":["报到"]},{"title":"第二节 试炼争锋","from_chapter":3,"to_chapter":3,"goal":"通过试炼","key_events":["大比"]}]}`,
 	}
 	workshop := setupTestVolumeWorkshop(client, mockStore)
 	batch := NewVolumeBatch(workshop, mockStore)
@@ -417,6 +432,7 @@ type mockVolBatchTechBlockLLMClient struct {
 	mu               sync.Mutex
 	techBlockChapter int
 	currentChapter   int
+	sectionsJSON     string
 }
 
 func (m *mockVolBatchTechBlockLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
@@ -429,6 +445,10 @@ func (m *mockVolBatchTechBlockLLMClient) ChatCompletion(ctx context.Context, mod
 	}
 	cur := m.currentChapter
 	m.mu.Unlock()
+
+	if strings.Contains(systemPrompt, "分卷分节架构师") {
+		return m.sectionsJSON, nil
+	}
 
 	if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
 		if m.techBlockChapter > 0 && cur == m.techBlockChapter {
@@ -493,6 +513,7 @@ func TestVolumeBatch_ChapterTwoTechnicalBlocked_Halts(t *testing.T) {
 	mockStore := newMockVolBatchStore(proj)
 	client := &mockVolBatchTechBlockLLMClient{
 		techBlockChapter: 2, // Chapter 2 will trigger settler technical blockage
+		sectionsJSON:     `{"sections":[{"title":"第一节 宗门初涉","from_chapter":1,"to_chapter":2,"goal":"立足外门","key_events":["报到"]},{"title":"第二节 试炼争锋","from_chapter":3,"to_chapter":3,"goal":"通过试炼","key_events":["大比"]}]}`,
 	}
 	workshop := setupTestVolumeWorkshop(client, mockStore)
 	batch := NewVolumeBatch(workshop, mockStore)
@@ -552,5 +573,87 @@ func TestVolumeBatch_ChapterTwoTechnicalBlocked_Halts(t *testing.T) {
 	}
 	if !hasStoppedEvent {
 		t.Errorf("expected VOLUME_STOPPED event with ChapterIndex 2 and NeedsHuman=true")
+	}
+}
+
+// 7. 无分节项目 Produce → 卷结果 TotalUsage 含分节生成 usage、项目持久化后 Sections 非空
+func TestVolumeBatch_EnsureVolumeSections_IntegratedWithProduce(t *testing.T) {
+	proj := &domain.Project{
+		ID:             "p-batch-sections-gen",
+		Title:          "无分节批量生产项目",
+		TargetPlatform: "番茄脑洞",
+		Framework: &domain.ProjectFramework{
+			VolumeArcs: []domain.VolumeArc{
+				{
+					VolumeIndex:  1,
+					Title:        "第一卷 初入修仙界",
+					StartChapter: 1,
+					EndChapter:   3,
+				},
+			},
+		},
+	}
+	mockStore := newMockVolBatchStore(proj)
+	client := &mockVolBatchLLMClient{
+		sectionsJSON: `{"sections":[{"title":"第一节 外门初探","from_chapter":1,"to_chapter":2,"goal":"站稳脚跟","key_events":["拜师"]},{"title":"第二节 试炼争雄","from_chapter":3,"to_chapter":3,"goal":"夺得名次","key_events":["大比"]}]}`,
+	}
+	workshop := setupTestVolumeWorkshop(client, mockStore)
+	batch := NewVolumeBatch(workshop, mockStore)
+
+	var events []VolumeEvent
+	req := VolumeProduceRequest{
+		ProjectID:       "p-batch-sections-gen",
+		VolumeIndex:     1,
+		WordsTarget:     2000,
+		MaxRewriteLoops: 1,
+		OnProgress: func(ev VolumeEvent) {
+			events = append(events, ev)
+		},
+	}
+
+	res, err := batch.ProduceVolume(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceVolume failed: %v", err)
+	}
+
+	if res.Stopped {
+		t.Errorf("expected Stopped == false, got true (reason: %s)", res.StopReason)
+	}
+
+	// 1. 验证 TotalUsage 包含了分节生成的 TokenUsage (80 prompt + 160 completion = 240 total)
+	// 3 章各 4 次调用 (4*240=960*3=2880) + 分节生成 1 次调用 (240) = 3120
+	if res.TotalUsage.TotalTokens < 240 {
+		t.Errorf("expected TotalUsage.TotalTokens >= 240 (including sections generation), got %d", res.TotalUsage.TotalTokens)
+	}
+
+	// 2. 重新从 Store 读取项目，断言 Sections 成功持久化且非空
+	savedProj, err := mockStore.GetProject(context.Background(), "p-batch-sections-gen")
+	if err != nil {
+		t.Fatalf("GetProject failed: %v", err)
+	}
+	if savedProj == nil || savedProj.Framework == nil || len(savedProj.Framework.VolumeArcs) == 0 {
+		t.Fatalf("saved project or framework is nil")
+	}
+	arc := savedProj.Framework.VolumeArcs[0]
+	if len(arc.Sections) != 2 {
+		t.Fatalf("expected 2 persisted sections in volume arc, got %d", len(arc.Sections))
+	}
+	if arc.Sections[0].Title != "第一节 外门初探" || arc.Sections[1].Title != "第二节 试炼争雄" {
+		t.Errorf("unexpected persisted sections content: %+v", arc.Sections)
+	}
+
+	// 3. 验证事件流中包含 VOLUME_SECTIONS 事件
+	hasSectionsEvent := false
+	for _, ev := range events {
+		if ev.Phase == "VOLUME_SECTIONS" {
+			hasSectionsEvent = true
+			if !strings.Contains(ev.Message, "2 节") {
+				t.Errorf("expected VOLUME_SECTIONS message to contain '2 节', got: %s", ev.Message)
+			}
+			break
+		}
+	}
+	if !hasSectionsEvent {
+		t.Errorf("expected VOLUME_SECTIONS event in event stream, got: %v", events)
 	}
 }

@@ -85,16 +85,26 @@ const (
 
 // VolumeArc represents a high-level book volume / arc questline outline.
 type VolumeArc struct {
-	VolumeIndex       int      `json:"volume_index"`
-	Title             string   `json:"title"`
-	Theme             string   `json:"theme"`
-	CoreGoal          string   `json:"core_goal"` // 卷核心主线任务
-	Climax            string   `json:"climax"`    // 卷终极大高潮
-	StartChapter      int      `json:"start_chapter,omitempty"`
-	EndChapter        int      `json:"end_chapter,omitempty"`
-	Status            string   `json:"status,omitempty"`
-	EstimatedChapters int      `json:"estimated_chapters"` // 预估章数
-	KeyPayoffs        []string `json:"key_payoffs"`        // 本卷回收的伏笔
+	VolumeIndex       int             `json:"volume_index"`
+	Title             string          `json:"title"`
+	Theme             string          `json:"theme"`
+	CoreGoal          string          `json:"core_goal"` // 卷核心主线任务
+	Climax            string          `json:"climax"`    // 卷终极大高潮
+	StartChapter      int             `json:"start_chapter,omitempty"`
+	EndChapter        int             `json:"end_chapter,omitempty"`
+	Status            string          `json:"status,omitempty"`
+	EstimatedChapters int             `json:"estimated_chapters"` // 预估章数
+	KeyPayoffs        []string        `json:"key_payoffs"`        // 本卷回收的伏笔
+	Sections          []VolumeSection `json:"sections,omitempty"`
+}
+
+// VolumeSection 卷纲分节：连续章区间上的细化大纲（typed JSON 真值）。
+type VolumeSection struct {
+	Title       string   `json:"title"`
+	FromChapter int      `json:"from_chapter"`
+	ToChapter   int      `json:"to_chapter"`
+	Goal        string   `json:"goal"`
+	KeyEvents   []string `json:"key_events,omitempty"`
 }
 
 // ProjectFramework encapsulates the macro architecture, lore, power scale, and volume questlines.
