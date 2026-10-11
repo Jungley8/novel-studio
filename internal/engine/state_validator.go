@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
 )
@@ -74,6 +75,7 @@ func ValidateSettledState(
 - consistent: 若完全一致且无矛盾无遗漏则为 true，否则为 false。
 - reconciliation_required: 仅在“换一种状态投影可消除矛盾”时为 true；若正文本身自相矛盾则为 false（仅记录 observation）。
 - observations: 发现的所有问题清单。
+- observations 中每条的 evidence 必须包含至少一条完全来自正文的引用片段（不少于 8 字）；无法在正文中验证的观察将被证据门丢弃。
 
 必须且仅输出严格的标准 JSON 格式：
 {
@@ -126,7 +128,46 @@ func ValidateSettledState(
 		return StateValidationResult{}, usage, fmt.Errorf("parse state validation JSON failed: %w (raw: %s)", err, resp)
 	}
 
+	kept, droppedCount := filterStateObservations(res.Observations, draftText)
+	res.Observations = kept
+	if droppedCount > 0 {
+		res.Observations = append(res.Observations, StateValidationObservation{
+			Code:    "unverifiable-observation",
+			Summary: fmt.Sprintf("%d 条观察因引用无法在正文中验证已被丢弃", droppedCount),
+		})
+	}
+
 	return res, usage, nil
+}
+
+// filterStateObservations 确定性过滤验证器观察：evidence 逐条要求
+// 去首尾空白后 rune≥8 且为正文子串；观察的有效引用为空则整条丢弃。
+// 返回保留的观察与丢弃条数。
+func filterStateObservations(observations []StateValidationObservation, draftText string) (kept []StateValidationObservation, droppedCount int) {
+	if len(observations) == 0 {
+		return nil, 0
+	}
+	if draftText == "" {
+		return nil, len(observations)
+	}
+
+	for _, obs := range observations {
+		var validEvidence []string
+		for _, ev := range obs.Evidence {
+			trimmed := strings.TrimSpace(ev)
+			if utf8.RuneCountInString(trimmed) >= 8 && strings.Contains(draftText, trimmed) {
+				validEvidence = append(validEvidence, trimmed)
+			}
+		}
+		if len(validEvidence) > 0 {
+			obsCopy := obs
+			obsCopy.Evidence = validEvidence
+			kept = append(kept, obsCopy)
+		} else {
+			droppedCount++
+		}
+	}
+	return kept, droppedCount
 }
 
 func renderCodexStateCard(e *domain.CodexEntry) string {
