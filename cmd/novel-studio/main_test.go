@@ -145,3 +145,80 @@ func TestPrintProduceSummary_NilAuditDefensive(t *testing.T) {
 		t.Errorf("expected success header in stdout, got: %s", outStr)
 	}
 }
+
+func TestResolveServerPort(t *testing.T) {
+	tests := []struct {
+		name     string
+		portFlag int
+		cfgPort  int
+		isDev    bool
+		expected int
+	}{
+		{
+			name:     "CLI flag explicitly specified in prod",
+			portFlag: 30000,
+			cfgPort:  28980,
+			isDev:    false,
+			expected: 30000,
+		},
+		{
+			name:     "CLI flag explicitly specified in dev",
+			portFlag: 30000,
+			cfgPort:  28980,
+			isDev:    true,
+			expected: 30000,
+		},
+		{
+			name:     "Dev mode with default cfgPort (28980) uses isolated dev port 28981",
+			portFlag: 0,
+			cfgPort:  28980,
+			isDev:    true,
+			expected: 28981,
+		},
+		{
+			name:     "Dev mode with empty cfgPort (0) uses isolated dev port 28981",
+			portFlag: 0,
+			cfgPort:  0,
+			isDev:    true,
+			expected: 28981,
+		},
+		{
+			name:     "Dev mode with custom cfgPort (29999) respects custom port",
+			portFlag: 0,
+			cfgPort:  29999,
+			isDev:    true,
+			expected: 29999,
+		},
+		{
+			name:     "Prod mode with default cfgPort (28980) uses 28980",
+			portFlag: 0,
+			cfgPort:  28980,
+			isDev:    false,
+			expected: 28980,
+		},
+		{
+			name:     "Prod mode with custom cfgPort (30001) uses 30001",
+			portFlag: 0,
+			cfgPort:  30001,
+			isDev:    false,
+			expected: 30001,
+		},
+		{
+			name:     "Prod mode with empty cfgPort (0) falls back to default 28980",
+			portFlag: 0,
+			cfgPort:  0,
+			isDev:    false,
+			expected: 28980,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := resolveServerPort(tt.portFlag, tt.cfgPort, tt.isDev)
+			if actual != tt.expected {
+				t.Errorf("resolveServerPort(%d, %d, %v) = %d, expected %d",
+					tt.portFlag, tt.cfgPort, tt.isDev, actual, tt.expected)
+			}
+		})
+	}
+}

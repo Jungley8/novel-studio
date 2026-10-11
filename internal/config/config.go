@@ -42,7 +42,7 @@ func DefaultConfig() *Config {
 		ReasoningModel:      "deepseek-reasoner",
 		WriterModel:         "deepseek-chat",
 		ReviewerModel:       "deepseek-reasoner",
-		AutoOpenBrowser:     true,
+		AutoOpenBrowser:     false,
 		ContextBudgetTokens: 12000,
 	}
 }

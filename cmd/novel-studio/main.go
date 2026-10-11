@@ -54,7 +54,8 @@ func main() {
 	}
 
 	flag.Usage = printUsage
-	portFlag := flag.Int("port", 0, "HTTP 服务端口号 (默认读取配置或 28980)")
+	portFlag := flag.Int("port", 0, "HTTP 服务端口号 (生产默认 28980，开发模式默认 28981)")
+	devFlag := flag.Bool("dev", defaultIsDevBuild, "以开发模式运行 (服务端口默认 28981，避免与正式常驻服务 28980 冲突)")
 	dataDirFlag := flag.String("data-dir", defaultDataDir, "数据与状态机持久化目录")
 	noBrowserFlag := flag.Bool("no-browser", false, "启动后不自动唤起桌面浏览器 (适合服务器或无头模式)")
 	serverFlag := flag.Bool("server", false, "以纯服务器模式运行 (不启动原生桌面窗口)")
@@ -83,9 +84,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *portFlag > 0 {
-		cfg.ServerPort = *portFlag
-	}
+	isDev := *devFlag || os.Getenv("NOVEL_STUDIO_DEV") == "1" || os.Getenv("DEV") == "true"
+	cfg.ServerPort = resolveServerPort(*portFlag, cfg.ServerPort, isDev)
 
 	// 2. 初始化纯 Go SQLite 持久化
 	dbPath := filepath.Join(dataDir, "novel.db")
@@ -120,10 +120,17 @@ func main() {
 	appURL := fmt.Sprintf("http://%s", addr)
 
 	fmt.Println("==================================================================")
-	fmt.Printf("  NovelStudio (故事工厂) %s - AI 小说工业化创作桌面工作台\n", version)
+	if isDev {
+		fmt.Printf("  NovelStudio (故事工厂) %s [开发模式 DEV]\n", version)
+	} else {
+		fmt.Printf("  NovelStudio (故事工厂) %s - AI 小说工业化创作桌面工作台\n", version)
+	}
 	fmt.Printf("  ● 本地持久化数据库:   %s\n", dbPath)
 	fmt.Printf("  ● 配置文件:           %s\n", configPath)
 	fmt.Printf("  ● 本地接口与网络地址: %s\n", appURL)
+	if isDev {
+		fmt.Println("  ● 开发前端 Web 端口:  5173 (http://localhost:5173)")
+	}
 	if *serverFlag || *noBrowserFlag {
 		fmt.Println("  ● 运行模式:           服务器/无头守护模式")
 		fmt.Println("  ● 退出快捷键:         按 Ctrl+C 即可安全退出")
@@ -190,4 +197,24 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  logs       查看最近的标准与错误日志\n\n")
 	fmt.Fprintf(os.Stderr, "选项:\n")
 	flag.PrintDefaults()
+}
+
+// resolveServerPort 解析服务监听端口：
+// 1. 若 CLI 显式传递 -port > 0，以 CLI 优先；
+// 2. 若处于开发模式 (isDev == true) 且配置未自定义非默认端口（仍为 28980 或 0），采用独立的 28981 开发端口，避免与正式常驻服务 28980 冲突；
+// 3. 生产模式下，优先采用配置文件端口，缺省为 28980。
+func resolveServerPort(portFlag int, cfgPort int, isDev bool) int {
+	if portFlag > 0 {
+		return portFlag
+	}
+	if isDev {
+		if cfgPort <= 0 || cfgPort == 28980 {
+			return defaultDevPort
+		}
+		return cfgPort
+	}
+	if cfgPort > 0 {
+		return cfgPort
+	}
+	return 28980
 }

@@ -274,7 +274,7 @@ tasks:
         vars:
           DEV: "true"
     cmds:
-      - '"./{{.BIN_DIR}}/{{.APP_NAME}}-server{{exeExt}}"'
+      - '"./{{.BIN_DIR}}/{{.APP_NAME}}-server{{exeExt}}" -dev -server{{if .PORT}} -port {{.PORT}}{{end}}'
 
   build:docker:
     summary: Builds a Docker image for server mode deployment
