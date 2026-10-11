@@ -798,7 +798,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	}
 
 	// Cost estimation: ~$0.00014 per 1k prompt tokens, ~$0.00028 per 1k completion tokens
-	estimatedCostUSD := (float64(totalUsage.PromptTokens)*0.00014 + float64(totalUsage.CompletionTokens)*0.00028) / 1000.0
+	estimatedCostUSD := EstimateCostUSD(totalUsage)
 
 	chapterTitle := fmt.Sprintf("第 %d 章", req.ChapterIndex)
 	result := &WorkshopProduceResult{
@@ -931,7 +931,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 				}
 			}
 		}
-		estimatedCostUSD = (float64(totalUsage.PromptTokens)*0.00014 + float64(totalUsage.CompletionTokens)*0.00028) / 1000.0
+		estimatedCostUSD = EstimateCostUSD(totalUsage)
 		result.TotalUsage = totalUsage
 		result.EstimatedCostUSD = estimatedCostUSD
 
@@ -989,7 +989,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 									vr, vrUsage, vrErr := BuildVolumeRetrospective(ctx, w.orch.client, req.ReasoningModel, activeProj, *arc, *currentSpan, chSummaries)
 									if vrErr != nil {
 										addUsage(vrUsage)
-										estimatedCostUSD = (float64(totalUsage.PromptTokens)*0.00014 + float64(totalUsage.CompletionTokens)*0.00028) / 1000.0
+										estimatedCostUSD = EstimateCostUSD(totalUsage)
 										result.TotalUsage = totalUsage
 										result.EstimatedCostUSD = estimatedCostUSD
 										if auditReport != nil {
@@ -997,7 +997,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 										}
 									} else {
 										addUsage(vrUsage)
-										estimatedCostUSD = (float64(totalUsage.PromptTokens)*0.00014 + float64(totalUsage.CompletionTokens)*0.00028) / 1000.0
+										estimatedCostUSD = EstimateCostUSD(totalUsage)
 										result.TotalUsage = totalUsage
 										result.EstimatedCostUSD = estimatedCostUSD
 										if vr.ProjectID == "" {
