@@ -260,6 +260,14 @@ func (s *SQLiteStore) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_chapter_versions_proj_chap ON chapter_versions(project_id, chapter_index, created_at);
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_chapter_state_snapshots_proj_chap ON chapter_state_snapshots(project_id, chapter_index);
 
+	CREATE TABLE IF NOT EXISTS compaction_cache (
+		project_id TEXT NOT NULL,
+		cache_key TEXT NOT NULL,
+		compiled_text TEXT NOT NULL,
+		created_at DATETIME NOT NULL,
+		PRIMARY KEY (project_id, cache_key)
+	);
+
 	CREATE TABLE IF NOT EXISTS studio_threads (
 		id TEXT PRIMARY KEY,
 		title TEXT NOT NULL,

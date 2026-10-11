@@ -708,26 +708,42 @@ func (c *CanonChronicle) AssembleHorizonTracedWithExtras(ctx context.Context, pr
 	if len(droppedItems) > 0 && c.compactor != nil {
 		remaining := budget - totalEstimatedTokens
 		if remaining >= MinCompactionBudgetTokens {
-			compiled, cErr := c.compactor(ctx, CompactionInput{
-				ChapterIndex: targetChapter,
-				Dropped:      droppedItems,
-				BudgetTokens: remaining,
-			})
-			if cErr != nil {
-				trace.CompactionFailed = true
-				trace.CompactionNote = fmt.Sprintf("语义压缩执行失败: %v", cErr)
-			} else if strings.TrimSpace(compiled) == "" {
-				trace.CompactionFailed = true
-				trace.CompactionNote = "语义压缩输出为空"
-			} else if domain.EstimateTokens(compiled) > remaining {
-				trace.CompactionFailed = true
-				trace.CompactionNote = fmt.Sprintf("语义压缩输出超出剩余预算: 预估 %d tokens 超过剩余预算 %d tokens", domain.EstimateTokens(compiled), remaining)
-			} else {
-				tokens := domain.EstimateTokens(compiled)
+			cacheKey := compactionCacheKey(droppedItems, remaining)
+			if cached, cacheNote := c.loadCompactionCache(ctx, projectID, cacheKey, remaining); cached != "" {
+				tokens := domain.EstimateTokens(cached)
 				totalEstimatedTokens += tokens
 				trace.EstimatedTokens = totalEstimatedTokens
 				trace.CompressibleIDs = append(trace.CompressibleIDs, "memory/compiled-compressible")
-				compiledText = compiled
+				trace.CompactionCacheHit = true
+				compiledText = cached
+			} else {
+				if cacheNote != "" {
+					trace.CompactionNote = cacheNote
+				}
+				compiled, cErr := c.compactor(ctx, CompactionInput{
+					ChapterIndex: targetChapter,
+					Dropped:      droppedItems,
+					BudgetTokens: remaining,
+				})
+				if cErr != nil {
+					trace.CompactionFailed = true
+					trace.CompactionNote = fmt.Sprintf("语义压缩执行失败: %v", cErr)
+				} else if strings.TrimSpace(compiled) == "" {
+					trace.CompactionFailed = true
+					trace.CompactionNote = "语义压缩输出为空"
+				} else if domain.EstimateTokens(compiled) > remaining {
+					trace.CompactionFailed = true
+					trace.CompactionNote = fmt.Sprintf("语义压缩输出超出剩余预算: 预估 %d tokens 超过剩余预算 %d tokens", domain.EstimateTokens(compiled), remaining)
+				} else {
+					tokens := domain.EstimateTokens(compiled)
+					totalEstimatedTokens += tokens
+					trace.EstimatedTokens = totalEstimatedTokens
+					trace.CompressibleIDs = append(trace.CompressibleIDs, "memory/compiled-compressible")
+					compiledText = compiled
+					if note := c.storeCompactionCache(ctx, projectID, cacheKey, compiled); note != "" {
+						trace.CompactionNote = note
+					}
+				}
 			}
 		} else {
 			trace.CompactionNote = "剩余预算不足，跳过压缩"
