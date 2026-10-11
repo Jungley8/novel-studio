@@ -235,4 +235,127 @@ export const api = {
   saveChapterIntent: (projectId, chapterIndex, data) => apiFetch(`/api/projects/${projectId}/intents/${chapterIndex}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteChapterIntent: (projectId, chapterIndex) => apiFetch(`/api/projects/${projectId}/intents/${chapterIndex}`, { method: 'DELETE' }),
   generateMatrixFromIntents: (projectId, data) => apiFetch(`/api/projects/${projectId}/matrix/generate-from-intents`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // Studio Todos & Pipeline
+  listStudioTodos: () => apiFetch('/api/studio/todos'),
+  startPipeline: (data, handlers) => startPipelineStream('/api/pipeline', data, handlers),
 };
+
+async function startPipelineStream(endpoint, data, handlers = {}) {
+  const { onEvent, onResult, onError } = handlers || {};
+  const url = endpoint.includes('?') ? `${endpoint}&stream=true` : `${endpoint}?stream=true`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    let errorMsg = `HTTP Error ${response.status}`;
+    try {
+      const errJson = await response.json();
+      errorMsg = errJson.error || errorMsg;
+    } catch {
+      const text = await response.text();
+      if (text) errorMsg = text;
+    }
+    const err = new Error(errorMsg);
+    if (onError) onError(err);
+    throw err;
+  }
+
+  if (response.body && typeof response.body.getReader === 'function') {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finished = false;
+    let resultData = null;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith(':')) {
+            continue;
+          }
+          if (trimmed.startsWith('data:')) {
+            const dataStr = trimmed.slice(5).trim();
+            if (!dataStr) continue;
+            try {
+              const parsed = JSON.parse(dataStr);
+              if (parsed.phase === 'PIPELINE_ERROR') {
+                finished = true;
+                const err = new Error(parsed.error || '流水线执行异常');
+                if (onError) onError(err);
+                try {
+                  await reader.cancel();
+                } catch (_) {}
+                return;
+              } else if (parsed.phase === 'PIPELINE_RESULT') {
+                if (!finished) {
+                  resultData = parsed.result;
+                  if (onResult) onResult(parsed.result);
+                }
+              } else {
+                if (!finished && onEvent) {
+                  onEvent(parsed);
+                }
+              }
+            } catch (_) {}
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        const trimmed = buffer.trim();
+        if (!trimmed.startsWith(':') && trimmed.startsWith('data:')) {
+          const dataStr = trimmed.slice(5).trim();
+          if (dataStr) {
+            try {
+              const parsed = JSON.parse(dataStr);
+              if (parsed.phase === 'PIPELINE_ERROR') {
+                if (!finished) {
+                  finished = true;
+                  const err = new Error(parsed.error || '流水线执行异常');
+                  if (onError) onError(err);
+                  return;
+                }
+              } else if (parsed.phase === 'PIPELINE_RESULT') {
+                if (!finished) {
+                  resultData = parsed.result;
+                  if (onResult) onResult(parsed.result);
+                }
+              } else {
+                if (!finished && onEvent) {
+                  onEvent(parsed);
+                }
+              }
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (streamErr) {
+      if (!finished) {
+        finished = true;
+        if (onError) onError(streamErr);
+        throw streamErr;
+      }
+    }
+
+    return resultData;
+  }
+
+  const result = await response.json();
+  if (handlers?.onResult) handlers.onResult(result);
+  return result;
+}
