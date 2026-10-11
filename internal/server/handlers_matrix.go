@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -235,11 +236,27 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 
-		// 保存前快照旧卷定义
-		var oldArcs []domain.VolumeArc
-		if p.Framework != nil && len(p.Framework.VolumeArcs) > 0 {
-			oldArcs = make([]domain.VolumeArc, len(p.Framework.VolumeArcs))
-			copy(oldArcs, p.Framework.VolumeArcs)
+		// 保存前快照旧卷定义与框架级前提
+		var (
+			oldArcs    []domain.VolumeArc
+			oldAxioms  []string
+			oldLadder  []domain.PowerLadderTier
+			oldPremise string
+		)
+		if p.Framework != nil {
+			if len(p.Framework.VolumeArcs) > 0 {
+				oldArcs = make([]domain.VolumeArc, len(p.Framework.VolumeArcs))
+				copy(oldArcs, p.Framework.VolumeArcs)
+			}
+			if len(p.Framework.WorldAxioms) > 0 {
+				oldAxioms = make([]string, len(p.Framework.WorldAxioms))
+				copy(oldAxioms, p.Framework.WorldAxioms)
+			}
+			if len(p.Framework.PowerLadder) > 0 {
+				oldLadder = make([]domain.PowerLadderTier, len(p.Framework.PowerLadder))
+				copy(oldLadder, p.Framework.PowerLadder)
+			}
+			oldPremise = p.Framework.ThemePremise
 		}
 
 		p.Framework = &fw
@@ -284,6 +301,20 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 		}
 		for volIdx := range newMap {
 			if !checked[volIdx] {
+				_, _ = s.store.MarkIntentsStale(ctx, projectID, volIdx)
+			}
+		}
+
+		// 框架级前提变更 → 全卷 LOCKED 意图失效；卷界变更走上方逐卷块；仅 LOCKED→STALE，DRAFT 不受影响
+		if !reflect.DeepEqual(oldAxioms, fw.WorldAxioms) || !reflect.DeepEqual(oldLadder, fw.PowerLadder) || oldPremise != fw.ThemePremise {
+			intents, _ := s.store.ListChapterIntents(ctx, projectID, 0)
+			vols := make(map[int]bool)
+			for _, it := range intents {
+				if it != nil {
+					vols[it.VolumeIndex] = true
+				}
+			}
+			for volIdx := range vols {
 				_, _ = s.store.MarkIntentsStale(ctx, projectID, volIdx)
 			}
 		}

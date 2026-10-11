@@ -340,7 +340,7 @@ func TestIntentsAPI_FrameworkVolumeChangeLinkage(t *testing.T) {
 	// PUT /api/projects/{id}/framework modifying Volume 1 boundary (1..15 instead of 1..10)
 	// Volume 2 boundary remains unchanged (11..20)
 	updatedFw := domain.ProjectFramework{
-		ThemePremise: "大道争锋-修订版",
+		ThemePremise: "大道争锋",
 		VolumeArcs: []domain.VolumeArc{
 			{
 				VolumeIndex:  1,
