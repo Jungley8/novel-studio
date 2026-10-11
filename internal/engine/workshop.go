@@ -325,6 +325,11 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	if w.orch != nil && w.orch.client != nil {
 		w.chronicle.SetCompactor(NewLLMCompactor(w.orch.client, req.ReasoningModel))
 	}
+	prereqUsage, pErr := w.EnsureProductionPrerequisites(ctx, req.ProjectID, req.ChapterIndex, req.ReasoningModel)
+	addUsage(prereqUsage)
+	if pErr != nil {
+		return nil, fmt.Errorf("ensure production prerequisites for chapter %d: %w", req.ChapterIndex, pErr)
+	}
 	horizon, trace, err := w.chronicle.AssembleHorizonTracedWithExtras(ctx, req.ProjectID, req.ChapterIndex, extras...)
 	if err != nil {
 		return nil, fmt.Errorf("assemble canon horizon failed: %w", err)

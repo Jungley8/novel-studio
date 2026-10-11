@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -89,6 +91,23 @@ func (m *mockVolBatchLLMClient) ChatCompletion(ctx context.Context, model, syste
 
 	if strings.Contains(systemPrompt, "分卷分节架构师") {
 		return m.sectionsJSON, nil
+	}
+
+	if strings.Contains(systemPrompt, "剧情规划师") {
+		var cards []string
+		if m := regexp.MustCompile(`(?:请为以下目标章号逐章推演意图卡：|推演意图卡：)(.*)`).FindStringSubmatch(userPrompt); len(m) == 2 {
+			chStrs := strings.Split(strings.TrimSpace(m[1]), ",")
+			for _, chStr := range chStrs {
+				chNum, _ := strconv.Atoi(strings.TrimSpace(chStr))
+				if chNum > 0 {
+					cards = append(cards, fmt.Sprintf(`{"chapter_index":%d,"conflict":"推进主线冲突","tension_target":5}`, chNum))
+				}
+			}
+		}
+		if len(cards) == 0 {
+			cards = append(cards, `{"chapter_index":1,"conflict":"推进主线冲突","tension_target":5}`)
+		}
+		return fmt.Sprintf("[%s]", strings.Join(cards, ",")), nil
 	}
 
 	if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
@@ -450,6 +469,23 @@ func (m *mockVolBatchTechBlockLLMClient) ChatCompletion(ctx context.Context, mod
 		return m.sectionsJSON, nil
 	}
 
+	if strings.Contains(systemPrompt, "剧情规划师") {
+		var cards []string
+		if m := regexp.MustCompile(`(?:请为以下目标章号逐章推演意图卡：|推演意图卡：)(.*)`).FindStringSubmatch(userPrompt); len(m) == 2 {
+			chStrs := strings.Split(strings.TrimSpace(m[1]), ",")
+			for _, chStr := range chStrs {
+				chNum, _ := strconv.Atoi(strings.TrimSpace(chStr))
+				if chNum > 0 {
+					cards = append(cards, fmt.Sprintf(`{"chapter_index":%d,"conflict":"推进主线冲突","tension_target":5}`, chNum))
+				}
+			}
+		}
+		if len(cards) == 0 {
+			cards = append(cards, `{"chapter_index":1,"conflict":"推进主线冲突","tension_target":5}`)
+		}
+		return fmt.Sprintf("[%s]", strings.Join(cards, ",")), nil
+	}
+
 	if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
 		if m.techBlockChapter > 0 && cur == m.techBlockChapter {
 			return "{unparseable-json-for-settler", nil
@@ -620,13 +656,12 @@ func TestVolumeBatch_EnsureVolumeSections_IntegratedWithProduce(t *testing.T) {
 		t.Errorf("expected Stopped == false, got true (reason: %s)", res.StopReason)
 	}
 
-	// 1. 验证 TotalUsage 包含了分节生成的 TokenUsage (80 prompt + 160 completion = 240 total)
-	// 3 章各 4 次调用 (4*240=960*3=2880) + 分节生成 1 次调用 (240) = 3120
+	// 1. 验证 TotalUsage 包含了前置（意图与分节生成）的 TokenUsage
 	if res.TotalUsage.TotalTokens < 240 {
-		t.Errorf("expected TotalUsage.TotalTokens >= 240 (including sections generation), got %d", res.TotalUsage.TotalTokens)
+		t.Errorf("expected TotalUsage.TotalTokens >= 240 (including prerequisites generation), got %d", res.TotalUsage.TotalTokens)
 	}
 
-	// 2. 重新从 Store 读取项目，断言 Sections 成功持久化且非空
+	// 2. 重新从 Store 读取项目，断言 Sections 成功持久化且非空（由 workshop 前置生效）
 	savedProj, err := mockStore.GetProject(context.Background(), "p-batch-sections-gen")
 	if err != nil {
 		t.Fatalf("GetProject failed: %v", err)
@@ -642,18 +677,12 @@ func TestVolumeBatch_EnsureVolumeSections_IntegratedWithProduce(t *testing.T) {
 		t.Errorf("unexpected persisted sections content: %+v", arc.Sections)
 	}
 
-	// 3. 验证事件流中包含 VOLUME_SECTIONS 事件
-	hasSectionsEvent := false
-	for _, ev := range events {
-		if ev.Phase == "VOLUME_SECTIONS" {
-			hasSectionsEvent = true
-			if !strings.Contains(ev.Message, "2 节") {
-				t.Errorf("expected VOLUME_SECTIONS message to contain '2 节', got: %s", ev.Message)
-			}
-			break
-		}
+	// 3. 验证本卷意图卡已持久化落库
+	savedIntents, err := mockStore.ListChapterIntents(context.Background(), "p-batch-sections-gen", 1)
+	if err != nil {
+		t.Fatalf("ListChapterIntents failed: %v", err)
 	}
-	if !hasSectionsEvent {
-		t.Errorf("expected VOLUME_SECTIONS event in event stream, got: %v", events)
+	if len(savedIntents) == 0 {
+		t.Errorf("expected persisted chapter intents in store, got 0")
 	}
 }
