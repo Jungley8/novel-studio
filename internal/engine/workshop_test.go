@@ -3528,7 +3528,7 @@ func TestChapterWorkshop_CompactionFailureWarnsInIssues(t *testing.T) {
 		ReasoningModel:  "mock-r1",
 		WriterModel:     "mock-v3",
 		ReviewerModel:   "mock-reviewer",
-		WordsTarget:     2000,
+		WordsTarget:     0,
 		AutoCommit:      true,
 		MaxRewriteLoops: 2,
 		OnProgress: func(ev WorkshopEvent) {

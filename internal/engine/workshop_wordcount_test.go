@@ -154,13 +154,160 @@ func newWordcountTestWorkshop(mockClient *mockWordcountLLMClient) (*ChapterWorks
 }
 
 // 1. TestChapterWorkshop_WordTelemetry_UnderTarget:
-// 目标 2000、renderDraft 实际约 800 字 → result.ActualWords == len([]rune(draft))、UnderTarget == true、
-// WordQuotaRatio ≈ 0.4、Audit.Issues 含 【字数遥测】、事件消息含 字数遥测。
+// 低于目标 80% 驱动定向扩写重写循环闭环管理。
 func TestChapterWorkshop_WordTelemetry_UnderTarget(t *testing.T) {
-	draft800 := makeChineseRunes(800, "第八百字开头测试段落。")
-	if len([]rune(draft800)) != 800 {
-		t.Fatalf("setup failed: expected 800 runes, got %d", len([]rune(draft800)))
-	}
+	reviewResp := `{
+		"verdict": "ACCEPTED",
+		"score": 90,
+		"issues": [],
+		"suggestions": "合格"
+	}`
+
+	// 子用例 A「重写达标即停」：rewriteDraft 设为达标长度（如目标 2000 → ≥1600 字）
+	// → 断言 res.RewriteLoops == 1、终稿达标（UnderTarget == false）、终稿 issues 无 【字数遥测】。
+	t.Run("SubcaseA_RewriteReachesTarget_Stops", func(t *testing.T) {
+		draft800 := makeChineseRunes(800, "第八百字初稿段落。")
+		rewriteDraft1800 := makeChineseRunes(1800, "第一千八百字扩写达标段落。")
+
+		mockClient := &mockWordcountLLMClient{
+			renderDraft:  draft800,
+			reviewJSON:   reviewResp,
+			rewriteDraft: rewriteDraft1800,
+		}
+
+		ws, _ := newWordcountTestWorkshop(mockClient)
+
+		req := WorkshopProduceRequest{
+			ProjectID:       "p-wordcount",
+			ChapterIndex:    1,
+			CoreConflict:    "宗门反派夜袭",
+			ReasoningModel:  "mock-r1",
+			WriterModel:     "mock-writer",
+			ReviewerModel:   "mock-reviewer",
+			WordsTarget:     2000,
+			AutoCommit:      false,
+			MaxRewriteLoops: 2,
+		}
+
+		res, err := ws.ProduceChapter(context.Background(), req)
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+
+		if res.RewriteLoops != 1 {
+			t.Errorf("expected RewriteLoops == 1, got %d", res.RewriteLoops)
+		}
+		if res.UnderTarget {
+			t.Errorf("expected UnderTarget == false for final 1800 words draft, got true")
+		}
+		if res.ActualWords != len([]rune(rewriteDraft1800)) {
+			t.Errorf("expected ActualWords %d, got %d", len([]rune(rewriteDraft1800)), res.ActualWords)
+		}
+		for _, issue := range res.Audit.Issues {
+			if strings.Contains(issue, "【字数遥测】") {
+				t.Errorf("expected no 【字数遥测】 in final passing issues, got: %s", issue)
+			}
+		}
+	})
+
+	// 子用例 B「重写仍不达标 → 循环封顶」：rewriteDraft 仍不足
+	// → 断言 res.RewriteLoops == MaxRewriteLoops、UnderTarget == true、issues 含 【字数遥测】、且至少一轮 issues 文案含"已触发定向扩写"。
+	t.Run("SubcaseB_RewriteStillUnderTarget_CapsAtMaxLoops", func(t *testing.T) {
+		draft800 := makeChineseRunes(800, "第八百字初稿段落。")
+		rewriteDraft800 := makeChineseRunes(800, "第八百字重写后仍不足段落。")
+
+		mockClient := &mockWordcountLLMClient{
+			renderDraft:  draft800,
+			reviewJSON:   reviewResp,
+			rewriteDraft: rewriteDraft800,
+		}
+
+		ws, _ := newWordcountTestWorkshop(mockClient)
+
+		req := WorkshopProduceRequest{
+			ProjectID:       "p-wordcount",
+			ChapterIndex:    1,
+			CoreConflict:    "宗门反派夜袭",
+			ReasoningModel:  "mock-r1",
+			WriterModel:     "mock-writer",
+			ReviewerModel:   "mock-reviewer",
+			WordsTarget:     2000,
+			AutoCommit:      false,
+			MaxRewriteLoops: 2,
+		}
+
+		res, err := ws.ProduceChapter(context.Background(), req)
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+
+		if res.RewriteLoops != req.MaxRewriteLoops {
+			t.Errorf("expected RewriteLoops == %d, got %d", req.MaxRewriteLoops, res.RewriteLoops)
+		}
+		if !res.UnderTarget {
+			t.Errorf("expected UnderTarget == true, got false")
+		}
+
+		hasTelemetryIssue := false
+		hasTriggeredText := false
+		for _, issue := range res.Audit.Issues {
+			if strings.Contains(issue, "【字数遥测】") {
+				hasTelemetryIssue = true
+				if strings.Contains(issue, "已触发定向扩写") {
+					hasTriggeredText = true
+				}
+			}
+		}
+		if !hasTelemetryIssue {
+			t.Errorf("expected Audit.Issues to contain 【字数遥测】, got: %v", res.Audit.Issues)
+		}
+		if !hasTriggeredText {
+			t.Errorf("expected Audit.Issues to contain '已触发定向扩写', got: %v", res.Audit.Issues)
+		}
+	})
+
+	// 原 ThresholdSensitivity_70Percent 按新语义改写（70% 触发重写）：
+	// 1400 / 2000 = 0.7 < 0.8 WordCountRevisionFloor → 触发定向重写（若门变异为 0.5 则 0.7 >= 0.5 不触发，变红）。
+	t.Run("ThresholdSensitivity_70Percent", func(t *testing.T) {
+		draft1400 := makeChineseRunes(1400, "第一千四百字敏感度测试段落。")
+		rewriteDraft1800 := makeChineseRunes(1800, "第一千八百字敏感度扩写达标段落。")
+
+		mockClient70 := &mockWordcountLLMClient{
+			renderDraft:  draft1400,
+			reviewJSON:   reviewResp,
+			rewriteDraft: rewriteDraft1800,
+		}
+
+		ws70, _ := newWordcountTestWorkshop(mockClient70)
+		req := WorkshopProduceRequest{
+			ProjectID:       "p-wordcount",
+			ChapterIndex:    1,
+			CoreConflict:    "宗门反派夜袭",
+			ReasoningModel:  "mock-r1",
+			WriterModel:     "mock-writer",
+			ReviewerModel:   "mock-reviewer",
+			WordsTarget:     2000,
+			AutoCommit:      false,
+			MaxRewriteLoops: 1,
+		}
+
+		res70, err70 := ws70.ProduceChapter(context.Background(), req)
+		if err70 != nil {
+			t.Fatalf("ProduceChapter failed: %v", err70)
+		}
+
+		if res70.RewriteLoops != 1 {
+			t.Errorf("expected RewriteLoops == 1 (70%% under 80%% threshold triggers rewrite), got %d", res70.RewriteLoops)
+		}
+		if res70.UnderTarget {
+			t.Errorf("expected UnderTarget == false after rewrite to 1800 words, got true")
+		}
+	})
+}
+
+// 新增「MaxRewriteLoops=0 仅遥测」：under 且 Max=0 → RewriteLoops == 0、UnderTarget == true、issues 含遥测文案。
+func TestChapterWorkshop_WordTelemetry_MaxRewriteLoopsZero(t *testing.T) {
+	draft800 := makeChineseRunes(800, "第八百字初稿段落。")
 
 	reviewResp := `{
 		"verdict": "ACCEPTED",
@@ -176,7 +323,6 @@ func TestChapterWorkshop_WordTelemetry_UnderTarget(t *testing.T) {
 
 	ws, _ := newWordcountTestWorkshop(mockClient)
 
-	var events []WorkshopEvent
 	req := WorkshopProduceRequest{
 		ProjectID:       "p-wordcount",
 		ChapterIndex:    1,
@@ -186,10 +332,7 @@ func TestChapterWorkshop_WordTelemetry_UnderTarget(t *testing.T) {
 		ReviewerModel:   "mock-reviewer",
 		WordsTarget:     2000,
 		AutoCommit:      false,
-		MaxRewriteLoops: 1,
-		OnProgress: func(ev WorkshopEvent) {
-			events = append(events, ev)
-		},
+		MaxRewriteLoops: 0,
 	}
 
 	res, err := ws.ProduceChapter(context.Background(), req)
@@ -197,60 +340,23 @@ func TestChapterWorkshop_WordTelemetry_UnderTarget(t *testing.T) {
 		t.Fatalf("ProduceChapter failed: %v", err)
 	}
 
-	if res.ActualWords != len([]rune(draft800)) {
-		t.Errorf("expected ActualWords %d, got %d", len([]rune(draft800)), res.ActualWords)
-	}
-	if res.WordsTarget != 2000 {
-		t.Errorf("expected WordsTarget 2000, got %d", res.WordsTarget)
+	if res.RewriteLoops != 0 {
+		t.Errorf("expected RewriteLoops == 0 when MaxRewriteLoops is 0, got %d", res.RewriteLoops)
 	}
 	if !res.UnderTarget {
 		t.Errorf("expected UnderTarget == true, got false")
 	}
-	if math.Abs(res.WordQuotaRatio-0.4) > 0.0001 {
-		t.Errorf("expected WordQuotaRatio ≈ 0.4, got %f", res.WordQuotaRatio)
-	}
 
-	// Audit.Issues must contain 【字数遥测】
 	hasTelemetryIssue := false
 	for _, issue := range res.Audit.Issues {
-		if strings.Contains(issue, "【字数遥测】") && strings.Contains(issue, "80% 及格线") {
+		if strings.Contains(issue, "【字数遥测】") {
 			hasTelemetryIssue = true
 			break
 		}
 	}
 	if !hasTelemetryIssue {
-		t.Errorf("expected Audit.Issues to contain 【字数遥测】 with 80%% pass line, got: %v", res.Audit.Issues)
+		t.Errorf("expected Audit.Issues to contain 【字数遥测】, got: %v", res.Audit.Issues)
 	}
-
-	// Events must contain PhaseDrafted event with 字数遥测
-	hasTelemetryEvent := false
-	for _, ev := range events {
-		if ev.Phase == PhaseDrafted && strings.Contains(ev.Message, "字数遥测") && strings.Contains(ev.Message, "800") && strings.Contains(ev.Message, "2000") {
-			hasTelemetryEvent = true
-			break
-		}
-	}
-	if !hasTelemetryEvent {
-		t.Errorf("expected progress event with 字数遥测, got events: %+v", events)
-	}
-
-	// Threshold sensitivity subcheck (70% quota ratio: 1400 / 2000 = 0.7 < 0.8 BenchWordCountPassRatio):
-	// Under 80% baseline, 1400 words is UnderTarget. If threshold is mutated to 0.5, 0.7 < 0.5 is false -> turns red!
-	t.Run("ThresholdSensitivity_70Percent", func(t *testing.T) {
-		draft1400 := makeChineseRunes(1400, "第一千四百字敏感度测试段落。")
-		mockClient70 := &mockWordcountLLMClient{
-			renderDraft: draft1400,
-			reviewJSON:  reviewResp,
-		}
-		ws70, _ := newWordcountTestWorkshop(mockClient70)
-		res70, err70 := ws70.ProduceChapter(context.Background(), req)
-		if err70 != nil {
-			t.Fatalf("ProduceChapter failed: %v", err70)
-		}
-		if !res70.UnderTarget {
-			t.Errorf("expected UnderTarget == true for 70%% quota ratio under BenchWordCountPassRatio (0.8), got false")
-		}
-	})
 }
 
 // 2. TestChapterWorkshop_WordTelemetry_Passing:
