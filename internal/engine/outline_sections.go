@@ -158,41 +158,16 @@ func GenerateVolumeSections(
 
 	cleanJSON, err := ExtractAndCleanJSON(resp)
 	if err != nil {
-		if strings.Contains(resp, "夜色渐深，冷风呼啸。林凡拔出青玉长剑") {
-			title := arc.Title
-			if title == "" {
-				title = fmt.Sprintf("第 %d 卷主线推进", arc.VolumeIndex)
-			}
-			goal := arc.CoreGoal
-			if goal == "" {
-				goal = "推进本卷主线任务"
-			}
-			return []domain.VolumeSection{
-				{
-					Title:       title,
-					FromChapter: arc.StartChapter,
-					ToChapter:   arc.EndChapter,
-					Goal:        goal,
-				},
-			}, usage, nil
-		}
 		return nil, usage, fmt.Errorf("clean volume sections json failed: %w", err)
 	}
 
 	var wrapper struct {
 		Sections []domain.VolumeSection `json:"sections"`
 	}
-	var sections []domain.VolumeSection
-	if err := json.Unmarshal([]byte(cleanJSON), &wrapper); err == nil && len(wrapper.Sections) > 0 {
-		sections = wrapper.Sections
-	} else {
-		var rawList []domain.VolumeSection
-		if err2 := json.Unmarshal([]byte(cleanJSON), &rawList); err2 == nil && len(rawList) > 0 {
-			sections = rawList
-		} else {
-			return nil, usage, fmt.Errorf("unmarshal volume sections json failed: %w", err)
-		}
+	if err := json.Unmarshal([]byte(cleanJSON), &wrapper); err != nil {
+		return nil, usage, fmt.Errorf("unmarshal volume sections json failed: %w", err)
 	}
+	sections := wrapper.Sections
 
 	if err := validateVolumeSections(arc, sections); err != nil {
 		return nil, usage, fmt.Errorf("validate volume sections failed: %w", err)
@@ -201,26 +176,26 @@ func GenerateVolumeSections(
 	return sections, usage, nil
 }
 
-// EnsureVolumeSections 确保指定分卷具备分节大纲。
+// EnsureVolumeSections 确保指定分卷具备分节大纲，并返回生效的分节。
 // 仅在首次生成时调用 LLM；若该卷已有 Sections 则直接返回（幂等，不调 LLM）。
 // 遇到错误直接冒泡返回（调用方 Fail-Closed）。
-func (w *ChapterWorkshop) EnsureVolumeSections(ctx context.Context, projectID string, volumeIndex int, model string) (TokenUsage, error) {
+func (w *ChapterWorkshop) EnsureVolumeSections(ctx context.Context, projectID string, volumeIndex int, model string) ([]domain.VolumeSection, TokenUsage, error) {
 	if w == nil || w.orch == nil || w.orch.client == nil {
-		return TokenUsage{}, errors.New("workshop orchestrator or llm client is nil (fail-closed)")
+		return nil, TokenUsage{}, errors.New("workshop orchestrator or llm client is nil (fail-closed)")
 	}
 	if w.store == nil {
-		return TokenUsage{}, errors.New("workshop store is nil (fail-closed)")
+		return nil, TokenUsage{}, errors.New("workshop store is nil (fail-closed)")
 	}
 
 	project, err := w.store.GetProject(ctx, projectID)
 	if err != nil {
-		return TokenUsage{}, fmt.Errorf("get project %s: %w", projectID, err)
+		return nil, TokenUsage{}, fmt.Errorf("get project %s: %w", projectID, err)
 	}
 	if project == nil {
-		return TokenUsage{}, fmt.Errorf("project %s not found", projectID)
+		return nil, TokenUsage{}, fmt.Errorf("project %s not found", projectID)
 	}
 	if project.Framework == nil {
-		return TokenUsage{}, fmt.Errorf("project framework is nil for project %s", projectID)
+		return nil, TokenUsage{}, fmt.Errorf("project framework is nil for project %s", projectID)
 	}
 
 	arcs := BackfillVolumeArcs(project.Framework.VolumeArcs)
@@ -232,25 +207,25 @@ func (w *ChapterWorkshop) EnsureVolumeSections(ctx context.Context, projectID st
 		}
 	}
 	if targetIdx < 0 {
-		return TokenUsage{}, fmt.Errorf("volume index %d not found in project %s", volumeIndex, projectID)
+		return nil, TokenUsage{}, fmt.Errorf("volume index %d not found in project %s", volumeIndex, projectID)
 	}
 
 	// 幂等：若已有分节则直接返回，不调用 LLM
 	if len(arcs[targetIdx].Sections) > 0 {
-		return TokenUsage{}, nil
+		return arcs[targetIdx].Sections, TokenUsage{}, nil
 	}
 
 	sections, usage, err := GenerateVolumeSections(ctx, w.orch.client, model, project, arcs[targetIdx])
 	if err != nil {
-		return usage, fmt.Errorf("generate volume sections: %w", err)
+		return nil, usage, fmt.Errorf("generate volume sections: %w", err)
 	}
 
 	arcs[targetIdx].Sections = sections
 	project.Framework.VolumeArcs = arcs
 
 	if err := w.store.SaveProject(ctx, project); err != nil {
-		return usage, fmt.Errorf("save project with volume sections: %w", err)
+		return nil, usage, fmt.Errorf("save project with volume sections: %w", err)
 	}
 
-	return usage, nil
+	return sections, usage, nil
 }

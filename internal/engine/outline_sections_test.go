@@ -389,7 +389,7 @@ func TestEnsureVolumeSections(t *testing.T) {
 		client := &mockSectionsLLMClient{response: "should not be called"}
 		ws, _ := setupStoreAndWorkshop(client, proj)
 
-		usage, err := ws.EnsureVolumeSections(context.Background(), projID, 1, "test-model")
+		_, usage, err := ws.EnsureVolumeSections(context.Background(), projID, 1, "test-model")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -437,7 +437,7 @@ func TestEnsureVolumeSections(t *testing.T) {
 		client := &mockSectionsLLMClient{response: genJSON}
 		ws, s := setupStoreAndWorkshop(client, proj)
 
-		usage, err := ws.EnsureVolumeSections(context.Background(), projID, 1, "test-model")
+		_, usage, err := ws.EnsureVolumeSections(context.Background(), projID, 1, "test-model")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -483,7 +483,7 @@ func TestEnsureVolumeSections(t *testing.T) {
 		client := &mockSectionsLLMClient{}
 		ws, _ := setupStoreAndWorkshop(client, proj)
 
-		_, err := ws.EnsureVolumeSections(context.Background(), projID, 99, "test-model")
+		_, _, err := ws.EnsureVolumeSections(context.Background(), projID, 99, "test-model")
 		if err == nil {
 			t.Fatal("expected error for non-existent volume index, got nil")
 		}

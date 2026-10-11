@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -43,7 +46,14 @@ func setupPipelineTestServer(t *testing.T, failLLM bool) (*server.Server, store.
 		}
 
 		content := "夜色渐深，冷风呼啸。林凡拔出青玉长剑，一剑断去黑衣人退路。"
-		if strings.Contains(systemPrompt, "创世总纲") || strings.Contains(userPrompt, "创世总纲") {
+		if strings.Contains(systemPrompt, "分卷分节架构师") {
+			from, to := 1, 1
+			if m := regexp.MustCompile(`章节范围：第 (\d+) 章 ~ 第 (\d+) 章`).FindStringSubmatch(userPrompt); len(m) == 3 {
+				from, _ = strconv.Atoi(m[1])
+				to, _ = strconv.Atoi(m[2])
+			}
+			content = fmt.Sprintf(`{"sections":[{"title":"主线推进","from_chapter":%d,"to_chapter":%d,"goal":"推进本卷主线","key_events":["关键推进"]}]}`, from, to)
+		} else if strings.Contains(systemPrompt, "创世总纲") || strings.Contains(userPrompt, "创世总纲") {
 			content = `{
 				"theme_premise": "万古长夜，一人一剑逆伐诸仙",
 				"world_axioms": ["天道崩塌", "灵气含毒"],
