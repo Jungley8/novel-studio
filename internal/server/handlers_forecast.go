@@ -17,7 +17,7 @@ type forecastStore interface {
 	SelectBranch(ctx context.Context, projectID, forecastID, branchID string) (*domain.ActivePlan, error)
 	GetActivePlan(ctx context.Context, projectID string) (*domain.ActivePlan, error)
 	MarkForecastStale(ctx context.Context, projectID, forecastID string) error
-	ComputeFingerprint(ctx context.Context, projectID string) string
+	ComputeFingerprint(ctx context.Context, projectID string) (string, error)
 }
 
 func (s *Server) getLLMClient() engine.LLMClient {
@@ -119,7 +119,12 @@ func (s *Server) handleProjectForecast(w http.ResponseWriter, r *http.Request, p
 				return
 			}
 
-			fc.Fingerprint = fStore.ComputeFingerprint(r.Context(), projectID)
+			fp, err := fStore.ComputeFingerprint(r.Context(), projectID)
+			if err != nil {
+				errorResponse(w, http.StatusInternalServerError, "compute fingerprint failed: "+err.Error())
+				return
+			}
+			fc.Fingerprint = fp
 			if err := fStore.SaveForecast(r.Context(), fc); err != nil {
 				errorResponse(w, http.StatusInternalServerError, "save forecast failed: "+err.Error())
 				return

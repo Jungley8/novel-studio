@@ -3,11 +3,21 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
 )
+
+func mustComputeFingerprint(t testing.TB, s *SQLiteStore, ctx context.Context, projectID string) string {
+	t.Helper()
+	fp, err := s.ComputeFingerprint(ctx, projectID)
+	if err != nil {
+		t.Fatalf("ComputeFingerprint failed: %v", err)
+	}
+	return fp
+}
 
 // Case ②: select 后三表（chapters/codex/hooks）零变化
 func TestSQLiteStore_SelectBranch_IsolationGuard(t *testing.T) {
@@ -108,7 +118,7 @@ func TestSQLiteStore_SelectBranch_IsolationGuard(t *testing.T) {
 		Divergence:  "是否拜入青云宗",
 		BranchCount: 3,
 		Horizon:     3,
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{
@@ -227,7 +237,7 @@ func TestSQLiteStore_ExecutionChapterArchive_KeepsForecastActive(t *testing.T) {
 		Divergence:  "分歧测试",
 		BranchCount: 2,
 		Horizon:     3,
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{ID: "b1", BeatsSummary: "节拍1"},
@@ -431,7 +441,7 @@ func TestSQLiteStore_GetActivePlan_DerivedConsumed(t *testing.T) {
 		Divergence:  "下山历练路线",
 		BranchCount: 2,
 		Horizon:     2, // Covers chapters 2 and 3
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{ID: "b1", BeatsSummary: "连破两境", ExpectedDeltas: "+青云剑"},
@@ -521,7 +531,7 @@ func TestSQLiteStore_GetActivePlan_DivergedDetection(t *testing.T) {
 		Divergence:  "斩杀强敌还是结盟",
 		BranchCount: 2,
 		Horizon:     3,
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{
@@ -609,7 +619,7 @@ func TestListForecasts_NoDeadlockAfterChapterCommit(t *testing.T) {
 		Divergence:  "分歧测试",
 		BranchCount: 2,
 		Horizon:     3,
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{ID: "b1", BeatsSummary: "节拍1"},
@@ -726,7 +736,7 @@ func TestListForecasts_CleanProject(t *testing.T) {
 		Divergence:  "无偏离",
 		BranchCount: 1,
 		Horizon:     1,
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{ID: "b1", BeatsSummary: "干净节拍"},
@@ -776,7 +786,7 @@ func TestSelectBranch_ArchivedForecastRejected(t *testing.T) {
 		Divergence:  "分歧方案A",
 		BranchCount: 2,
 		Horizon:     2,
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{ID: "branch_a1", BeatsSummary: "方案A节拍1"},
@@ -796,7 +806,7 @@ func TestSelectBranch_ArchivedForecastRejected(t *testing.T) {
 		Divergence:  "分歧方案B",
 		BranchCount: 2,
 		Horizon:     2,
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{ID: "branch_b1", BeatsSummary: "方案B节拍1"},
@@ -904,7 +914,7 @@ func TestSelectBranch_StaleForecastRejected(t *testing.T) {
 		Divergence:  "分歧测试",
 		BranchCount: 2,
 		Horizon:     2,
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{ID: "branch_s1", BeatsSummary: "节拍1"},
@@ -986,7 +996,7 @@ func TestSelectBranch_ActiveMaintainsSingleActive(t *testing.T) {
 		Divergence:  "分歧方案A",
 		BranchCount: 2,
 		Horizon:     2,
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{ID: "branch_a1", BeatsSummary: "节拍A1", ExpectedDeltas: "+神兵"},
@@ -1082,7 +1092,7 @@ func TestSQLiteStore_FrameworkChange_MarksForecastStale(t *testing.T) {
 		Divergence:  "框架分歧",
 		BranchCount: 2,
 		Horizon:     3,
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{ID: "b1", BeatsSummary: "节拍1"},
@@ -1172,7 +1182,7 @@ func TestSQLiteStore_RewriteBelowBase_MarksForecastStale(t *testing.T) {
 		Divergence:  "基下分歧",
 		BranchCount: 2,
 		Horizon:     3,
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{ID: "b1", BeatsSummary: "节拍1"},
@@ -1265,7 +1275,7 @@ func TestSQLiteStore_HookDeletion_MarksForecastStale(t *testing.T) {
 		Divergence:  "钩子分歧",
 		BranchCount: 2,
 		Horizon:     3,
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{ID: "b1", BeatsSummary: "节拍1"},
@@ -1354,7 +1364,7 @@ func TestSQLiteStore_HookStatusTransition_KeepsForecastActive(t *testing.T) {
 		Divergence:  "钩子分歧",
 		BranchCount: 2,
 		Horizon:     3,
-		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
 		Status:      domain.ForecastStatusActive,
 		Branches: []domain.ForecastBranch{
 			{ID: "b1", BeatsSummary: "节拍1"},
@@ -1392,5 +1402,149 @@ func TestSQLiteStore_HookStatusTransition_KeepsForecastActive(t *testing.T) {
 	}
 	if activePlan.Status != domain.PlanStatusActive {
 		t.Fatalf("expected active plan to stay 'active', got '%s'", activePlan.Status)
+	}
+}
+
+func TestSQLiteStore_ComputeFingerprint_FailsClosedOnQueryError(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test_fp_query_err.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	projID := "proj_fp_err"
+	if err := s.SaveProject(ctx, &domain.Project{
+		ID:        projID,
+		Title:     "指纹报错测试",
+		Framework: &domain.ProjectFramework{ThemePremise: "天道运行"},
+	}); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	hook := &domain.PlotHook{
+		ID:             "hook_fp_1",
+		ProjectID:      projID,
+		Title:          "神秘线索",
+		CreatedChapter: 1,
+		TargetChapter:  5,
+		Status:         domain.HookStatusOpen,
+	}
+	if err := s.SavePlotHook(ctx, hook); err != nil {
+		t.Fatalf("SavePlotHook failed: %v", err)
+	}
+
+	// 正常建库后取 fp1（两值形式）→ 无错且非空
+	fp1, err := s.ComputeFingerprint(ctx, projID)
+	if err != nil {
+		t.Fatalf("expected initial ComputeFingerprint to succeed, got %v", err)
+	}
+	if fp1 == "" || !strings.HasPrefix(fp1, "v2:") {
+		t.Fatalf("expected non-empty v2 fingerprint, got %q", fp1)
+	}
+
+	// DROP TABLE plot_hooks → ComputeFingerprint 返回 error
+	if _, err := s.db.Exec(`DROP TABLE plot_hooks`); err != nil {
+		t.Fatalf("DROP TABLE plot_hooks failed: %v", err)
+	}
+	fp2, err := s.ComputeFingerprint(ctx, projID)
+	if err == nil {
+		t.Fatalf("expected ComputeFingerprint to fail after DROP TABLE plot_hooks, got fp=%q", fp2)
+	}
+
+	// DROP TABLE projects → ComputeFingerprint 返回 error
+	if _, err := s.db.Exec(`DROP TABLE projects`); err != nil {
+		t.Fatalf("DROP TABLE projects failed: %v", err)
+	}
+	fp3, err := s.ComputeFingerprint(ctx, projID)
+	if err == nil {
+		t.Fatalf("expected ComputeFingerprint to fail after DROP TABLE projects, got fp=%q", fp3)
+	}
+}
+
+func TestSQLiteStore_ForecastStaleWhenHookQueryBroken(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test_hook_query_broken.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	projID := "proj_hook_broken"
+	proj := &domain.Project{
+		ID:        projID,
+		Title:     "钩子查询失败Fail-Closed测试",
+		Framework: &domain.ProjectFramework{ThemePremise: "因果循环"},
+	}
+	if err := s.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	// 零钩子 → 创建并 SaveForecast 一个 active forecast（存量指纹 = 同框架+零钩子的合法值）
+	fc := &domain.Forecast{
+		ID:          "fc_broken_1",
+		ProjectID:   projID,
+		BaseChapter: "0",
+		Divergence:  "因果分歧",
+		BranchCount: 1,
+		Horizon:     2,
+		Fingerprint: mustComputeFingerprint(t, s, ctx, projID),
+		Status:      domain.ForecastStatusActive,
+		Branches: []domain.ForecastBranch{
+			{ID: "b1", BeatsSummary: "主干推进"},
+		},
+		CreatedAt: time.Now(),
+	}
+	if err := s.SaveForecast(ctx, fc); err != nil {
+		t.Fatalf("SaveForecast failed: %v", err)
+	}
+
+	// 先断言：正常情况下 LoadForecast 不 stale（premise 未变）——这步是测试前提
+	loadedBefore, err := s.LoadForecast(ctx, projID, fc.ID)
+	if err != nil {
+		t.Fatalf("LoadForecast before drop failed: %v", err)
+	}
+	if loadedBefore.Status != domain.ForecastStatusActive {
+		t.Fatalf("expected forecast to be active before drop, got %s", loadedBefore.Status)
+	}
+
+	listBefore, err := s.ListForecasts(ctx, projID)
+	if err != nil {
+		t.Fatalf("ListForecasts before drop failed: %v", err)
+	}
+	if len(listBefore) != 1 || listBefore[0].Status != domain.ForecastStatusActive {
+		t.Fatalf("expected list to have 1 active forecast before drop, got %+v", listBefore)
+	}
+
+	// DROP TABLE plot_hooks → LoadForecast 必须返回 status=STALE（查询失败 Fail-Closed），且不是 error；ListForecasts 同断言
+	if _, err := s.db.Exec(`DROP TABLE plot_hooks`); err != nil {
+		t.Fatalf("DROP TABLE plot_hooks failed: %v", err)
+	}
+
+	loadedAfter, err := s.LoadForecast(ctx, projID, fc.ID)
+	if err != nil {
+		t.Fatalf("expected LoadForecast not to error on broken hooks table, got %v", err)
+	}
+	if loadedAfter.Status != domain.ForecastStatusStale {
+		t.Fatalf("expected LoadForecast status STALE, got %s", loadedAfter.Status)
+	}
+
+	// 重置回 active，断言 ListForecasts 同样能触发 Fail-Closed 判 stale
+	if _, err := s.db.Exec(`UPDATE narrative_forecasts SET status = ? WHERE id = ?`, domain.ForecastStatusActive, fc.ID); err != nil {
+		t.Fatalf("reset status failed: %v", err)
+	}
+	listAfter, err := s.ListForecasts(ctx, projID)
+	if err != nil {
+		t.Fatalf("expected ListForecasts not to error on broken hooks table, got %v", err)
+	}
+	if len(listAfter) != 1 {
+		t.Fatalf("expected 1 forecast in list, got %d", len(listAfter))
+	}
+	if listAfter[0].Status != domain.ForecastStatusStale {
+		t.Fatalf("expected ListForecasts status STALE, got %s", listAfter[0].Status)
 	}
 }
