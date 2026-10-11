@@ -12,9 +12,10 @@ type ContextTrace struct {
 }
 
 // EstimateTokens provides a lightweight heuristic token estimation for context pieces:
-// len([]rune(s))/2.
-// Note: This is an empirical coarse estimation (typically ~1 token per 1.5-2 Chinese runes or words).
+// len([]rune(s))*3/4.
+// Note: This is an empirical coarse estimation (typically ~0.75 tokens per rune,
+// shared with the prompt-preview estimator so budget and preview stay consistent).
 // Full accurate tokenization (via tiktoken/BPE) is scheduled for P1.
 func EstimateTokens(s string) int {
-	return len([]rune(s)) / 2
+	return len([]rune(s)) * 3 / 4
 }

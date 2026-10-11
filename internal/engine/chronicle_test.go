@@ -1062,9 +1062,10 @@ func TestCanonChronicle_ContextBudget_TenCallbacksTruncationDeterministic(t *tes
 	}
 
 	chronicle := NewCanonChronicle(mockStore)
-	// Set a tight budget (e.g. 600 tokens) so protected window (~150 tokens) passes,
-	// but only a few callbacks fit within the remaining ~450 tokens.
-	chronicle.SetBudgetTokens(600)
+	// Set a tight budget (e.g. 900 tokens) so protected window (~294 tokens at the
+	// shared 0.75 tok/rune caliber) passes, but only a few callbacks fit within
+	// the remaining ~600 tokens.
+	chronicle.SetBudgetTokens(900)
 
 	// Run 1
 	horizon1, trace1, err1 := chronicle.AssembleHorizonTraced(context.Background(), "p_10_callbacks", 15)
@@ -1474,5 +1475,49 @@ func TestCanonChronicle_VolumeRetrospective_NilCurrentVolume(t *testing.T) {
 		if strings.HasPrefix(id, "history/retro_vol_") {
 			t.Errorf("expected no retro items in DroppedIDs, found: %s", id)
 		}
+	}
+}
+
+// TestCanonChronicle_ContextBudget_ProtectedOverflowTruncated verifies the
+// fail-closed protected-overflow path marks the returned trace as truncated:
+// with a minimal budget the protected items (global/rules from WorldRules
+// plus protagonist/rolling context) must exceed it, so AssembleHorizonTraced
+// returns a non-nil error together with a trace whose Truncated flag is true.
+func TestCanonChronicle_ContextBudget_ProtectedOverflowTruncated(t *testing.T) {
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p_protected_overflow",
+			Title:          "截断标记验证录",
+			TargetPlatform: "起点仙侠",
+			WorldRules:     "天地不仁以万物为刍狗，大道五十天衍四九，仙道贵生无量度人",
+		},
+		chapters: []*domain.Chapter{
+			{
+				ChapterIndex: 1,
+				Title:        "第一章 开篇",
+				CoreConflict: "天机骤变",
+				Content:      "夜色渐浓，丹炉内的药香愈发纯粹。韩立长舒一口气，盖上了鼎盖。",
+			},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	chronicle.SetBudgetTokens(1)
+
+	horizon, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_protected_overflow", 2)
+	if err == nil {
+		t.Fatalf("expected protected-overflow error with budget 1, got nil (horizon=%v)", horizon)
+	}
+	if horizon != nil {
+		t.Errorf("expected nil horizon on protected overflow, got %v", horizon)
+	}
+	if trace == nil {
+		t.Fatalf("expected non-nil trace on protected overflow")
+	}
+	if !trace.Truncated {
+		t.Errorf("expected trace.Truncated=true on protected overflow, got false (estimated=%d budget=%d)", trace.EstimatedTokens, trace.BudgetTokens)
+	}
+	if len(trace.ProtectedIDs) == 0 {
+		t.Errorf("expected trace.ProtectedIDs to be recorded on protected overflow")
 	}
 }

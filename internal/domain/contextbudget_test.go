@@ -15,8 +15,8 @@ func TestEstimateTokens(t *testing.T) {
 		{"empty string", "", 0},
 		{"single ASCII", "a", 0},
 		{"two ASCII", "ab", 1},
-		{"chinese four runes", "你好世界", 2},
-		{"chinese mixed runes", "你好世界！这是一段测试文本，用于粗估Token。", 12},
+		{"chinese four runes", "你好世界", 3},
+		{"chinese mixed runes", "你好世界！这是一段测试文本，用于粗估Token。", 18},
 	}
 
 	for _, tc := range cases {
@@ -53,5 +53,27 @@ func TestContextTrace_Fields(t *testing.T) {
 	}
 	if trace.BudgetTokens != 12000 || trace.EstimatedTokens != 4500 {
 		t.Errorf("unexpected token counts: budget=%d estimated=%d", trace.BudgetTokens, trace.EstimatedTokens)
+	}
+}
+
+// TestEstimateTokens_FormulaLocked pins the shared 0.75 tok/rune heuristic
+// (len([]rune(s))*3/4). The prompt-preview estimator delegates to
+// domain.EstimateTokens, so any regression here would silently reopen the
+// budget-vs-preview caliber split.
+func TestEstimateTokens_FormulaLocked(t *testing.T) {
+	inputs := []string{
+		"",
+		"a",
+		"ab",
+		"hello world",
+		"你好世界",
+		"你好世界！这是一段测试文本，用于粗估Token。",
+		"天地不仁以万物为刍狗",
+	}
+	for _, in := range inputs {
+		want := len([]rune(in)) * 3 / 4
+		if got := domain.EstimateTokens(in); got != want {
+			t.Errorf("EstimateTokens(%q) = %d, want len*3/4 = %d", in, got, want)
+		}
 	}
 }
