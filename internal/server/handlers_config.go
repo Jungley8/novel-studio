@@ -65,6 +65,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if updated.ReviewerModel != "" {
 			s.cfg.ReviewerModel = updated.ReviewerModel
 		}
+		if updated.ContextBudgetTokens < 0 {
+			errorResponse(w, http.StatusBadRequest, "context_budget_tokens must be positive")
+			return
+		}
+		if updated.ContextBudgetTokens > 0 {
+			s.cfg.ContextBudgetTokens = updated.ContextBudgetTokens
+		}
 
 		// Update independent providers if specified
 		updateProvider := func(cur **config.ProviderConfig, in *config.ProviderConfig) {
@@ -99,6 +106,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if s.llmRouter != nil {
 			s.llmRouter.UpdateFromConfig(s.cfg)
+		}
+
+		if err := s.cfg.Validate(); err != nil {
+			errorResponse(w, http.StatusBadRequest, "invalid config: "+err.Error())
+			return
 		}
 
 		if err := s.cfg.Save(s.configPath); err != nil {

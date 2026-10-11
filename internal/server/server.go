@@ -53,6 +53,7 @@ func New(
 	}
 
 	chronicle := engine.NewCanonChronicle(s)
+	chronicle.SetConfig(cfg)
 	var qgClient engine.LLMClient = llmClient
 	if router != nil {
 		qgClient = router
