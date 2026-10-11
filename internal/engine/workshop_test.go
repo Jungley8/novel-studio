@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Jungley8/novel-studio/internal/config"
 	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/store"
 )
@@ -36,6 +37,9 @@ func (m *mockWorkshopLLMClient) ChatCompletion(ctx context.Context, model, syste
 			return m.suggestConflictText, nil
 		}
 		return "推演的黄金冲突", nil
+	}
+	if strings.Contains(systemPrompt, "记忆压缩器") {
+		return "", nil
 	}
 	if strings.Contains(systemPrompt, "总设计师") {
 		m.capturedBeatsPrompt = userPrompt
@@ -3273,4 +3277,135 @@ func TestChapterWorkshop_PlanAndIntentAccountedBudget(t *testing.T) {
 			t.Errorf("expected draft skip event to be emitted")
 		}
 	})
+}
+
+// 5. TestChapterWorkshop_CompactionFailureWarnsInIssues：让 chronicle 进入"有丢弃"的小预算场景
+// （chronicle.SetConfig 极小 budget，参照既有 budget 测试构造），mock 客户端在"记忆压缩器" system prompt 下返回空串
+// （在 mockWorkshopLLMClient.ChatCompletion 加一个该分派分支，空串=压缩失败）→ 断言 res.Audit.Issues 含 【记忆压缩警告】。
+func TestChapterWorkshop_CompactionFailureWarnsInIssues(t *testing.T) {
+	beatsResp := `{
+		"beats": [
+			{"phase": "蓄力压迫", "tension": 6, "action": "反派带队堵截主角洞府", "expectation_broken": "反派预料主角会求饶"},
+			{"phase": "绝地反转", "tension": 9, "action": "主角引动护山大阵反扣杀", "expectation_broken": "反派全部被镇压"}
+		],
+		"state_mutation": {
+			"inventory_delta": "+战利品储物袋",
+			"power_delta": "威名初显"
+		}
+	}`
+	reviewResp := `{
+		"verdict": "ACCEPTED",
+		"score": 90,
+		"issues": [],
+		"suggestions": "节奏明快，表现良好"
+	}`
+
+	mockClient := &mockWorkshopLLMClient{
+		beatsJSON:   beatsResp,
+		renderDraft: "夜幕低垂。三名黑衣修士逼近洞府门前。林凡指尖轻扣石壁。阵纹骤亮，雷光咆哮如龙！",
+		reviewJSON:  reviewResp,
+	}
+
+	orch := NewOrchestrator(mockClient)
+	qGate := NewQualityGate(mockClient, nil)
+
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:             "p-compact-warn",
+			Title:          "万域封神",
+			TargetPlatform: "番茄脑洞",
+			WorldRules:     "杀生夺灵，因果必报",
+		},
+		codexEntries: []*domain.CodexEntry{
+			{
+				ID:        "codex_p-ws_pro",
+				ProjectID: "p-compact-warn",
+				Category:  domain.CategoryCharacter,
+				Archetype: "PROTAGONIST",
+				Name:      "林凡",
+				Realm:     "练气圆满",
+				Inventory: "青玉短剑",
+			},
+		},
+		chapters: []*domain.Chapter{
+			{ChapterIndex: 1, Title: "第1章", Content: "起步篇章。"},
+			{ChapterIndex: 2, Title: "第2章", Content: "磨砺篇章。"},
+			{ChapterIndex: 3, Title: "第3章", Content: "蓄势篇章。"},
+			{ChapterIndex: 4, Title: "第4章", Content: "暗涌篇章。"},
+		},
+		hooks: []*domain.PlotHook{
+			{
+				ID:             "hook_far_drop",
+				Title:          "远期超长伏笔",
+				Details:        strings.Repeat("潜藏深渊地下的古老妖皇封印，涉及万界大劫因果。", 10),
+				CreatedChapter: 1,
+				TargetChapter:  30,
+				Status:         domain.HookStatusOpen,
+			},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	chronicle.SetConfig(&config.Config{
+		ContextBudgetTokens: 1,
+	})
+	_, probeTrace, _ := chronicle.AssembleHorizonTraced(context.Background(), "p-compact-warn", 5)
+	if probeTrace == nil {
+		t.Fatalf("expected non-nil probeTrace")
+	}
+	baseProtectedTokens := probeTrace.EstimatedTokens
+
+	// Set small budget via chronicle.SetConfig: baseProtected + 150 (enough for >= MinCompactionBudgetTokens 100, but hook_far_drop exceeds 150)
+	chronicle.SetConfig(&config.Config{
+		ContextBudgetTokens: baseProtectedTokens + 150,
+	})
+
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	var events []WorkshopEvent
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-compact-warn",
+		ChapterIndex:    5,
+		CoreConflict:    "宗门反派夜袭抢夺古经",
+		ReasoningModel:  "mock-r1",
+		WriterModel:     "mock-v3",
+		ReviewerModel:   "mock-reviewer",
+		WordsTarget:     2000,
+		AutoCommit:      true,
+		MaxRewriteLoops: 2,
+		OnProgress: func(ev WorkshopEvent) {
+			events = append(events, ev)
+		},
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if res.Audit == nil {
+		t.Fatalf("expected non-nil Audit report")
+	}
+
+	hasCompactionWarning := false
+	for _, issue := range res.Audit.Issues {
+		if strings.Contains(issue, "【记忆压缩警告】") {
+			hasCompactionWarning = true
+			break
+		}
+	}
+	if !hasCompactionWarning {
+		t.Errorf("expected res.Audit.Issues to contain '【记忆压缩警告】', got: %v", res.Audit.Issues)
+	}
+
+	foundCompactionEvent := false
+	for _, ev := range events {
+		if strings.Contains(ev.Message, "【记忆压缩警告】") {
+			foundCompactionEvent = true
+			break
+		}
+	}
+	if !foundCompactionEvent {
+		t.Errorf("expected workshop event with '【记忆压缩警告】' to be emitted")
+	}
 }
