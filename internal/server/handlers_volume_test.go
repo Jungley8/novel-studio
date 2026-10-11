@@ -5,9 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -38,7 +41,14 @@ func setupTestServerForVolume(t *testing.T) (*server.Server, store.Store, *httpt
 		}
 
 		content := "夜色渐深，冷风呼啸。林凡拔出青玉长剑，一剑断去黑衣人退路。"
-		if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
+		if strings.Contains(systemPrompt, "分卷分节架构师") {
+			from, to := 1, 1
+			if m := regexp.MustCompile(`章节范围：第 (\d+) 章 ~ 第 (\d+) 章`).FindStringSubmatch(userPrompt); len(m) == 3 {
+				from, _ = strconv.Atoi(m[1])
+				to, _ = strconv.Atoi(m[2])
+			}
+			content = fmt.Sprintf(`{"sections":[{"title":"主线推进","from_chapter":%d,"to_chapter":%d,"goal":"推进本卷主线","key_events":["关键推进"]}]}`, from, to)
+		} else if strings.Contains(systemPrompt, "精算师") || strings.Contains(systemPrompt, "结算") || strings.Contains(systemPrompt, "Settle") {
 			content = `{"inventory_delta":"","power_delta":"","character_mutations":[],"evidence":[]}`
 		} else if strings.Contains(systemPrompt, "分庭总审编") || strings.Contains(systemPrompt, "总审编") || strings.Contains(systemPrompt, "总编审") || strings.Contains(systemPrompt, "QualityGate") {
 			content = `{"verdict":"ACCEPTED","score":90,"issues":[],"suggestions":"通过"}`

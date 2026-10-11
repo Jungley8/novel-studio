@@ -69,28 +69,29 @@ type WorkshopProduceRequest struct {
 
 // WorkshopProduceResult represents the end-to-end outcome of a chapter workshop run.
 type WorkshopProduceResult struct {
-	ChapterIndex         int                         `json:"chapter_index"`
-	Title                string                      `json:"title"`
-	CoreConflict         string                      `json:"core_conflict,omitempty"`
-	Beats                []domain.SceneBeat          `json:"beats"`
-	StateMutation        domain.StateMutation        `json:"state_mutation"`
-	Content              string                      `json:"content"`
-	Audit                *domain.AuditReport         `json:"audit"`
-	RewriteLoops         int                         `json:"rewrite_loops"`
-	Committed            bool                        `json:"committed"`
-	TotalUsage           TokenUsage                  `json:"total_usage"`
-	EstimatedCostUSD     float64                     `json:"estimated_cost_usd"`
-	ResumedPhase         string                      `json:"resumed_phase,omitempty"`
-	UpdatedProject       *domain.Project             `json:"updated_project,omitempty"`
-	HarmonizeReport      *HarmonizeReport            `json:"harmonize_report,omitempty"`
-	TechnicalBlocked     bool                        `json:"technical_blocked,omitempty"`
-	TechnicalBlockReason string                      `json:"technical_block_reason,omitempty"`
-	UnmatchedNames       []string                    `json:"unmatched_names,omitempty"`
-	SettlementEvidence   []domain.SettlementEvidence `json:"settlement_evidence,omitempty"`
-	ActualWords          int                         `json:"actual_words,omitempty"`
-	WordsTarget          int                         `json:"words_target,omitempty"`
-	WordQuotaRatio       float64                     `json:"word_quota_ratio,omitempty"`
-	UnderTarget          bool                        `json:"under_target,omitempty"`
+	ChapterIndex                int                          `json:"chapter_index"`
+	Title                       string                       `json:"title"`
+	CoreConflict                string                       `json:"core_conflict,omitempty"`
+	Beats                       []domain.SceneBeat           `json:"beats"`
+	StateMutation               domain.StateMutation         `json:"state_mutation"`
+	Content                     string                       `json:"content"`
+	Audit                       *domain.AuditReport          `json:"audit"`
+	RewriteLoops                int                          `json:"rewrite_loops"`
+	Committed                   bool                         `json:"committed"`
+	TotalUsage                  TokenUsage                   `json:"total_usage"`
+	EstimatedCostUSD            float64                      `json:"estimated_cost_usd"`
+	ResumedPhase                string                       `json:"resumed_phase,omitempty"`
+	UpdatedProject              *domain.Project              `json:"updated_project,omitempty"`
+	HarmonizeReport             *HarmonizeReport             `json:"harmonize_report,omitempty"`
+	TechnicalBlocked            bool                         `json:"technical_blocked,omitempty"`
+	TechnicalBlockReason        string                       `json:"technical_block_reason,omitempty"`
+	UnmatchedNames              []string                     `json:"unmatched_names,omitempty"`
+	SettlementEvidence          []domain.SettlementEvidence  `json:"settlement_evidence,omitempty"`
+	ActualWords                 int                          `json:"actual_words,omitempty"`
+	WordsTarget                 int                          `json:"words_target,omitempty"`
+	WordQuotaRatio              float64                      `json:"word_quota_ratio,omitempty"`
+	UnderTarget                 bool                         `json:"under_target,omitempty"`
+	StateValidationObservations []StateValidationObservation `json:"state_validation_observations,omitempty"`
 }
 
 // ChapterWorkshop is the deep orchestration module that encapsulates the entire
@@ -172,16 +173,17 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 
 	// 0. Checkpoint Inspection & Resumption
 	var (
-		resumedPhase      string
-		beatsOut          *DeriveBeatsOutput
-		draftText         string
-		auditReport       *domain.AuditReport
-		checkpointHit     bool
-		rewriteLoops      int
-		rhythmWarning     string
-		planInjectWarning string
-		intentWarning     string
-		compactionWarning string
+		resumedPhase           string
+		beatsOut               *DeriveBeatsOutput
+		draftText              string
+		auditReport            *domain.AuditReport
+		checkpointHit          bool
+		rewriteLoops           int
+		rhythmWarning          string
+		planInjectWarning      string
+		intentWarning          string
+		compactionWarning      string
+		unresolvedObservations []StateValidationObservation
 	)
 
 	if req.ResumeCheckpoint {
@@ -612,7 +614,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		technicalBlocked     bool
 		technicalBlockReason string
 	)
-	sMut, sEvs, sUsage, sErr := SettleFromDraft(ctx, w.orch.client, req.ReasoningModel, horizon.Project, horizon.ProtagonistEntry, draftText, req.ChapterIndex)
+	sMut, sEvs, sObs, sUsage, sErr := w.settleStateWithValidation(ctx, req, horizon.Project, horizon.ProtagonistEntry, draftText)
 	addUsage(sUsage)
 	if sErr != nil {
 		technicalBlocked = true
@@ -624,6 +626,17 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	} else {
 		settledMutation = sMut
 		settleEvidences = sEvs
+		unresolvedObservations = sObs
+		if len(sObs) > 0 {
+			var obsParts []string
+			for _, o := range sObs {
+				obsParts = append(obsParts, fmt.Sprintf("[%s] %s", o.Code, o.Summary))
+			}
+			emit(WorkshopEvent{
+				Phase:   PhaseDrafted,
+				Message: fmt.Sprintf("状态对账未完全闭合: %s", strings.Join(obsParts, "；")),
+			})
+		}
 	}
 
 	// 4. Audit via Quality Gate (with plot hooks resolution awareness)
@@ -668,6 +681,13 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	}
 	if auditReport != nil && compactionWarning != "" {
 		auditReport.Issues = append(auditReport.Issues, compactionWarning)
+	}
+	if auditReport != nil && len(unresolvedObservations) > 0 {
+		var obsParts []string
+		for _, o := range unresolvedObservations {
+			obsParts = append(obsParts, fmt.Sprintf("[%s] %s", o.Code, o.Summary))
+		}
+		auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【状态对账】%s", strings.Join(obsParts, "；")))
 	}
 
 	// 5. Targeted Rewrite Loop if revision needed
@@ -726,13 +746,14 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			Phase:   PhaseDrafted,
 			Message: "正文已发生重写变动，重新执行终审状态结算...",
 		})
-		reMut, reEvs, reUsage, reErr := SettleFromDraft(ctx, w.orch.client, req.ReasoningModel, horizon.Project, horizon.ProtagonistEntry, currentDraft, req.ChapterIndex)
+		reMut, reEvs, reObs, reUsage, reErr := w.settleStateWithValidation(ctx, req, horizon.Project, horizon.ProtagonistEntry, currentDraft)
 		addUsage(reUsage)
 		if reErr != nil {
 			technicalBlocked = true
 			technicalBlockReason = reErr.Error()
 			settledMutation = domain.StateMutation{}
 			settleEvidences = nil
+			unresolvedObservations = nil
 			if auditReport != nil {
 				auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【TECHNICAL BLOCKED】重写后状态结算失败: %s，已阻断归档入库", technicalBlockReason))
 			}
@@ -745,6 +766,20 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			technicalBlockReason = ""
 			settledMutation = reMut
 			settleEvidences = reEvs
+			unresolvedObservations = reObs
+			if len(reObs) > 0 {
+				var obsParts []string
+				for _, o := range reObs {
+					obsParts = append(obsParts, fmt.Sprintf("[%s] %s", o.Code, o.Summary))
+				}
+				emit(WorkshopEvent{
+					Phase:   PhaseDrafted,
+					Message: fmt.Sprintf("状态对账未完全闭合: %s", strings.Join(obsParts, "；")),
+				})
+				if auditReport != nil {
+					auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【状态对账】%s", strings.Join(obsParts, "；")))
+				}
+			}
 		}
 	}
 
@@ -845,25 +880,26 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 
 	chapterTitle := fmt.Sprintf("第 %d 章", req.ChapterIndex)
 	result := &WorkshopProduceResult{
-		ChapterIndex:         req.ChapterIndex,
-		Title:                chapterTitle,
-		CoreConflict:         req.CoreConflict,
-		Beats:                beatsOut.Beats,
-		StateMutation:        settledMutation,
-		Content:              currentDraft,
-		Audit:                auditReport,
-		RewriteLoops:         rewriteLoops,
-		Committed:            false,
-		TotalUsage:           totalUsage,
-		EstimatedCostUSD:     estimatedCostUSD,
-		TechnicalBlocked:     technicalBlocked,
-		TechnicalBlockReason: technicalBlockReason,
-		UnmatchedNames:       unmatchedNames,
-		SettlementEvidence:   settleEvidences,
-		ActualWords:          actualWords,
-		WordsTarget:          targetWords,
-		WordQuotaRatio:       ratio,
-		UnderTarget:          underTarget,
+		ChapterIndex:                req.ChapterIndex,
+		Title:                       chapterTitle,
+		CoreConflict:                req.CoreConflict,
+		Beats:                       beatsOut.Beats,
+		StateMutation:               settledMutation,
+		Content:                     currentDraft,
+		Audit:                       auditReport,
+		RewriteLoops:                rewriteLoops,
+		Committed:                   false,
+		TotalUsage:                  totalUsage,
+		EstimatedCostUSD:            estimatedCostUSD,
+		TechnicalBlocked:            technicalBlocked,
+		TechnicalBlockReason:        technicalBlockReason,
+		UnmatchedNames:              unmatchedNames,
+		SettlementEvidence:          settleEvidences,
+		ActualWords:                 actualWords,
+		WordsTarget:                 targetWords,
+		WordQuotaRatio:              ratio,
+		UnderTarget:                 underTarget,
+		StateValidationObservations: unresolvedObservations,
 	}
 	if checkpointHit {
 		result.ResumedPhase = resumedPhase
@@ -1151,4 +1187,82 @@ func (w *ChapterWorkshop) findUnmatchedCharacterNames(ctx context.Context, proje
 		unmatched = append(unmatched, name)
 	}
 	return unmatched
+}
+
+// settleStateWithValidation: settle → validate → (不一致) 单次重算+重验 → 输出
+func (w *ChapterWorkshop) settleStateWithValidation(
+	ctx context.Context,
+	req WorkshopProduceRequest,
+	project *domain.Project,
+	baseline *domain.CodexEntry,
+	draftText string,
+) (domain.StateMutation, []domain.SettlementEvidence, []StateValidationObservation, TokenUsage, error) {
+	var totalUsage TokenUsage
+
+	// 1. Initial settlement
+	sMut, sEvs, sUsage, sErr := SettleFromDraft(ctx, w.orch.client, req.ReasoningModel, project, baseline, draftText, req.ChapterIndex)
+	addTokenUsage(&totalUsage, sUsage)
+	if sErr != nil {
+		return domain.StateMutation{}, nil, nil, totalUsage, sErr
+	}
+
+	// 2. Validate settled state
+	vRes, vUsage, vErr := ValidateSettledState(ctx, w.orch.client, req.ReasoningModel, baseline, sMut, draftText, req.ChapterIndex)
+	addTokenUsage(&totalUsage, vUsage)
+	if vErr != nil {
+		vRes = StateValidationResult{
+			Consistent:             false,
+			ReconciliationRequired: true,
+			Observations: []StateValidationObservation{
+				{Code: "state-validation-unavailable", Summary: vErr.Error()},
+			},
+		}
+	}
+
+	// 3. Reconcile once if inconsistent or reconciliation required
+	if !vRes.Consistent || vRes.ReconciliationRequired {
+		if req.OnProgress != nil {
+			req.OnProgress(WorkshopEvent{
+				Phase:   PhaseDrafted,
+				Message: "状态投影需要对账，正在仅重算本章结算层",
+			})
+		}
+
+		var obsLines []string
+		for _, o := range vRes.Observations {
+			obsLines = append(obsLines, fmt.Sprintf("[%s] %s", o.Code, o.Summary))
+		}
+		feedback := strings.Join(obsLines, "\n")
+
+		reMut, reEvs, reUsage, reErr := SettleFromDraftWithFeedback(ctx, w.orch.client, req.ReasoningModel, project, baseline, draftText, req.ChapterIndex, feedback)
+		addTokenUsage(&totalUsage, reUsage)
+		if reErr != nil {
+			return domain.StateMutation{}, nil, nil, totalUsage, reErr
+		}
+
+		// Re-validate
+		vRes2, vUsage2, vErr2 := ValidateSettledState(ctx, w.orch.client, req.ReasoningModel, baseline, reMut, draftText, req.ChapterIndex)
+		addTokenUsage(&totalUsage, vUsage2)
+		if vErr2 != nil {
+			obs := append([]StateValidationObservation{}, vRes.Observations...)
+			obs = append(obs, StateValidationObservation{
+				Code:    "state-validation-unavailable",
+				Summary: vErr2.Error(),
+			})
+			return reMut, reEvs, obs, totalUsage, nil
+		}
+
+		if vRes2.Consistent && !vRes2.ReconciliationRequired {
+			return reMut, reEvs, nil, totalUsage, nil
+		}
+
+		// Still unresolved
+		obs := vRes2.Observations
+		if len(obs) == 0 {
+			obs = vRes.Observations
+		}
+		return reMut, reEvs, obs, totalUsage, nil
+	}
+
+	return sMut, sEvs, nil, totalUsage, nil
 }
