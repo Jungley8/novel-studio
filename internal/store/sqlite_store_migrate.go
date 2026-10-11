@@ -206,6 +206,26 @@ func (s *SQLiteStore) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_events_chapter ON project_events(project_id, chapter_index);
 	CREATE INDEX IF NOT EXISTS idx_events_run ON project_events(project_id, run_id);
 
+	CREATE TABLE IF NOT EXISTS chapter_quality_metrics (
+		project_id TEXT NOT NULL,
+		chapter_index INTEGER NOT NULL,
+		run_id TEXT,
+		actual_words INTEGER NOT NULL,
+		words_target INTEGER NOT NULL,
+		word_quota_ratio REAL NOT NULL,
+		under_target INTEGER NOT NULL,
+		verdict TEXT NOT NULL,
+		score INTEGER NOT NULL,
+		rewrite_loops INTEGER NOT NULL,
+		unresolved_observations INTEGER NOT NULL,
+		hook_claims_total INTEGER NOT NULL,
+		hook_claims_validated INTEGER NOT NULL,
+		hook_claims_rejected INTEGER NOT NULL,
+		compaction_failed INTEGER NOT NULL,
+		created_at DATETIME NOT NULL,
+		PRIMARY KEY (project_id, chapter_index)
+	);
+
 	CREATE TABLE IF NOT EXISTS narrative_forecasts (
 		id TEXT PRIMARY KEY,
 		project_id TEXT NOT NULL,

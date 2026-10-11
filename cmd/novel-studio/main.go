@@ -42,6 +42,8 @@ func main() {
 			os.Exit(runProduceCLI(os.Args[2:], defaultDataDir))
 		case "bench":
 			os.Exit(runBenchCLI(os.Args[2:], defaultDataDir))
+		case "metrics":
+			os.Exit(runMetricsCLI(os.Args[2:], defaultDataDir))
 		case "genesis":
 			os.Exit(runGenesisCLI(os.Args[2:], defaultDataDir))
 		case "pipeline":
