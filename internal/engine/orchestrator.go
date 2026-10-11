@@ -354,6 +354,33 @@ func buildChapterIntentPromptBlock(intent *domain.ChapterIntent) string {
 	return strings.Join(lines, "\n") + "\n\n"
 }
 
+// buildRenderIntentDirective 构建 render userPrompt 插入的意图指令段（视角+情绪曲线）。
+// nil / 非 LOCKED / 无内容 → 返回 ""。
+func buildRenderIntentDirective(intent *domain.ChapterIntent) string {
+	if intent == nil || intent.Status != domain.IntentStatusLocked {
+		return ""
+	}
+	pov := strings.TrimSpace(intent.POV)
+	var curves []string
+	for _, c := range intent.EmotionCurve {
+		if s := strings.TrimSpace(c); s != "" {
+			curves = append(curves, s)
+		}
+	}
+	if pov == "" && len(curves) == 0 {
+		return ""
+	}
+	var lines []string
+	lines = append(lines, "【本章意图卡指令（作者已锁定）】")
+	if pov != "" {
+		lines = append(lines, fmt.Sprintf("视角：%s", pov))
+	}
+	if len(curves) > 0 {
+		lines = append(lines, fmt.Sprintf("情绪曲线：%s", strings.Join(curves, " → ")))
+	}
+	return strings.Join(lines, "\n") + "\n\n"
+}
+
 func isStateMutationEmpty(m domain.StateMutation) bool {
 	return strings.TrimSpace(m.InventoryDelta) == "" &&
 		strings.TrimSpace(m.PowerDelta) == "" &&
@@ -519,24 +546,11 @@ func (o *Orchestrator) RenderSceneStream(
 			povLine := fmt.Sprintf("锁定「%s」（作者意图卡指定），聚焦视角角色的即时感知。", pov)
 			systemPrompt = strings.Replace(systemPrompt, "锁定第三人称限制视角，聚焦主角即时感知。", povLine, 1)
 		}
+	}
 
-		var curves []string
-		for _, c := range intent.EmotionCurve {
-			if s := strings.TrimSpace(c); s != "" {
-				curves = append(curves, s)
-			}
-		}
-		if pov != "" || len(curves) > 0 {
-			var intentLines []string
-			intentLines = append(intentLines, "【本章意图卡指令（作者已锁定）】")
-			if pov != "" {
-				intentLines = append(intentLines, fmt.Sprintf("视角：%s", pov))
-			}
-			if len(curves) > 0 {
-				intentLines = append(intentLines, fmt.Sprintf("情绪曲线：%s", strings.Join(curves, " → ")))
-			}
-			intentSection := strings.Join(intentLines, "\n") + "\n\n"
-			userPrompt = strings.Replace(userPrompt, "【必须执行的场景节拍", intentSection+"【必须执行的场景节拍", 1)
+	if horizon != nil && horizon.ConsumedIntent != nil {
+		if directive := buildRenderIntentDirective(horizon.ConsumedIntent); directive != "" {
+			userPrompt = strings.Replace(userPrompt, "【必须执行的场景节拍", directive+"【必须执行的场景节拍", 1)
 		}
 	}
 
