@@ -330,6 +330,62 @@
       </div>
     </div>
 
+    <!-- 3. 默认批产参数卡片 -->
+    <div class="p-5 bg-atelier-900 border border-atelier-750 rounded-xl space-y-4 shadow-atelier-md">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-xs font-serif font-bold text-ink-100 flex items-center gap-2">
+            <SlidersHorizontal class="w-3.5 h-3.5 text-brand-amber" />
+            <span>默认批产参数</span>
+          </h3>
+          <p class="text-[11px] text-ink-400 mt-0.5">全书流水线批产的全局默认目标与防线设置，单次执行未单独指定时自动采用。</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-ink-300 mb-1.5">每章目标字数：</label>
+          <input 
+            type="number" 
+            min="0"
+            v-model.number="state.config.default_words_target" 
+            class="w-full bg-atelier-950 border border-atelier-750 rounded-lg px-3.5 py-2 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60" 
+            placeholder="2000 (0=使用兜底)">
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-ink-300 mb-1.5">叙事风格：</label>
+          <input 
+            type="text" 
+            v-model="state.config.default_narrative_style" 
+            class="w-full bg-atelier-950 border border-atelier-750 rounded-lg px-3.5 py-2 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60" 
+            placeholder="留空使用默认风格">
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-ink-300 mb-1.5">最大返工轮次：</label>
+          <input 
+            type="number" 
+            min="0"
+            v-model.number="state.config.default_max_rewrite_loops" 
+            class="w-full bg-atelier-950 border border-atelier-750 rounded-lg px-3.5 py-2 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60" 
+            placeholder="3 (0=使用兜底)">
+        </div>
+      </div>
+
+      <!-- 自动锁定意图卡开关 -->
+      <div class="pt-3 border-t border-atelier-800">
+        <label class="flex items-center gap-2 text-[11px] text-ink-300 cursor-pointer">
+          <input 
+            type="checkbox" 
+            v-model="state.config.default_auto_lock_intents" 
+            class="rounded border-atelier-700 bg-atelier-950 text-brand-amber accent-brand-amber">
+          <span class="font-medium text-ink-100">自动锁定意图卡</span>
+        </label>
+        <p class="text-[11px] text-ink-400 mt-1 pl-5">开启后流水线自动锁定意图卡全自动推进；关闭则生成意图后停线待人工</p>
+      </div>
+    </div>
+
     <!-- 底部小白贴心提示 -->
     <div class="p-4 bg-atelier-950/70 border border-atelier-800 rounded-xl flex items-center gap-3 text-xs text-ink-300">
       <div class="w-7 h-7 rounded-lg bg-brand-amber/10 border border-brand-amber/20 flex items-center justify-center text-brand-amber shrink-0">
@@ -356,6 +412,7 @@ import {
   Sparkles, 
   Lightbulb, 
   PenTool, 
-  ShieldCheck 
+  ShieldCheck,
+  SlidersHorizontal 
 } from 'lucide-vue-next';
 </script>
