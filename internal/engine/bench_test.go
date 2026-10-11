@@ -341,6 +341,38 @@ func TestRunBenchProbes_EmptySnapshotsNotClean(t *testing.T) {
 	}
 }
 
+// 撤回残留：两章快照俱在但正史只剩 ch1（ch2 已撤回，主角恢复至 ch1 态），
+// 孤儿 snap[2] 超出正史前沿 → 忽略记 Notes，不报 drift，Clean。
+func TestRunBenchProbes_OrphanSnapshotBeyondFrontier(t *testing.T) {
+	proj := &domain.Project{ID: "proj-ledger", Title: "撤回残留测试"}
+	chapters, snapshots, _ := benchSnapshotChainFixture(t)
+
+	// 正史前沿退到 ch1：只测 ch1；主角为 snap[1] 解码态（UncommitChapter 恢复态）。
+	chapters = chapters[:1]
+	var restored domain.CodexEntry
+	if err := json.Unmarshal([]byte(snapshots[0].ProtagonistJSON), &restored); err != nil {
+		t.Fatalf("unmarshal snap1 failed: %v", err)
+	}
+
+	report := RunBenchProbes(proj, chapters, nil, &restored, false, snapshots)
+
+	if !report.LedgerReplay.Clean {
+		t.Errorf("expected Clean=true with orphan snapshot ignored, got drifts: %v", report.LedgerReplay.Drifts)
+	}
+	if len(report.LedgerReplay.Drifts) != 0 {
+		t.Errorf("expected no drifts, got %v", report.LedgerReplay.Drifts)
+	}
+	foundFrontierNote := false
+	for _, n := range report.LedgerReplay.Notes {
+		if strings.Contains(n, "第2章快照超出正史前沿") {
+			foundFrontierNote = true
+		}
+	}
+	if !foundFrontierNote {
+		t.Errorf("expected frontier note for snap[2], got %v", report.LedgerReplay.Notes)
+	}
+}
+
 // 终态校验：当前 protagonist 与末章快照不一致（模拟界面直接修改）→ drift 含"与末章快照不一致"。
 func TestRunBenchProbes_FinalStateDrift(t *testing.T) {
 	proj := &domain.Project{ID: "proj-ledger", Title: "终态校验测试"}

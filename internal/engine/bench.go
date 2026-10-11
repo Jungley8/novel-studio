@@ -289,13 +289,29 @@ func RunBenchProbes(
 		notes := make([]string, 0)
 
 		snapByIndex := make(map[int]*domain.ChapterStateSnapshot, len(snapshots))
+		ignoredFrontier := make([]int, 0)
+		ignoredSeen := make(map[int]bool)
 		for _, snap := range snapshots {
 			if snap == nil {
+				continue
+			}
+			// 正史前沿（maxChapterIndex 为 chapters 下最大章号）之外的快照是
+			// UncommitChapter 留下的撤回残留（只删 chapters 行、不删快照行），
+			// 一律忽略并记 Notes，不参与过渡与终态校验。
+			if snap.ChapterIndex > maxChapterIndex {
+				if !ignoredSeen[snap.ChapterIndex] {
+					ignoredSeen[snap.ChapterIndex] = true
+					ignoredFrontier = append(ignoredFrontier, snap.ChapterIndex)
+				}
 				continue
 			}
 			if _, exists := snapByIndex[snap.ChapterIndex]; !exists {
 				snapByIndex[snap.ChapterIndex] = snap
 			}
+		}
+		sort.Ints(ignoredFrontier)
+		for _, idx := range ignoredFrontier {
+			notes = append(notes, fmt.Sprintf("第%d章快照超出正史前沿，视为撤回残留，跳过", idx))
 		}
 
 		hasMutation := func(ch *domain.Chapter) bool {
@@ -372,7 +388,7 @@ func RunBenchProbes(
 			verifiedTransitions++
 		}
 
-		// 终态校验：最大章快照 vs 当前 protagonist（Realm+背包 map）；无快照时跳过。
+		// 终态校验：前沿内最大章快照 vs 当前 protagonist（Realm+背包 map）；无快照时跳过。
 		maxSnapIndex := 0
 		for idx := range snapByIndex {
 			if idx > maxSnapIndex {
