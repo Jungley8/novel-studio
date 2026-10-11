@@ -202,6 +202,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 			subParts = parts[2:]
 		}
 		s.handleAnalytics(w, r, projectID, subParts)
+	case "metrics":
+		s.handleProjectMetrics(w, r, projectID)
 	case "workshop":
 		if len(parts) >= 3 && parts[2] == "produce" {
 			s.handleWorkshopProduce(w, r, projectID)

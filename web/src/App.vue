@@ -22,6 +22,7 @@
         <ActivityView v-show="state.activeTab === 'activity'" />
         <GraphView v-show="state.activeTab === 'graph'" />
         <AnalyticsView v-show="state.activeTab === 'analytics'" />
+        <MetricsView v-show="state.activeTab === 'metrics'" />
         <SettingsView v-show="state.activeTab === 'config'" />
         <StudioLibraryView v-show="state.activeTab === 'studio-library'" />
         <StudioIdeasView v-show="state.activeTab === 'studio-ideas'" />
@@ -82,6 +83,7 @@ import ChaptersView from './views/ChaptersView.vue';
 import ActivityView from './views/ActivityView.vue';
 import GraphView from './views/GraphView.vue';
 import AnalyticsView from './views/AnalyticsView.vue';
+import MetricsView from './views/MetricsView.vue';
 import SettingsView from './views/SettingsView.vue';
 import StudioLibraryView from './views/StudioLibraryView.vue';
 import StudioIdeasView from './views/StudioIdeasView.vue';
