@@ -179,10 +179,8 @@ func (o *Orchestrator) DeriveBeatsForChapterType(
 	}
 
 	var volumeContext string
-	if horizon != nil && horizon.CurrentVolume != nil {
-		volumeContext = fmt.Sprintf("\n【当前分卷主线任务】\n第 %d 卷：《%s》\n- 卷核心主线目标：%s\n- 卷终极大高潮：%s\n本章必须严格服务于本卷主线因果推进。\n",
-			horizon.CurrentVolume.VolumeIndex, horizon.CurrentVolume.Title,
-			horizon.CurrentVolume.CoreGoal, horizon.CurrentVolume.Climax)
+	if horizon != nil {
+		volumeContext = buildVolumeContextBlock(horizon.CurrentVolume, horizon.TargetChapter)
 	}
 
 	var powerContext string
@@ -292,6 +290,39 @@ func (o *Orchestrator) DeriveBeatsForChapterType(
 	out.Usage = usage
 
 	return &out, nil
+}
+
+// buildVolumeContextBlock 构建分卷卷纲注入块；arc 为 nil → ""。
+// 若 targetChapter 落在某个分节内，追加该节（节标题/节目标/关键事件）。
+func buildVolumeContextBlock(arc *domain.VolumeArc, targetChapter int) string {
+	if arc == nil {
+		return ""
+	}
+
+	var matched *domain.VolumeSection
+	for i := range arc.Sections {
+		sec := &arc.Sections[i]
+		if targetChapter >= sec.FromChapter && targetChapter <= sec.ToChapter {
+			matched = sec
+			break
+		}
+	}
+
+	if matched == nil {
+		return fmt.Sprintf("\n【当前分卷主线任务】\n第 %d 卷：《%s》\n- 卷核心主线目标：%s\n- 卷终极大高潮：%s\n本章必须严格服务于本卷主线因果推进。\n",
+			arc.VolumeIndex, arc.Title, arc.CoreGoal, arc.Climax)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n【当前分卷主线任务】\n第 %d 卷：《%s》\n- 卷核心主线目标：%s\n- 卷终极大高潮：%s\n",
+		arc.VolumeIndex, arc.Title, arc.CoreGoal, arc.Climax)
+	fmt.Fprintf(&b, "【本卷分节·本章所在节（第 %d-%d 章）：%s】\n- 节目标：%s\n",
+		matched.FromChapter, matched.ToChapter, matched.Title, matched.Goal)
+	if len(matched.KeyEvents) > 0 {
+		fmt.Fprintf(&b, "- 关键事件：%s\n", strings.Join(matched.KeyEvents, "；"))
+	}
+	b.WriteString("本章必须严格服务于本卷主线因果推进与本节节目标。\n")
+	return b.String()
 }
 
 func buildPlanPromptBlock(planText string) string {
@@ -1618,10 +1649,8 @@ func (o *Orchestrator) SuggestChapterConflict(
 	}
 
 	var volumeContext string
-	if horizon.CurrentVolume != nil {
-		volumeContext = fmt.Sprintf("\n【当前分卷主线任务】\n第 %d 卷：《%s》\n- 卷核心主线目标：%s\n- 卷终极大高潮：%s\n本章必须严格服务于本卷主线因果推进。\n",
-			horizon.CurrentVolume.VolumeIndex, horizon.CurrentVolume.Title,
-			horizon.CurrentVolume.CoreGoal, horizon.CurrentVolume.Climax)
+	if horizon != nil {
+		volumeContext = buildVolumeContextBlock(horizon.CurrentVolume, horizon.TargetChapter)
 	}
 
 	var powerContext string
