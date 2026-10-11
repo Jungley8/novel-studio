@@ -22,6 +22,21 @@ func SettleFromDraft(
 	draftText string,
 	chapterIndex int,
 ) (domain.StateMutation, []domain.SettlementEvidence, TokenUsage, error) {
+	return SettleFromDraftWithFeedback(ctx, client, model, project, baseline, draftText, chapterIndex, "")
+}
+
+// SettleFromDraftWithFeedback audits draft text strictly according to literal facts, deriving post-chapter
+// StateMutation along with textual evidence citations, incorporating feedback from validation if provided.
+func SettleFromDraftWithFeedback(
+	ctx context.Context,
+	client LLMClient,
+	model string,
+	project *domain.Project,
+	baseline *domain.CodexEntry,
+	draftText string,
+	chapterIndex int,
+	feedback string,
+) (domain.StateMutation, []domain.SettlementEvidence, TokenUsage, error) {
 	if client == nil {
 		return domain.StateMutation{}, nil, TokenUsage{}, errors.New("llm client cannot be nil")
 	}
@@ -65,17 +80,24 @@ func SettleFromDraft(
   ]
 }`
 
+	closing := "请严格依据正文白纸黑字推演本章状态变迁，并给出每一项变动的原文引用证据（quote ≥ 8字），输出标准 JSON。"
+	var feedbackSection string
+	if strings.TrimSpace(feedback) != "" {
+		feedbackSection = fmt.Sprintf("\n【上一次结算的对账反馈（必须修正）】\n%s\n", strings.TrimSpace(feedback))
+	}
+
 	userPrompt := fmt.Sprintf(`【书名】《%s》 第 %d 章
 【主角基线状态】%s | 随身物品: %s
 【正文草稿】
 %s
-
-请严格依据正文白纸黑字推演本章状态变迁，并给出每一项变动的原文引用证据（quote ≥ 8字），输出标准 JSON。`,
+%s%s`,
 		projectTitle,
 		chapterIndex,
 		baseNameLevel,
 		baseInventory,
 		draftText,
+		feedbackSection,
+		closing,
 	)
 
 	ctxRole := ContextWithRole(ctx, RoleReasoner)
