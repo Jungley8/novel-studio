@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -417,4 +418,20 @@ func applyPowerDelta(current, delta string) (updatedLevel, oldRealm, newRealm st
 	}
 
 	return cleanDelta, current, cleanDelta
+}
+
+// DryRunStateMutation 在副本上执行状态结算，只返回审计轨迹，不改原对象。
+func DryRunStateMutation(e *CodexEntry, mutation StateMutation) ([]string, error) {
+	if e == nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(e)
+	if err != nil {
+		return nil, fmt.Errorf("marshal codex entry for dry run: %w", err)
+	}
+	var clone CodexEntry
+	if err := json.Unmarshal(data, &clone); err != nil {
+		return nil, fmt.Errorf("unmarshal codex entry for dry run: %w", err)
+	}
+	return ApplyStateMutation(&clone, mutation)
 }
