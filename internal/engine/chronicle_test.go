@@ -23,6 +23,9 @@ type mockChronicleStore struct {
 	codexRelations []domain.EntityRelation
 	retros         map[int]*domain.VolumeRetrospective
 	intents        []*domain.ChapterIntent
+	searchHits     []*domain.MemoryHit
+	searchErr      error
+	searchCalls    int
 }
 
 func (m *mockChronicleStore) GetProject(ctx context.Context, id string) (*domain.Project, error) {
@@ -139,6 +142,14 @@ func (m *mockChronicleStore) MarkIntentsStale(ctx context.Context, projectID str
 		}
 	}
 	return changed, nil
+}
+
+func (m *mockChronicleStore) SearchMemory(ctx context.Context, projectID, query string, limit int) ([]*domain.MemoryHit, error) {
+	m.searchCalls++
+	if m.searchErr != nil {
+		return nil, m.searchErr
+	}
+	return m.searchHits, nil
 }
 
 func (m *mockChronicleStore) SavePlotHook(ctx context.Context, hook *domain.PlotHook) error {
@@ -2106,4 +2117,324 @@ func TestNewLLMCompactor(t *testing.T) {
 			t.Errorf("expected user prompt to contain item ID, got %s", mockClient.capturedUserPrompt)
 		}
 	})
+}
+
+// -----------------------------------------------------------------------------
+// P0-2b: BM25 历史记忆检索与预算化注入测试 (agy-novel12b-memwire)
+// -----------------------------------------------------------------------------
+
+func TestCanonChronicle_Retrieval_InjectsOldSummaries(t *testing.T) {
+	chapters := make([]*domain.Chapter, 0, 10)
+	for i := 1; i <= 10; i++ {
+		chapters = append(chapters, &domain.Chapter{
+			ProjectID:    "p_retrieval_test",
+			ChapterIndex: i,
+			Title:        fmt.Sprintf("第%d章 历练纪事", i),
+			CoreConflict: fmt.Sprintf("历练冲突%d", i),
+			Content:      fmt.Sprintf("第%d章正文，记录修真历史历程与情节发展。", i),
+		})
+	}
+
+	intents := []*domain.ChapterIntent{
+		{
+			ProjectID:    "p_retrieval_test",
+			ChapterIndex: 11,
+			Conflict:     "妖皇封印",
+			Status:       domain.IntentStatusLocked,
+		},
+	}
+
+	searchHits := []*domain.MemoryHit{
+		{Kind: "summary", RefID: "chapter:3", ChapterIndex: 3, Raw: "第三章历史摘要：妖皇封印出现裂纹", Score: 1.0},
+		{Kind: "summary", RefID: "chapter:6", ChapterIndex: 6, Raw: "第六章历史摘要：妖皇黑气侵蚀大阵", Score: 1.2},
+		{Kind: "summary", RefID: "chapter:9", ChapterIndex: 9, Raw: "第九章窗口内摘要：妖皇封印暂时稳固", Score: 0.8},
+		{Kind: "summary", RefID: "chapter:12", ChapterIndex: 12, Raw: "第十二章未来摘要：妖皇封印彻底破灭", Score: 0.5},
+		{Kind: "hook", RefID: "hook:妖皇法器", ChapterIndex: 2, Raw: "伏笔条目：妖皇本命法器遗落人间", Score: 0.6},
+	}
+
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:         "p_retrieval_test",
+			Title:      "仙途纪事",
+			WorldRules: "天地玄黄，大道唯孤",
+		},
+		chapters:   chapters,
+		intents:    intents,
+		searchHits: searchHits,
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	horizon, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_retrieval_test", 11)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 1. horizon.HistoricalCallbacks 含【历史检索记忆
+	if !strings.Contains(horizon.HistoricalCallbacks, "【历史检索记忆") {
+		t.Errorf("expected HistoricalCallbacks to contain '【历史检索记忆', got: %s", horizon.HistoricalCallbacks)
+	}
+	// 2. 含 ch3/ch6 摘要文本
+	if !strings.Contains(horizon.HistoricalCallbacks, "第三章历史摘要：妖皇封印出现裂纹") {
+		t.Errorf("expected HistoricalCallbacks to contain ch3 summary text")
+	}
+	if !strings.Contains(horizon.HistoricalCallbacks, "第六章历史摘要：妖皇黑气侵蚀大阵") {
+		t.Errorf("expected HistoricalCallbacks to contain ch6 summary text")
+	}
+	// 3. 不含 ch9/ch12 文本
+	if strings.Contains(horizon.HistoricalCallbacks, "第九章窗口内摘要") {
+		t.Errorf("expected HistoricalCallbacks NOT to contain ch9 (window) text")
+	}
+	if strings.Contains(horizon.HistoricalCallbacks, "第十二章未来摘要") {
+		t.Errorf("expected HistoricalCallbacks NOT to contain ch12 (future) text")
+	}
+	if strings.Contains(horizon.HistoricalCallbacks, "伏笔条目：妖皇本命法器遗落人间") {
+		t.Errorf("expected HistoricalCallbacks NOT to contain hook text")
+	}
+
+	// 4. trace.RetrievedIDs 集合 == {chapter:3, chapter:6}
+	expectedRetrieved := map[string]bool{"chapter:3": true, "chapter:6": true}
+	if len(trace.RetrievedIDs) != len(expectedRetrieved) {
+		t.Fatalf("expected %d RetrievedIDs, got %d: %v", len(expectedRetrieved), len(trace.RetrievedIDs), trace.RetrievedIDs)
+	}
+	for _, id := range trace.RetrievedIDs {
+		if !expectedRetrieved[id] {
+			t.Errorf("unexpected RetrievedID: %s", id)
+		}
+	}
+
+	// 5. 检索项不在 DroppedIDs
+	for _, dropped := range trace.DroppedIDs {
+		if strings.HasPrefix(dropped, "retrieved/") {
+			t.Errorf("expected retrieved items not in DroppedIDs, but found: %s", dropped)
+		}
+	}
+}
+
+func TestCanonChronicle_Retrieval_NoIntentSkipsSearch(t *testing.T) {
+	chapters := make([]*domain.Chapter, 0, 10)
+	for i := 1; i <= 10; i++ {
+		chapters = append(chapters, &domain.Chapter{
+			ProjectID:    "p_retrieval_test",
+			ChapterIndex: i,
+			Title:        fmt.Sprintf("第%d章", i),
+			Content:      fmt.Sprintf("第%d章正文", i),
+		})
+	}
+
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:         "p_retrieval_test",
+			Title:      "仙途纪事",
+			WorldRules: "天地玄黄",
+		},
+		chapters: chapters,
+		intents:  nil, // 无意图
+		searchHits: []*domain.MemoryHit{
+			{Kind: "summary", RefID: "chapter:3", ChapterIndex: 3, Raw: "第三章历史摘要", Score: 1.0},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	horizon, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_retrieval_test", 11)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mockStore.searchCalls != 0 {
+		t.Errorf("expected searchCalls == 0, got %d", mockStore.searchCalls)
+	}
+	if strings.Contains(horizon.HistoricalCallbacks, "【历史检索记忆") {
+		t.Errorf("expected no retrieval block in HistoricalCallbacks, got: %s", horizon.HistoricalCallbacks)
+	}
+	if len(trace.RetrievedIDs) != 0 {
+		t.Errorf("expected empty RetrievedIDs, got: %v", trace.RetrievedIDs)
+	}
+}
+
+func TestCanonChronicle_Retrieval_SearchErrorPropagates(t *testing.T) {
+	chapters := make([]*domain.Chapter, 0, 10)
+	for i := 1; i <= 10; i++ {
+		chapters = append(chapters, &domain.Chapter{
+			ProjectID:    "p_retrieval_test",
+			ChapterIndex: i,
+			Title:        fmt.Sprintf("第%d章", i),
+			Content:      fmt.Sprintf("第%d章正文", i),
+		})
+	}
+
+	intents := []*domain.ChapterIntent{
+		{
+			ProjectID:    "p_retrieval_test",
+			ChapterIndex: 11,
+			Conflict:     "妖皇封印",
+			Status:       domain.IntentStatusLocked,
+		},
+	}
+
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:         "p_retrieval_test",
+			Title:      "仙途纪事",
+			WorldRules: "天地玄黄",
+		},
+		chapters:  chapters,
+		intents:   intents,
+		searchErr: errors.New("underlying disk I/O error"),
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	_, _, err := chronicle.AssembleHorizonTraced(context.Background(), "p_retrieval_test", 11)
+	if err == nil {
+		t.Fatalf("expected error from SearchMemory, got nil")
+	}
+	if !strings.Contains(err.Error(), "search memory failed") {
+		t.Errorf("expected error to contain 'search memory failed', got: %v", err)
+	}
+}
+
+func TestCanonChronicle_Retrieval_BudgetDropsOldest(t *testing.T) {
+	chapters := make([]*domain.Chapter, 0, 10)
+	for i := 1; i <= 10; i++ {
+		chapters = append(chapters, &domain.Chapter{
+			ProjectID:    "p_retrieval_test",
+			ChapterIndex: i,
+			Title:        fmt.Sprintf("第%d章", i),
+			Content:      fmt.Sprintf("第%d章正文", i),
+		})
+	}
+
+	intents := []*domain.ChapterIntent{
+		{
+			ProjectID:    "p_retrieval_test",
+			ChapterIndex: 11,
+			Conflict:     "妖皇封印",
+			Status:       domain.IntentStatusLocked,
+		},
+	}
+
+	searchHits := []*domain.MemoryHit{
+		{Kind: "summary", RefID: "chapter:3", ChapterIndex: 3, Raw: "第三章历史摘要：妖皇封印异动", Score: 1.0},
+	}
+
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:         "p_retrieval_test",
+			Title:      "仙途纪事",
+			WorldRules: "天地玄黄",
+		},
+		chapters:   chapters,
+		intents:    intents,
+		searchHits: searchHits,
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	// Query with minimal budget 1 to probe exact protected tokens
+	chronicle.SetBudgetTokens(1)
+	_, traceProbe, errProbe := chronicle.AssembleHorizonTraced(context.Background(), "p_retrieval_test", 11)
+	if errProbe == nil || traceProbe == nil {
+		t.Fatalf("expected overflow error to probe protected tokens, got err=%v", errProbe)
+	}
+	protectedTokens := traceProbe.EstimatedTokens
+
+	// Set budget to exactly protectedTokens so protected items fit, remainingBudget = 0
+	chronicle.SetBudgetTokens(protectedTokens)
+	horizon, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_retrieval_test", 11)
+	if err != nil {
+		t.Fatalf("AssembleHorizonTraced failed: %v", err)
+	}
+
+	// DroppedIDs 含 retrieved/chapter:3
+	hasDroppedCh3 := false
+	for _, id := range trace.DroppedIDs {
+		if id == "retrieved/chapter:3" {
+			hasDroppedCh3 = true
+			break
+		}
+	}
+	if !hasDroppedCh3 {
+		t.Errorf("expected DroppedIDs to contain 'retrieved/chapter:3', got: %v", trace.DroppedIDs)
+	}
+
+	// RetrievedIDs 空
+	if len(trace.RetrievedIDs) != 0 {
+		t.Errorf("expected empty RetrievedIDs, got: %v", trace.RetrievedIDs)
+	}
+
+	// 无检索块
+	if strings.Contains(horizon.HistoricalCallbacks, "【历史检索记忆") {
+		t.Errorf("expected no retrieval block in HistoricalCallbacks, got: %s", horizon.HistoricalCallbacks)
+	}
+}
+
+func TestCanonChronicle_Retrieval_DedupAndCap(t *testing.T) {
+	// Construct 18 chapters so target 19 has preceding 1..18.
+	// Recent 3 chapters: 16, 17, 18.
+	// Eligible older chapters: 1..15 (< 19-3 = 16).
+	chapters := make([]*domain.Chapter, 0, 18)
+	for i := 1; i <= 18; i++ {
+		chapters = append(chapters, &domain.Chapter{
+			ProjectID:    "p_retrieval_dedup",
+			ChapterIndex: i,
+			Title:        fmt.Sprintf("第%d章", i),
+			Content:      fmt.Sprintf("第%d章正文", i),
+		})
+	}
+
+	intents := []*domain.ChapterIntent{
+		{
+			ProjectID:    "p_retrieval_dedup",
+			ChapterIndex: 19,
+			Conflict:     "诸神黄昏",
+			Status:       domain.IntentStatusLocked,
+		},
+	}
+
+	// Hits containing duplicates and > MaxRetrievedMemories (8) items
+	searchHits := []*domain.MemoryHit{
+		{Kind: "summary", RefID: "chapter:1", ChapterIndex: 1, Raw: "第一章摘要A", Score: 1.0},
+		{Kind: "summary", RefID: "chapter:1", ChapterIndex: 1, Raw: "第一章摘要B重复", Score: 1.1}, // 重复 RefID
+		{Kind: "summary", RefID: "chapter:2", ChapterIndex: 2, Raw: "第二章摘要", Score: 1.2},
+		{Kind: "summary", RefID: "chapter:3", ChapterIndex: 3, Raw: "第三章摘要", Score: 1.3},
+		{Kind: "summary", RefID: "chapter:4", ChapterIndex: 4, Raw: "第四章摘要", Score: 1.4},
+		{Kind: "summary", RefID: "chapter:5", ChapterIndex: 5, Raw: "第五章摘要", Score: 1.5},
+		{Kind: "summary", RefID: "chapter:6", ChapterIndex: 6, Raw: "第六章摘要", Score: 1.6},
+		{Kind: "summary", RefID: "chapter:7", ChapterIndex: 7, Raw: "第七章摘要", Score: 1.7},
+		{Kind: "summary", RefID: "chapter:8", ChapterIndex: 8, Raw: "第八章摘要", Score: 1.8},
+		{Kind: "summary", RefID: "chapter:9", ChapterIndex: 9, Raw: "第九章摘要", Score: 1.9}, // 超出 MaxRetrievedMemories(8) 应截断
+		{Kind: "summary", RefID: "chapter:10", ChapterIndex: 10, Raw: "第十章摘要", Score: 2.0},
+	}
+
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:         "p_retrieval_dedup",
+			Title:      "诸神之战",
+			WorldRules: "诸神隐退",
+		},
+		chapters:   chapters,
+		intents:    intents,
+		searchHits: searchHits,
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	chronicle.SetBudgetTokens(20000) // 充裕预算确保不因预算丢弃
+	_, trace, err := chronicle.AssembleHorizonTraced(context.Background(), "p_retrieval_dedup", 19)
+	if err != nil {
+		t.Fatalf("AssembleHorizonTraced failed: %v", err)
+	}
+
+	// 截断到 MaxRetrievedMemories (8)
+	if len(trace.RetrievedIDs) != MaxRetrievedMemories {
+		t.Fatalf("expected exactly %d RetrievedIDs, got %d: %v", MaxRetrievedMemories, len(trace.RetrievedIDs), trace.RetrievedIDs)
+	}
+
+	// 去重检查：chapter:1 仅出现 1 次
+	ch1Count := 0
+	for _, id := range trace.RetrievedIDs {
+		if id == "chapter:1" {
+			ch1Count++
+		}
+	}
+	if ch1Count != 1 {
+		t.Errorf("expected chapter:1 to appear exactly once after dedup, got count %d", ch1Count)
+	}
 }

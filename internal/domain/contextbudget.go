@@ -6,6 +6,7 @@ type ContextTrace struct {
 	ProtectedIDs     []string `json:"protected_ids"`
 	CompressibleIDs  []string `json:"compressible_ids"`
 	DroppedIDs       []string `json:"dropped_ids"`
+	RetrievedIDs     []string `json:"retrieved_ids,omitempty"`
 	BudgetTokens     int      `json:"budget_tokens"`
 	EstimatedTokens  int      `json:"estimated_tokens"`
 	Truncated        bool     `json:"truncated"`

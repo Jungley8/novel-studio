@@ -30,6 +30,7 @@ type Store interface {
 	ListChapterIntents(ctx context.Context, projectID string, volumeIndex int) ([]*domain.ChapterIntent, error) // volumeIndex<=0 全体；按 chapter_index 升序
 	DeleteChapterIntent(ctx context.Context, projectID string, chapterIndex int) error
 	MarkIntentsStale(ctx context.Context, projectID string, volumeIndex int) (int64, error) // 仅 LOCKED→STALE，返回变更行数
+	SearchMemory(ctx context.Context, projectID, query string, limit int) ([]*domain.MemoryHit, error)
 
 	// Plot Hooks (伏笔因果账本)
 	SavePlotHook(ctx context.Context, hook *domain.PlotHook) error
