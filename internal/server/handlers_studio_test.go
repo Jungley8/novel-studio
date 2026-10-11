@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/config"
 	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/engine"
@@ -535,5 +536,156 @@ func TestStudioChat_GeneralBrainstorm_OverviewMultiProject(t *testing.T) {
 	}
 	if strings.Contains(capturedSysPrompt, "全库暂无作品") {
 		t.Errorf("captured system prompt should not contain '全库暂无作品' when projects exist")
+	}
+}
+
+func TestStudioLibrary_TokenAndCostAggregation(t *testing.T) {
+	srv, s, _ := setupTestServer(t)
+	ctx := context.Background()
+
+	// 1. 构造 2 个项目
+	p1 := &domain.Project{
+		ID:             "proj-cost-1",
+		Title:          "修仙成本录",
+		TargetPlatform: "起点仙侠",
+	}
+	if err := s.SaveProject(ctx, p1); err != nil {
+		t.Fatalf("save project 1 failed: %v", err)
+	}
+
+	p2 := &domain.Project{
+		ID:             "proj-cost-2",
+		Title:          "零消耗之书",
+		TargetPlatform: "番茄脑洞",
+	}
+	if err := s.SaveProject(ctx, p2); err != nil {
+		t.Fatalf("save project 2 failed: %v", err)
+	}
+
+	// 2. 构造若干 activity 事件（含 token_usage JSON）
+	// 事件 1: 标准完整 TokenUsage JSON
+	tu1 := engine.TokenUsage{PromptTokens: 1000, CompletionTokens: 500, TotalTokens: 1500}
+	tu1JSON, _ := json.Marshal(tu1)
+	if err := s.AppendEvent(ctx, &activity.ActivityEvent{
+		ProjectID:  p1.ID,
+		EntityType: activity.EntityWorkshop,
+		EntityID:   "run-cost-1",
+		EventType:  activity.EventWorkshopCompleted,
+		Actor:      activity.ActorSystem,
+		Source:     "engine",
+		Title:      "第 1 章生产完成",
+		TokenUsage: string(tu1JSON),
+	}); err != nil {
+		t.Fatalf("append event 1 failed: %v", err)
+	}
+
+	// 事件 2: 另一条标准完整 TokenUsage JSON
+	tu2 := engine.TokenUsage{PromptTokens: 2500, CompletionTokens: 1200, TotalTokens: 3700}
+	tu2JSON, _ := json.Marshal(tu2)
+	if err := s.AppendEvent(ctx, &activity.ActivityEvent{
+		ProjectID:  p1.ID,
+		EntityType: activity.EntityWorkshop,
+		EntityID:   "run-cost-2",
+		EventType:  activity.EventWorkshopCompleted,
+		Actor:      activity.ActorSystem,
+		Source:     "engine",
+		Title:      "第 2 章生产完成",
+		TokenUsage: string(tu2JSON),
+	}); err != nil {
+		t.Fatalf("append event 2 failed: %v", err)
+	}
+
+	// 事件 3: total 缺失回退测试 (仅 prompt_tokens 与 completion_tokens，total_tokens 缺失)
+	tu3JSON := `{"prompt_tokens":800,"completion_tokens":400}`
+	if err := s.AppendEvent(ctx, &activity.ActivityEvent{
+		ProjectID:  p1.ID,
+		EntityType: activity.EntityWorkshop,
+		EntityID:   "run-cost-3",
+		EventType:  activity.EventWorkshopCompleted,
+		Actor:      activity.ActorSystem,
+		Source:     "engine",
+		Title:      "第 3 章生产完成",
+		TokenUsage: tu3JSON,
+	}); err != nil {
+		t.Fatalf("append event 3 failed: %v", err)
+	}
+
+	// 项目 2 无 token 事件（记录一条无 token_usage 的活动事件）
+	if err := s.AppendEvent(ctx, &activity.ActivityEvent{
+		ProjectID:  p2.ID,
+		EntityType: activity.EntityWorkshop,
+		EntityID:   "run-cost-p2-empty",
+		EventType:  activity.EventWorkshopCompleted,
+		Actor:      activity.ActorSystem,
+		Source:     "engine",
+		Title:      "草稿初创（无 token 消耗）",
+	}); err != nil {
+		t.Fatalf("append event for p2 failed: %v", err)
+	}
+
+	// 3. 请求 GET /api/studio/library
+	req := httptest.NewRequest(http.MethodGet, "/api/studio/library", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var items []server.StudioLibraryItem
+	if err := json.Unmarshal(w.Body.Bytes(), &items); err != nil {
+		t.Fatalf("unmarshal library items error: %v", err)
+	}
+
+	itemMap := make(map[string]server.StudioLibraryItem)
+	for _, it := range items {
+		itemMap[it.ProjectID] = it
+	}
+
+	// 4. 断言项目 1 (prompt/completion/total 聚合正确、estimated_cost_usd == EstimateCostUSD 精确相等)
+	it1, ok := itemMap[p1.ID]
+	if !ok {
+		t.Fatalf("project 1 (%s) not found in response", p1.ID)
+	}
+
+	expectedPrompt := 1000 + 2500 + 800        // 4300
+	expectedComp := 500 + 1200 + 400           // 2100
+	expectedTotal := 1500 + 3700 + (800 + 400) // 6400
+	expectedCost1 := engine.EstimateCostUSD(engine.TokenUsage{
+		PromptTokens:     expectedPrompt,
+		CompletionTokens: expectedComp,
+		TotalTokens:      expectedTotal,
+	})
+
+	if it1.PromptTokens != expectedPrompt {
+		t.Errorf("p1 prompt_tokens = %d, want %d", it1.PromptTokens, expectedPrompt)
+	}
+	if it1.CompletionTokens != expectedComp {
+		t.Errorf("p1 completion_tokens = %d, want %d", it1.CompletionTokens, expectedComp)
+	}
+	if it1.TokenUsage != expectedTotal {
+		t.Errorf("p1 token_usage (total) = %d, want %d", it1.TokenUsage, expectedTotal)
+	}
+	if it1.EstimatedCostUSD != expectedCost1 {
+		t.Errorf("p1 estimated_cost_usd = %v, want %v", it1.EstimatedCostUSD, expectedCost1)
+	}
+
+	// 5. 断言项目 2 (无 token 事件的项目费用为 0)
+	it2, ok := itemMap[p2.ID]
+	if !ok {
+		t.Fatalf("project 2 (%s) not found in response", p2.ID)
+	}
+
+	if it2.PromptTokens != 0 {
+		t.Errorf("p2 prompt_tokens = %d, want 0", it2.PromptTokens)
+	}
+	if it2.CompletionTokens != 0 {
+		t.Errorf("p2 completion_tokens = %d, want 0", it2.CompletionTokens)
+	}
+	if it2.TokenUsage != 0 {
+		t.Errorf("p2 token_usage = %d, want 0", it2.TokenUsage)
+	}
+	if it2.EstimatedCostUSD != 0.0 {
+		t.Errorf("p2 estimated_cost_usd = %v, want 0.0", it2.EstimatedCostUSD)
 	}
 }
