@@ -28,6 +28,7 @@
         <StudioChatView v-show="state.activeTab === 'studio-chat'" />
         <PipelineView v-show="state.activeTab === 'pipeline'" />
         <StudioTodoView v-show="state.activeTab === 'studio-todos'" />
+        <StudioAutomationView v-show="state.activeTab === 'studio-automation'" />
       </div>
     </main>
 
@@ -87,6 +88,7 @@ import StudioIdeasView from './views/StudioIdeasView.vue';
 import StudioChatView from './views/StudioChatView.vue';
 import PipelineView from './views/PipelineView.vue';
 import StudioTodoView from './views/StudioTodoView.vue';
+import StudioAutomationView from './views/StudioAutomationView.vue';
 
 // 业务弹窗与抽屉
 import PromptInspectorModal from './components/modals/PromptInspectorModal.vue';
