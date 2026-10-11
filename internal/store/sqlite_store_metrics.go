@@ -21,6 +21,11 @@ func (s *SQLiteStore) SaveChapterMetrics(ctx context.Context, m *domain.ChapterQ
 	if m.ChapterIndex <= 0 {
 		return errors.New("chapter metrics chapter_index must be positive")
 	}
+	switch m.Outcome {
+	case domain.ChapterOutcomeCommitted, domain.ChapterOutcomeNeedsHuman, domain.ChapterOutcomeTechnicalBlocked, domain.ChapterOutcomeProduced:
+	default:
+		return fmt.Errorf("invalid chapter metrics outcome %q", m.Outcome)
+	}
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = time.Now()
 	}
@@ -39,12 +44,12 @@ func (s *SQLiteStore) SaveChapterMetrics(ctx context.Context, m *domain.ChapterQ
 		project_id, chapter_index, run_id, actual_words, words_target,
 		word_quota_ratio, under_target, verdict, score, rewrite_loops,
 		unresolved_observations, hook_claims_total, hook_claims_validated,
-		hook_claims_rejected, compaction_failed, created_at
+		hook_claims_rejected, compaction_failed, outcome, created_at
 	) VALUES (
 		?, ?, ?, ?, ?,
 		?, ?, ?, ?, ?,
 		?, ?, ?,
-		?, ?, ?
+		?, ?, ?, ?
 	)
 	ON CONFLICT(project_id, chapter_index) DO UPDATE SET
 		run_id = excluded.run_id,
@@ -60,6 +65,7 @@ func (s *SQLiteStore) SaveChapterMetrics(ctx context.Context, m *domain.ChapterQ
 		hook_claims_validated = excluded.hook_claims_validated,
 		hook_claims_rejected = excluded.hook_claims_rejected,
 		compaction_failed = excluded.compaction_failed,
+		outcome = excluded.outcome,
 		created_at = excluded.created_at;
 	`
 
@@ -67,7 +73,7 @@ func (s *SQLiteStore) SaveChapterMetrics(ctx context.Context, m *domain.ChapterQ
 		m.ProjectID, m.ChapterIndex, m.RunID, m.ActualWords, m.WordsTarget,
 		m.WordQuotaRatio, underTargetInt, m.Verdict, m.Score, m.RewriteLoops,
 		m.UnresolvedObservations, m.HookClaimsTotal, m.HookClaimsValidated,
-		m.HookClaimsRejected, compactionFailedInt, m.CreatedAt,
+		m.HookClaimsRejected, compactionFailedInt, m.Outcome, m.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("save chapter metrics: %w", err)
@@ -82,7 +88,7 @@ func (s *SQLiteStore) ListChapterMetrics(ctx context.Context, projectID string) 
 		project_id, chapter_index, COALESCE(run_id, ''), actual_words, words_target,
 		word_quota_ratio, under_target, verdict, score, rewrite_loops,
 		unresolved_observations, hook_claims_total, hook_claims_validated,
-		hook_claims_rejected, compaction_failed, created_at
+		hook_claims_rejected, compaction_failed, outcome, created_at
 	FROM chapter_quality_metrics
 	WHERE project_id = ?
 	ORDER BY chapter_index ASC;
@@ -102,7 +108,7 @@ func (s *SQLiteStore) ListChapterMetrics(ctx context.Context, projectID string) 
 			&m.ProjectID, &m.ChapterIndex, &m.RunID, &m.ActualWords, &m.WordsTarget,
 			&m.WordQuotaRatio, &underTargetInt, &m.Verdict, &m.Score, &m.RewriteLoops,
 			&m.UnresolvedObservations, &m.HookClaimsTotal, &m.HookClaimsValidated,
-			&m.HookClaimsRejected, &compactionFailedInt, &m.CreatedAt,
+			&m.HookClaimsRejected, &compactionFailedInt, &m.Outcome, &m.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan chapter metrics: %w", err)
 		}

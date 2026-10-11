@@ -51,6 +51,7 @@ func TestSQLiteStore_ChapterMetrics(t *testing.T) {
 			HookClaimsValidated:    3,
 			HookClaimsRejected:     0,
 			CompactionFailed:       false,
+			Outcome:                domain.ChapterOutcomeCommitted,
 			CreatedAt:              now,
 		}
 
@@ -84,6 +85,9 @@ func TestSQLiteStore_ChapterMetrics(t *testing.T) {
 		if got.CompactionFailed != m1.CompactionFailed {
 			t.Errorf("compaction_failed mismatch: got %v, expected %v", got.CompactionFailed, m1.CompactionFailed)
 		}
+		if got.Outcome != m1.Outcome {
+			t.Errorf("outcome mismatch: got %q, expected %q", got.Outcome, m1.Outcome)
+		}
 	})
 
 	// 2. Upsert 覆盖
@@ -104,6 +108,7 @@ func TestSQLiteStore_ChapterMetrics(t *testing.T) {
 			HookClaimsValidated:    4,
 			HookClaimsRejected:     0,
 			CompactionFailed:       false,
+			Outcome:                domain.ChapterOutcomeNeedsHuman,
 			CreatedAt:              time.Now(),
 		}
 
@@ -122,6 +127,9 @@ func TestSQLiteStore_ChapterMetrics(t *testing.T) {
 		if got.ActualWords != 2400 || got.Score != 98 || got.RewriteLoops != 1 || got.RunID != "run-101-retry" {
 			t.Errorf("upsert fields not updated: %+v", got)
 		}
+		if got.Outcome != domain.ChapterOutcomeNeedsHuman {
+			t.Errorf("upsert outcome not updated: got %q, expected %q", got.Outcome, domain.ChapterOutcomeNeedsHuman)
+		}
 	})
 
 	// 3. List 升序 (chapter_index ASC)
@@ -133,6 +141,7 @@ func TestSQLiteStore_ChapterMetrics(t *testing.T) {
 			WordsTarget:  2000,
 			Verdict:      "ACCEPTED",
 			Score:        88,
+			Outcome:      domain.ChapterOutcomeCommitted,
 		}
 		m2 := &domain.ChapterQualityMetrics{
 			ProjectID:    projectID,
@@ -142,6 +151,7 @@ func TestSQLiteStore_ChapterMetrics(t *testing.T) {
 			UnderTarget:  true,
 			Verdict:      "ACCEPTED",
 			Score:        80,
+			Outcome:      domain.ChapterOutcomeCommitted,
 		}
 
 		if err := s.SaveChapterMetrics(ctx, m3); err != nil {
@@ -173,6 +183,35 @@ func TestSQLiteStore_ChapterMetrics(t *testing.T) {
 		}
 		if len(list) != 0 {
 			t.Errorf("expected 0 items for other project, got %d", len(list))
+		}
+	})
+
+	// 5. Invalid outcome rejected
+	t.Run("invalid outcome rejected", func(t *testing.T) {
+		mInvalid := &domain.ChapterQualityMetrics{
+			ProjectID:    projectID,
+			ChapterIndex: 99,
+			ActualWords:  2000,
+			WordsTarget:  2000,
+			Verdict:      "ACCEPTED",
+			Score:        88,
+			Outcome:      "",
+		}
+		if err := s.SaveChapterMetrics(ctx, mInvalid); err == nil {
+			t.Fatalf("expected error for empty outcome, got nil")
+		}
+
+		mInvalidUnknown := &domain.ChapterQualityMetrics{
+			ProjectID:    projectID,
+			ChapterIndex: 99,
+			ActualWords:  2000,
+			WordsTarget:  2000,
+			Verdict:      "ACCEPTED",
+			Score:        88,
+			Outcome:      "invalid_outcome_status",
+		}
+		if err := s.SaveChapterMetrics(ctx, mInvalidUnknown); err == nil {
+			t.Fatalf("expected error for unknown outcome, got nil")
 		}
 	})
 }

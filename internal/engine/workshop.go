@@ -992,6 +992,52 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		result.HarmonizeReport = &rpt
 	}
 
+	saveChapterMetrics := func(outcome string) {
+		compactionFailed := false
+		if trace != nil {
+			compactionFailed = trace.CompactionFailed
+		}
+		var (
+			verdict             string
+			score               int
+			hookClaimsTotal     int
+			hookClaimsValidated int
+			hookClaimsRejected  int
+		)
+		if auditReport != nil {
+			verdict = string(auditReport.Verdict)
+			score = auditReport.Score
+			hookClaimsTotal = len(auditReport.ResolvedHookClaims)
+			hookClaimsValidated = len(auditReport.ResolvedHookIDs)
+			hookClaimsRejected = len(auditReport.ResolvedHookClaims) - len(auditReport.ResolvedHookIDs)
+		}
+		metrics := &domain.ChapterQualityMetrics{
+			ProjectID:              req.ProjectID,
+			ChapterIndex:           req.ChapterIndex,
+			RunID:                  req.RunID,
+			ActualWords:            actualWords,
+			WordsTarget:            req.WordsTarget,
+			WordQuotaRatio:         ratio,
+			UnderTarget:            underTarget,
+			Verdict:                verdict,
+			Score:                  score,
+			RewriteLoops:           rewriteLoops,
+			UnresolvedObservations: len(unresolvedObservations),
+			HookClaimsTotal:        hookClaimsTotal,
+			HookClaimsValidated:    hookClaimsValidated,
+			HookClaimsRejected:     hookClaimsRejected,
+			CompactionFailed:       compactionFailed,
+			Outcome:                outcome,
+			CreatedAt:              time.Now(),
+		}
+		if mErr := w.store.SaveChapterMetrics(ctx, metrics); mErr != nil {
+			if auditReport != nil {
+				auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【指标警告】质量指标落库失败: %v", mErr))
+			}
+			emit(WorkshopEvent{Phase: PhaseComplete, Message: "质量指标落库失败（已记录警告，不阻断流程）"})
+		}
+	}
+
 	// 6. Optional Atomic Commitment (Strict Fail-Closed QualityGate)
 	shouldCommit := false
 	if req.AutoCommit {
@@ -1090,37 +1136,22 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		_ = w.store.ClearCheckpoint(ctx, req.ProjectID, req.ChapterIndex)
 
 		// 记账边界（有意设计）：增强层失败以可见警告记账（摘要/压缩/指标）；硬门失败停线（结算/证据/前置）。
-		compactionFailed := false
-		if trace != nil {
-			compactionFailed = trace.CompactionFailed
-		}
-		metrics := &domain.ChapterQualityMetrics{
-			ProjectID:              req.ProjectID,
-			ChapterIndex:           req.ChapterIndex,
-			RunID:                  req.RunID,
-			ActualWords:            actualWords,
-			WordsTarget:            req.WordsTarget,
-			WordQuotaRatio:         ratio,
-			UnderTarget:            underTarget,
-			Verdict:                string(auditReport.Verdict),
-			Score:                  auditReport.Score,
-			RewriteLoops:           rewriteLoops,
-			UnresolvedObservations: len(unresolvedObservations),
-			HookClaimsTotal:        len(auditReport.ResolvedHookClaims),
-			HookClaimsValidated:    len(auditReport.ResolvedHookIDs),
-			HookClaimsRejected:     len(auditReport.ResolvedHookClaims) - len(auditReport.ResolvedHookIDs),
-			CompactionFailed:       compactionFailed,
-			CreatedAt:              time.Now(),
-		}
-		if mErr := w.store.SaveChapterMetrics(ctx, metrics); mErr != nil {
-			auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【指标警告】质量指标落库失败: %v", mErr))
-			emit(WorkshopEvent{Phase: PhaseCommitted, Message: "质量指标落库失败（已记录警告，不影响归档）"})
-		}
+		saveChapterMetrics(domain.ChapterOutcomeCommitted)
 
 		emit(WorkshopEvent{
 			Phase:   PhaseCommitted,
 			Message: fmt.Sprintf("第 %d 章已成功原子结算并归档入库！", req.ChapterIndex),
 		})
+	}
+
+	if !result.Committed {
+		outcome := domain.ChapterOutcomeProduced
+		if technicalBlocked {
+			outcome = domain.ChapterOutcomeTechnicalBlocked
+		} else if auditReport != nil && auditReport.NeedsHuman {
+			outcome = domain.ChapterOutcomeNeedsHuman
+		}
+		saveChapterMetrics(outcome)
 	}
 
 	// 5.6 Summarize chapter if committed.
