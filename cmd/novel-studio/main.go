@@ -44,6 +44,8 @@ func main() {
 			os.Exit(runBenchCLI(os.Args[2:], defaultDataDir))
 		case "genesis":
 			os.Exit(runGenesisCLI(os.Args[2:], defaultDataDir))
+		case "pipeline":
+			os.Exit(runPipelineCLI(os.Args[2:], defaultDataDir))
 		case "version", "--version", "-v":
 			fmt.Printf("NovelStudio %s\n", version)
 			os.Exit(0)
@@ -183,6 +185,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "用法:\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio [选项]                 直接启动桌面工作台与本地服务\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio genesis [选项]         一键推演全书宏观创世总纲与分卷设定集\n")
+	fmt.Fprintf(os.Stderr, "  novel-studio pipeline [选项]        全自动一键跑通创世到卷批产流水线\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio produce [选项]         无头命令行一键全流程自主章节生产\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio bench [选项]           长篇质量回归只读体检报告\n")
 	fmt.Fprintf(os.Stderr, "  novel-studio service <子命令>       macOS launchd 原生常驻后台守护服务\n")
