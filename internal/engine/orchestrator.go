@@ -266,7 +266,7 @@ func (o *Orchestrator) DeriveBeatsForChapterType(
 	)
 
 	if horizon != nil && strings.TrimSpace(horizon.SelectedPlanText) != "" {
-		planBlock := fmt.Sprintf("【作者选定的发展路线（剧情树候选计划，非正史）】\n以下路线仅用于对齐本章推进方向；严禁把其中内容当作既定事实直接落成正文事实；与正史、状态机、世界公理冲突时，一律以正史为准，并在其余节拍中体现你的调整与过渡：\n%s\n\n", strings.TrimSpace(horizon.SelectedPlanText))
+		planBlock := buildPlanPromptBlock(horizon.SelectedPlanText)
 		userPrompt = strings.Replace(userPrompt, "请推演输出严格合法的 JSON。", planBlock+"请推演输出严格合法的 JSON。", 1)
 	}
 
@@ -292,6 +292,14 @@ func (o *Orchestrator) DeriveBeatsForChapterType(
 	out.Usage = usage
 
 	return &out, nil
+}
+
+func buildPlanPromptBlock(planText string) string {
+	trimmed := strings.TrimSpace(planText)
+	if trimmed == "" {
+		return ""
+	}
+	return fmt.Sprintf("【作者选定的发展路线（剧情树候选计划，非正史）】\n以下路线仅用于对齐本章推进方向；严禁把其中内容当作既定事实直接落成正文事实；与正史、状态机、世界公理冲突时，一律以正史为准，并在其余节拍中体现你的调整与过渡：\n%s\n\n", trimmed)
 }
 
 func buildChapterIntentPromptBlock(intent *domain.ChapterIntent) string {

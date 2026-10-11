@@ -95,6 +95,12 @@ func (c *CanonChronicle) resolveBudget(ctx context.Context) int {
 	return DefaultContextBudgetTokens
 }
 
+// AccountedExtra represents an out-of-canon injected prompt block accounted as protected context.
+type AccountedExtra struct {
+	ID   string
+	Text string
+}
+
 // AssembleHorizon deterministically synthesizes the three-tier context horizon:
 // 1. Layer 1: Global Summary & Macro Arc
 // 2. Layer 2: Rolling 3-chapter sealed canon window
@@ -105,8 +111,20 @@ func (c *CanonChronicle) AssembleHorizon(ctx context.Context, projectID string, 
 	return horizon, err
 }
 
+// AssembleHorizonWithExtras synthesizes the context horizon with extra accounted protected prompt blocks.
+func (c *CanonChronicle) AssembleHorizonWithExtras(ctx context.Context, projectID string, targetChapter int, extras ...AccountedExtra) (*CanonHorizon, error) {
+	horizon, _, err := c.AssembleHorizonTracedWithExtras(ctx, projectID, targetChapter, extras...)
+	return horizon, err
+}
+
 // AssembleHorizonTraced deterministically synthesizes the three-tier context horizon with itemized token budgeting and tracing.
 func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID string, targetChapter int) (*CanonHorizon, *domain.ContextTrace, error) {
+	return c.AssembleHorizonTracedWithExtras(ctx, projectID, targetChapter)
+}
+
+// AssembleHorizonTracedWithExtras deterministically synthesizes the three-tier context horizon with itemized token budgeting,
+// tracing, and injected extras accounted as protected context items.
+func (c *CanonChronicle) AssembleHorizonTracedWithExtras(ctx context.Context, projectID string, targetChapter int, extras ...AccountedExtra) (*CanonHorizon, *domain.ContextTrace, error) {
 	if c.store == nil {
 		return nil, nil, fmt.Errorf("store is not initialized")
 	}
@@ -300,6 +318,15 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 
 	if tailAnchor != "" {
 		protectedList = append(protectedList, protectedItem{id: "style/tail_anchor", tokens: domain.EstimateTokens(tailAnchor)})
+	}
+
+	for _, extra := range extras {
+		if extra.Text != "" {
+			protectedList = append(protectedList, protectedItem{
+				id:     extra.ID,
+				tokens: domain.EstimateTokens(extra.Text),
+			})
+		}
 	}
 
 	totalProtectedTokens := 0
