@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Jungley8/novel-studio/internal/activity"
+	"github.com/Jungley8/novel-studio/internal/config"
 	"github.com/Jungley8/novel-studio/internal/engine"
 )
 
@@ -18,11 +19,47 @@ type PipelineAPIRequest struct {
 	TargetPlatform  string `json:"target_platform"`
 	ReasoningModel  string `json:"reasoning_model"`
 	Volumes         int    `json:"volumes"`
-	AutoLockIntents bool   `json:"auto_lock_intents"`
+	AutoLockIntents *bool  `json:"auto_lock_intents"`
 	WordsTarget     int    `json:"words_target"`
 	MaxRewriteLoops int    `json:"max_rewrite_loops"`
 	NarrativeStyle  string `json:"narrative_style"`
 	ChapterFrom     int    `json:"chapter_from"`
+}
+
+func resolvePipelineDefaults(body PipelineAPIRequest, cfg *config.Config) (words int, loops int, style string, autoLock bool) {
+	words = 2000
+	if body.WordsTarget > 0 {
+		words = body.WordsTarget
+	} else if cfg != nil && cfg.DefaultWordsTarget > 0 {
+		words = cfg.DefaultWordsTarget
+	}
+
+	loops = 3
+	if body.MaxRewriteLoops > 0 {
+		loops = body.MaxRewriteLoops
+	} else if cfg != nil && cfg.DefaultMaxRewriteLoops > 0 {
+		loops = cfg.DefaultMaxRewriteLoops
+	}
+
+	style = ""
+	if body.NarrativeStyle != "" {
+		style = body.NarrativeStyle
+	} else if cfg != nil {
+		style = cfg.DefaultNarrativeStyle
+	}
+
+	autoLock = false
+	if body.AutoLockIntents != nil {
+		autoLock = *body.AutoLockIntents
+	} else if cfg != nil {
+		autoLock = cfg.DefaultAutoLockIntents
+	}
+
+	return words, loops, style, autoLock
+}
+
+func ResolvePipelineDefaults(body PipelineAPIRequest, cfg *config.Config) (words int, loops int, style string, autoLock bool) {
+	return resolvePipelineDefaults(body, cfg)
 }
 
 func (s *Server) handlePipeline(w http.ResponseWriter, r *http.Request) {
@@ -61,6 +98,8 @@ func (s *Server) handlePipeline(w http.ResponseWriter, r *http.Request) {
 	if reasoningModel == "" && s.cfg != nil {
 		reasoningModel = s.cfg.ReasoningModel
 	}
+
+	words, loops, style, autoLock := resolvePipelineDefaults(reqBody, s.cfg)
 
 	batch := engine.NewVolumeBatch(s.workshop, s.store)
 	pipeline := engine.NewStudioPipeline(s.orch, batch, s.store)
@@ -112,10 +151,10 @@ func (s *Server) handlePipeline(w http.ResponseWriter, r *http.Request) {
 			Concept:         reqBody.Concept,
 			ReasoningModel:  reasoningModel,
 			Volumes:         reqBody.Volumes,
-			AutoLockIntents: reqBody.AutoLockIntents,
-			WordsTarget:     reqBody.WordsTarget,
-			MaxRewriteLoops: reqBody.MaxRewriteLoops,
-			NarrativeStyle:  reqBody.NarrativeStyle,
+			AutoLockIntents: autoLock,
+			WordsTarget:     words,
+			MaxRewriteLoops: loops,
+			NarrativeStyle:  style,
 			ChapterFrom:     reqBody.ChapterFrom,
 			RunID:           runID,
 			OnProgress: func(ev engine.PipelineEvent) {
@@ -148,10 +187,10 @@ func (s *Server) handlePipeline(w http.ResponseWriter, r *http.Request) {
 		Concept:         reqBody.Concept,
 		ReasoningModel:  reasoningModel,
 		Volumes:         reqBody.Volumes,
-		AutoLockIntents: reqBody.AutoLockIntents,
-		WordsTarget:     reqBody.WordsTarget,
-		MaxRewriteLoops: reqBody.MaxRewriteLoops,
-		NarrativeStyle:  reqBody.NarrativeStyle,
+		AutoLockIntents: autoLock,
+		WordsTarget:     words,
+		MaxRewriteLoops: loops,
+		NarrativeStyle:  style,
 		ChapterFrom:     reqBody.ChapterFrom,
 		RunID:           runID,
 	}

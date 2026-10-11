@@ -1221,3 +1221,83 @@ func TestPostChapters_EvidenceGateEmptyMutationPasses(t *testing.T) {
 		t.Fatalf("expected 200 OK for chapter 1, got %d: %s", getW.Code, getW.Body.String())
 	}
 }
+
+func TestServer_ConfigDefaultPipelineParameters(t *testing.T) {
+	srv, _, _ := setupTestServer(t)
+
+	post := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/config", strings.NewReader(body)))
+		return w
+	}
+
+	// 1. Negative values rejected with 400
+	if w := post(`{"default_words_target": -100}`); w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for negative default_words_target, got %d: %s", w.Code, w.Body.String())
+	}
+	if w := post(`{"default_max_rewrite_loops": -1}`); w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for negative default_max_rewrite_loops, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 2. Valid new fields accepted and echoed by GET
+	validPayload := `{
+		"default_words_target": 3000,
+		"default_narrative_style": "  硬派悬疑  ",
+		"default_max_rewrite_loops": 5,
+		"default_auto_lock_intents": true
+	}`
+	if w := post(validPayload); w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for valid pipeline parameters POST, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /api/config failed: %d", w.Code)
+	}
+	var gotCfg config.Config
+	if err := json.Unmarshal(w.Body.Bytes(), &gotCfg); err != nil {
+		t.Fatalf("unmarshal config failed: %v", err)
+	}
+
+	if gotCfg.DefaultWordsTarget != 3000 {
+		t.Errorf("expected DefaultWordsTarget 3000, got %d", gotCfg.DefaultWordsTarget)
+	}
+	if gotCfg.DefaultNarrativeStyle != "硬派悬疑" {
+		t.Errorf("expected DefaultNarrativeStyle trimmed '硬派悬疑', got %q", gotCfg.DefaultNarrativeStyle)
+	}
+	if gotCfg.DefaultMaxRewriteLoops != 5 {
+		t.Errorf("expected DefaultMaxRewriteLoops 5, got %d", gotCfg.DefaultMaxRewriteLoops)
+	}
+	if !gotCfg.DefaultAutoLockIntents {
+		t.Errorf("expected DefaultAutoLockIntents true, got false")
+	}
+
+	// 3. Clear style and toggle auto_lock to false
+	clearPayload := `{
+		"default_words_target": 0,
+		"default_narrative_style": "   ",
+		"default_max_rewrite_loops": 0,
+		"default_auto_lock_intents": false
+	}`
+	if w := post(clearPayload); w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for clear payload, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w2 := httptest.NewRecorder()
+	srv.ServeHTTP(w2, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	var gotCfg2 config.Config
+	_ = json.Unmarshal(w2.Body.Bytes(), &gotCfg2)
+	if gotCfg2.DefaultWordsTarget != 0 {
+		t.Errorf("expected DefaultWordsTarget 0, got %d", gotCfg2.DefaultWordsTarget)
+	}
+	if gotCfg2.DefaultNarrativeStyle != "" {
+		t.Errorf("expected empty DefaultNarrativeStyle, got %q", gotCfg2.DefaultNarrativeStyle)
+	}
+	if gotCfg2.DefaultMaxRewriteLoops != 0 {
+		t.Errorf("expected DefaultMaxRewriteLoops 0, got %d", gotCfg2.DefaultMaxRewriteLoops)
+	}
+	if gotCfg2.DefaultAutoLockIntents {
+		t.Errorf("expected DefaultAutoLockIntents false, got true")
+	}
+}

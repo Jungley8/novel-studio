@@ -73,6 +73,21 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			s.cfg.ContextBudgetTokens = updated.ContextBudgetTokens
 		}
 
+		if updated.DefaultWordsTarget < 0 {
+			errorResponse(w, http.StatusBadRequest, "default_words_target cannot be negative")
+			return
+		}
+		s.cfg.DefaultWordsTarget = updated.DefaultWordsTarget
+
+		if updated.DefaultMaxRewriteLoops < 0 {
+			errorResponse(w, http.StatusBadRequest, "default_max_rewrite_loops cannot be negative")
+			return
+		}
+		s.cfg.DefaultMaxRewriteLoops = updated.DefaultMaxRewriteLoops
+
+		s.cfg.DefaultNarrativeStyle = strings.TrimSpace(updated.DefaultNarrativeStyle)
+		s.cfg.DefaultAutoLockIntents = updated.DefaultAutoLockIntents
+
 		// Update independent providers if specified
 		updateProvider := func(cur **config.ProviderConfig, in *config.ProviderConfig) {
 			if in == nil {

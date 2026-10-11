@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Jungley8/novel-studio/internal/config"
 	"github.com/Jungley8/novel-studio/internal/engine"
 )
 
@@ -90,7 +92,7 @@ func TestBuildPipelineRequest_FlagsMapping(t *testing.T) {
 		t.Fatalf("failed to parse default flags: %v", err)
 	}
 
-	req1 := buildPipelineRequest(opts1, "default-reasoner-model", nil)
+	req1 := buildPipelineRequest(opts1, nil, "default-reasoner-model", nil)
 	if req1.Title != "我的仙门" {
 		t.Errorf("expected Title '我的仙门', got %s", req1.Title)
 	}
@@ -139,8 +141,13 @@ func TestBuildPipelineRequest_FlagsMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to parse explicit flags: %v", err)
 	}
+	fs2.Visit(func(f *flag.Flag) {
+		if f.Name == "auto-lock" {
+			opts2.AutoLockSet = true
+		}
+	})
 
-	req2 := buildPipelineRequest(opts2, "default-model", nil)
+	req2 := buildPipelineRequest(opts2, nil, "default-model", nil)
 	if req2.Title != "长生武道" {
 		t.Errorf("expected Title '长生武道', got %s", req2.Title)
 	}
@@ -170,6 +177,97 @@ func TestBuildPipelineRequest_FlagsMapping(t *testing.T) {
 	}
 	if req2.ReasoningModel != "custom-reasoner-v1" {
 		t.Errorf("expected ReasoningModel 'custom-reasoner-v1', got %s", req2.ReasoningModel)
+	}
+}
+
+func TestBuildPipelineRequest_ConfigPriority(t *testing.T) {
+	cfg := &config.Config{
+		ReasoningModel:         "cfg-reasoner",
+		DefaultWordsTarget:     3500,
+		DefaultMaxRewriteLoops: 6,
+		DefaultNarrativeStyle:  "cfg-hardboiled",
+		DefaultAutoLockIntents: true,
+	}
+
+	// 1. Flag overrides Config and Fallback (Flag > Config > Fallback)
+	fs1, opts1 := newPipelineFlagSet("/tmp/dummy", nil)
+	_ = fs1.Parse([]string{
+		"-title", "Flag书名",
+		"-concept", "Flag设定",
+		"-words", "2500",
+		"-max-rewrite", "4",
+		"-style", "flag-wuxia",
+		"-auto-lock=false",
+	})
+	fs1.Visit(func(f *flag.Flag) {
+		if f.Name == "auto-lock" {
+			opts1.AutoLockSet = true
+		}
+	})
+	req1 := buildPipelineRequest(opts1, cfg, "default-model", nil)
+	if req1.WordsTarget != 2500 {
+		t.Errorf("expected flag words 2500, got %d", req1.WordsTarget)
+	}
+	if req1.MaxRewriteLoops != 4 {
+		t.Errorf("expected flag max-rewrite 4, got %d", req1.MaxRewriteLoops)
+	}
+	if req1.NarrativeStyle != "flag-wuxia" {
+		t.Errorf("expected flag style 'flag-wuxia', got %s", req1.NarrativeStyle)
+	}
+	if req1.AutoLockIntents != false {
+		t.Errorf("expected explicit flag auto-lock false, got %v", req1.AutoLockIntents)
+	}
+
+	// 2. Config overrides Fallback when Flag is unset (Config > Fallback)
+	fs2, opts2 := newPipelineFlagSet("/tmp/dummy", nil)
+	_ = fs2.Parse([]string{
+		"-title", "Config书名",
+		"-concept", "Config设定",
+	})
+	fs2.Visit(func(f *flag.Flag) {
+		if f.Name == "auto-lock" {
+			opts2.AutoLockSet = true
+		}
+	})
+	req2 := buildPipelineRequest(opts2, cfg, "default-model", nil)
+	if req2.WordsTarget != 3500 {
+		t.Errorf("expected cfg words 3500, got %d", req2.WordsTarget)
+	}
+	if req2.MaxRewriteLoops != 6 {
+		t.Errorf("expected cfg max-rewrite 6, got %d", req2.MaxRewriteLoops)
+	}
+	if req2.NarrativeStyle != "cfg-hardboiled" {
+		t.Errorf("expected cfg style 'cfg-hardboiled', got %s", req2.NarrativeStyle)
+	}
+	if req2.AutoLockIntents != true {
+		t.Errorf("expected cfg auto-lock true, got %v", req2.AutoLockIntents)
+	}
+	if req2.ReasoningModel != "cfg-reasoner" {
+		t.Errorf("expected cfg model 'cfg-reasoner', got %s", req2.ReasoningModel)
+	}
+
+	// 3. Fallback when both Flag and Config are unset or zero
+	emptyCfg := &config.Config{}
+	fs3, opts3 := newPipelineFlagSet("/tmp/dummy", nil)
+	_ = fs3.Parse([]string{
+		"-title", "Fallback书名",
+		"-concept", "Fallback设定",
+	})
+	req3 := buildPipelineRequest(opts3, emptyCfg, "default-model", nil)
+	if req3.WordsTarget != 2000 {
+		t.Errorf("expected fallback words 2000, got %d", req3.WordsTarget)
+	}
+	if req3.MaxRewriteLoops != 3 {
+		t.Errorf("expected fallback max-rewrite 3, got %d", req3.MaxRewriteLoops)
+	}
+	if req3.NarrativeStyle != "" {
+		t.Errorf("expected fallback style empty, got %s", req3.NarrativeStyle)
+	}
+	if req3.AutoLockIntents != false {
+		t.Errorf("expected fallback auto-lock false, got %v", req3.AutoLockIntents)
+	}
+	if req3.ReasoningModel != "default-model" {
+		t.Errorf("expected fallback model 'default-model', got %s", req3.ReasoningModel)
 	}
 }
 

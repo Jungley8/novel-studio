@@ -15,18 +15,22 @@ type ProviderConfig struct {
 }
 
 type Config struct {
-	ServerPort          int             `json:"server_port"`
-	DataDir             string          `json:"data_dir"`
-	APIBase             string          `json:"api_base"`
-	APIKey              string          `json:"api_key"`
-	ReasoningModel      string          `json:"reasoning_model"`
-	WriterModel         string          `json:"writer_model"`
-	ReviewerModel       string          `json:"reviewer_model,omitempty"`
-	ReviewerProvider    *ProviderConfig `json:"reviewer_provider,omitempty"`
-	ReasonerProvider    *ProviderConfig `json:"reasoner_provider,omitempty"`
-	WriterProvider      *ProviderConfig `json:"writer_provider,omitempty"`
-	AutoOpenBrowser     bool            `json:"auto_open_browser"`
-	ContextBudgetTokens int             `json:"context_budget_tokens"`
+	ServerPort             int             `json:"server_port"`
+	DataDir                string          `json:"data_dir"`
+	APIBase                string          `json:"api_base"`
+	APIKey                 string          `json:"api_key"`
+	ReasoningModel         string          `json:"reasoning_model"`
+	WriterModel            string          `json:"writer_model"`
+	ReviewerModel          string          `json:"reviewer_model,omitempty"`
+	ReviewerProvider       *ProviderConfig `json:"reviewer_provider,omitempty"`
+	ReasonerProvider       *ProviderConfig `json:"reasoner_provider,omitempty"`
+	WriterProvider         *ProviderConfig `json:"writer_provider,omitempty"`
+	AutoOpenBrowser        bool            `json:"auto_open_browser"`
+	ContextBudgetTokens    int             `json:"context_budget_tokens"`
+	DefaultWordsTarget     int             `json:"default_words_target"`
+	DefaultNarrativeStyle  string          `json:"default_narrative_style"`
+	DefaultMaxRewriteLoops int             `json:"default_max_rewrite_loops"`
+	DefaultAutoLockIntents bool            `json:"default_auto_lock_intents"`
 }
 
 func DefaultConfig() *Config {
@@ -35,21 +39,31 @@ func DefaultConfig() *Config {
 		home = "."
 	}
 	return &Config{
-		ServerPort:          28980,
-		DataDir:             filepath.Join(home, ".novel-studio"),
-		APIBase:             "https://api.deepseek.com/v1",
-		APIKey:              "",
-		ReasoningModel:      "deepseek-reasoner",
-		WriterModel:         "deepseek-chat",
-		ReviewerModel:       "deepseek-reasoner",
-		AutoOpenBrowser:     false,
-		ContextBudgetTokens: 12000,
+		ServerPort:             28980,
+		DataDir:                filepath.Join(home, ".novel-studio"),
+		APIBase:                "https://api.deepseek.com/v1",
+		APIKey:                 "",
+		ReasoningModel:         "deepseek-reasoner",
+		WriterModel:            "deepseek-chat",
+		ReviewerModel:          "deepseek-reasoner",
+		AutoOpenBrowser:        false,
+		ContextBudgetTokens:    12000,
+		DefaultWordsTarget:     2000,
+		DefaultNarrativeStyle:  "",
+		DefaultMaxRewriteLoops: 3,
+		DefaultAutoLockIntents: false,
 	}
 }
 
 func (c *Config) Validate() error {
 	if c.ContextBudgetTokens <= 0 {
 		return fmt.Errorf("context_budget_tokens must be positive, got %d", c.ContextBudgetTokens)
+	}
+	if c.DefaultWordsTarget < 0 {
+		return fmt.Errorf("default_words_target cannot be negative, got %d", c.DefaultWordsTarget)
+	}
+	if c.DefaultMaxRewriteLoops < 0 {
+		return fmt.Errorf("default_max_rewrite_loops cannot be negative, got %d", c.DefaultMaxRewriteLoops)
 	}
 	return nil
 }

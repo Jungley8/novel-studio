@@ -434,3 +434,134 @@ func TestHandlePipeline_Sync_Error(t *testing.T) {
 		t.Errorf("expected non-empty error field in response")
 	}
 }
+
+func TestResolvePipelineDefaults_Priorities(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+
+	cfg := &config.Config{
+		DefaultWordsTarget:     3500,
+		DefaultMaxRewriteLoops: 6,
+		DefaultNarrativeStyle:  "cfg-cyberpunk",
+		DefaultAutoLockIntents: true,
+	}
+
+	// 1. Tier 1: Body overrides Config and Fallback (Body > Config > Fallback)
+	t.Run("Body overrides Config", func(t *testing.T) {
+		req := server.PipelineAPIRequest{
+			WordsTarget:     2500,
+			MaxRewriteLoops: 4,
+			NarrativeStyle:  "body-style",
+			AutoLockIntents: boolPtr(false), // explicit false overrides cfg true
+		}
+		words, loops, style, autoLock := server.ResolvePipelineDefaults(req, cfg)
+		if words != 2500 {
+			t.Errorf("expected words 2500, got %d", words)
+		}
+		if loops != 4 {
+			t.Errorf("expected loops 4, got %d", loops)
+		}
+		if style != "body-style" {
+			t.Errorf("expected style 'body-style', got %q", style)
+		}
+		if autoLock != false {
+			t.Errorf("expected autoLock false, got %v", autoLock)
+		}
+
+		// Also test explicit true overrides cfg false
+		cfgFalse := &config.Config{DefaultAutoLockIntents: false}
+		reqTrue := server.PipelineAPIRequest{AutoLockIntents: boolPtr(true)}
+		_, _, _, autoLockTrue := server.ResolvePipelineDefaults(reqTrue, cfgFalse)
+		if !autoLockTrue {
+			t.Errorf("expected autoLock true, got false")
+		}
+	})
+
+	// 2. Tier 2: Config overrides Fallback when Body is empty/zero/nil (Config > Fallback)
+	t.Run("Config overrides Fallback", func(t *testing.T) {
+		req := server.PipelineAPIRequest{
+			WordsTarget:     0,
+			MaxRewriteLoops: 0,
+			NarrativeStyle:  "",
+			AutoLockIntents: nil, // nil triggers fallback to cfg
+		}
+		words, loops, style, autoLock := server.ResolvePipelineDefaults(req, cfg)
+		if words != 3500 {
+			t.Errorf("expected cfg words 3500, got %d", words)
+		}
+		if loops != 6 {
+			t.Errorf("expected cfg loops 6, got %d", loops)
+		}
+		if style != "cfg-cyberpunk" {
+			t.Errorf("expected cfg style 'cfg-cyberpunk', got %q", style)
+		}
+		if autoLock != true {
+			t.Errorf("expected cfg autoLock true, got %v", autoLock)
+		}
+	})
+
+	// 2b. Negative body values also fall back to Config
+	t.Run("Negative Body values fall back to Config", func(t *testing.T) {
+		req := server.PipelineAPIRequest{
+			WordsTarget:     -10,
+			MaxRewriteLoops: -5,
+		}
+		words, loops, _, _ := server.ResolvePipelineDefaults(req, cfg)
+		if words != 3500 {
+			t.Errorf("expected cfg words 3500 for negative input, got %d", words)
+		}
+		if loops != 6 {
+			t.Errorf("expected cfg loops 6 for negative input, got %d", loops)
+		}
+	})
+
+	// 3. Tier 3: Fallback when both Body and Config are empty/zero/nil
+	t.Run("Fallback when Config is nil", func(t *testing.T) {
+		req := server.PipelineAPIRequest{
+			WordsTarget:     0,
+			MaxRewriteLoops: 0,
+			NarrativeStyle:  "",
+			AutoLockIntents: nil,
+		}
+		words, loops, style, autoLock := server.ResolvePipelineDefaults(req, nil)
+		if words != 2000 {
+			t.Errorf("expected fallback words 2000, got %d", words)
+		}
+		if loops != 3 {
+			t.Errorf("expected fallback loops 3, got %d", loops)
+		}
+		if style != "" {
+			t.Errorf("expected fallback style empty, got %q", style)
+		}
+		if autoLock != false {
+			t.Errorf("expected fallback autoLock false, got %v", autoLock)
+		}
+	})
+
+	t.Run("Fallback when Config has zero values", func(t *testing.T) {
+		emptyCfg := &config.Config{
+			DefaultWordsTarget:     0,
+			DefaultMaxRewriteLoops: 0,
+			DefaultNarrativeStyle:  "",
+			DefaultAutoLockIntents: false,
+		}
+		req := server.PipelineAPIRequest{
+			WordsTarget:     0,
+			MaxRewriteLoops: 0,
+			NarrativeStyle:  "",
+			AutoLockIntents: nil,
+		}
+		words, loops, style, autoLock := server.ResolvePipelineDefaults(req, emptyCfg)
+		if words != 2000 {
+			t.Errorf("expected fallback words 2000, got %d", words)
+		}
+		if loops != 3 {
+			t.Errorf("expected fallback loops 3, got %d", loops)
+		}
+		if style != "" {
+			t.Errorf("expected fallback style empty, got %q", style)
+		}
+		if autoLock != false {
+			t.Errorf("expected fallback autoLock false, got %v", autoLock)
+		}
+	})
+}

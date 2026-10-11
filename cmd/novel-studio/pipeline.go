@@ -30,6 +30,7 @@ type pipelineCLIOptions struct {
 	Platform        string
 	Volumes         int
 	AutoLock        bool
+	AutoLockSet     bool
 	Words           int
 	MaxRewriteLoops int
 	Style           string
@@ -53,30 +54,63 @@ func newPipelineFlagSet(defaultDataDir string, stderr io.Writer) (*flag.FlagSet,
 	fs.StringVar(&opts.Concept, "concept", "", "核心脑洞灵感与题材设定 (必填)")
 	fs.StringVar(&opts.Platform, "platform", "起点仙侠", "目标平台 (起点仙侠/番茄脑洞/知乎盐言/通用网文)")
 	fs.IntVar(&opts.Volumes, "volumes", 0, "规划执行卷数 (默认 0 表示全部分卷)")
-	fs.BoolVar(&opts.AutoLock, "auto-lock", false, "生成意图卡后自动锁定并继续推进 (默认 false: 生成意图后停线待人工锁定，安全默认)")
-	fs.IntVar(&opts.Words, "words", 2000, "每章目标字数 (默认 2000)")
-	fs.IntVar(&opts.MaxRewriteLoops, "max-rewrite", 3, "单章最大返工轮次 (默认 3)")
-	fs.StringVar(&opts.Style, "style", "", "全书叙事风格约束")
+	fs.BoolVar(&opts.AutoLock, "auto-lock", false, "生成意图卡后自动锁定并继续推进 (默认使用全局设置)")
+	fs.IntVar(&opts.Words, "words", 0, "每章目标字数 (0=使用全局设置默认值)")
+	fs.IntVar(&opts.MaxRewriteLoops, "max-rewrite", 0, "单章最大返工轮次 (0=使用全局设置默认值)")
+	fs.StringVar(&opts.Style, "style", "", "全书叙事风格约束 (留空使用全局设置默认值)")
 	fs.IntVar(&opts.ChapterFrom, "chapter-from", 0, "起始生产章节序号 (默认 0 表示从卷首开始)")
 	fs.StringVar(&opts.Model, "model", "", "推演大模型 (默认使用 config.json 中的 reasoning_model)")
 	return fs, opts
 }
 
-func buildPipelineRequest(opts *pipelineCLIOptions, defaultReasoningModel string, onProgress func(engine.PipelineEvent)) engine.PipelineRequest {
+func buildPipelineRequest(opts *pipelineCLIOptions, cfg *config.Config, defaultReasoningModel string, onProgress func(engine.PipelineEvent)) engine.PipelineRequest {
 	model := strings.TrimSpace(opts.Model)
 	if model == "" {
-		model = defaultReasoningModel
+		if cfg != nil && cfg.ReasoningModel != "" {
+			model = cfg.ReasoningModel
+		} else {
+			model = defaultReasoningModel
+		}
 	}
+
+	words := 2000
+	if opts.Words > 0 {
+		words = opts.Words
+	} else if cfg != nil && cfg.DefaultWordsTarget > 0 {
+		words = cfg.DefaultWordsTarget
+	}
+
+	loops := 3
+	if opts.MaxRewriteLoops > 0 {
+		loops = opts.MaxRewriteLoops
+	} else if cfg != nil && cfg.DefaultMaxRewriteLoops > 0 {
+		loops = cfg.DefaultMaxRewriteLoops
+	}
+
+	style := ""
+	if opts.Style != "" {
+		style = opts.Style
+	} else if cfg != nil {
+		style = cfg.DefaultNarrativeStyle
+	}
+
+	autoLock := false
+	if opts.AutoLockSet {
+		autoLock = opts.AutoLock
+	} else if cfg != nil {
+		autoLock = cfg.DefaultAutoLockIntents
+	}
+
 	return engine.PipelineRequest{
 		Title:           opts.Title,
 		TargetPlatform:  opts.Platform,
 		Concept:         opts.Concept,
 		ReasoningModel:  model,
 		Volumes:         opts.Volumes,
-		AutoLockIntents: opts.AutoLock,
-		WordsTarget:     opts.Words,
-		MaxRewriteLoops: opts.MaxRewriteLoops,
-		NarrativeStyle:  opts.Style,
+		AutoLockIntents: autoLock,
+		WordsTarget:     words,
+		MaxRewriteLoops: loops,
+		NarrativeStyle:  style,
 		ChapterFrom:     opts.ChapterFrom,
 		OnProgress:      onProgress,
 	}
@@ -166,6 +200,11 @@ func runPipeline(argv []string, defaultDataDir string, stdout, stderr io.Writer)
 		}
 		return 1
 	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "auto-lock" {
+			opts.AutoLockSet = true
+		}
+	})
 
 	if strings.TrimSpace(opts.Title) == "" {
 		fmt.Fprintf(stderr, "✗ 请指定作品书名: -title \"书名\"\n")
@@ -209,7 +248,7 @@ func runPipeline(argv []string, defaultDataDir string, stdout, stderr io.Writer)
 	batch := engine.NewVolumeBatch(workshop, s)
 	pipeline := engine.NewStudioPipeline(orch, batch, s)
 
-	req := buildPipelineRequest(opts, cfg.ReasoningModel, func(ev engine.PipelineEvent) {
+	req := buildPipelineRequest(opts, cfg, cfg.ReasoningModel, func(ev engine.PipelineEvent) {
 		fmt.Fprintln(stdout, formatPipelineEvent(ev))
 	})
 
@@ -220,7 +259,7 @@ func runPipeline(argv []string, defaultDataDir string, stdout, stderr io.Writer)
 	fmt.Fprintf(stdout, "  • 核心脑洞: %s\n", opts.Concept)
 	fmt.Fprintf(stdout, "  • 推理模型: %s\n", req.ReasoningModel)
 	fmt.Fprintf(stdout, "  • 规划卷数: %d 卷 (0=全部)\n", opts.Volumes)
-	fmt.Fprintf(stdout, "  • 自动锁定: %v\n", opts.AutoLock)
+	fmt.Fprintf(stdout, "  • 自动锁定: %v\n", req.AutoLockIntents)
 	fmt.Fprintln(stdout, "==================================================================")
 
 	res, err := pipeline.Run(ctx, req)

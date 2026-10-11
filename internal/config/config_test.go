@@ -88,3 +88,88 @@ func TestConfig_ContextBudgetTokensValidation(t *testing.T) {
 		t.Errorf("expected default ContextBudgetTokens 12000, got %d", cfgDef.ContextBudgetTokens)
 	}
 }
+
+func TestConfig_DefaultPipelineSettings(t *testing.T) {
+	// 1. Assert default values
+	cfg := config.DefaultConfig()
+	if cfg.DefaultWordsTarget != 2000 {
+		t.Errorf("expected DefaultWordsTarget 2000, got %d", cfg.DefaultWordsTarget)
+	}
+	if cfg.DefaultMaxRewriteLoops != 3 {
+		t.Errorf("expected DefaultMaxRewriteLoops 3, got %d", cfg.DefaultMaxRewriteLoops)
+	}
+	if cfg.DefaultNarrativeStyle != "" {
+		t.Errorf("expected DefaultNarrativeStyle empty, got %q", cfg.DefaultNarrativeStyle)
+	}
+	if cfg.DefaultAutoLockIntents != false {
+		t.Errorf("expected DefaultAutoLockIntents false, got %v", cfg.DefaultAutoLockIntents)
+	}
+
+	// 2. Negative validation (Fail-Closed)
+	cfgNegWords := config.DefaultConfig()
+	cfgNegWords.DefaultWordsTarget = -1
+	if err := cfgNegWords.Validate(); err == nil {
+		t.Errorf("expected error for negative DefaultWordsTarget, got nil")
+	}
+
+	cfgNegLoops := config.DefaultConfig()
+	cfgNegLoops.DefaultMaxRewriteLoops = -1
+	if err := cfgNegLoops.Validate(); err == nil {
+		t.Errorf("expected error for negative DefaultMaxRewriteLoops, got nil")
+	}
+
+	// 0 is treated as fallback sentinel and allowed
+	cfgZero := config.DefaultConfig()
+	cfgZero.DefaultWordsTarget = 0
+	cfgZero.DefaultMaxRewriteLoops = 0
+	if err := cfgZero.Validate(); err != nil {
+		t.Errorf("expected zero to be valid, got: %v", err)
+	}
+
+	// 3. Load rejection for negative JSON values
+	tmpDir := t.TempDir()
+	negWordsPath := filepath.Join(tmpDir, "neg_words.json")
+	if err := os.WriteFile(negWordsPath, []byte(`{"default_words_target": -100}`), 0644); err != nil {
+		t.Fatalf("failed to write neg_words config: %v", err)
+	}
+	if _, err := config.Load(negWordsPath); err == nil {
+		t.Errorf("expected Load error for negative default_words_target, got nil")
+	}
+
+	negLoopsPath := filepath.Join(tmpDir, "neg_loops.json")
+	if err := os.WriteFile(negLoopsPath, []byte(`{"default_max_rewrite_loops": -2}`), 0644); err != nil {
+		t.Fatalf("failed to write neg_loops config: %v", err)
+	}
+	if _, err := config.Load(negLoopsPath); err == nil {
+		t.Errorf("expected Load error for negative default_max_rewrite_loops, got nil")
+	}
+
+	// 4. JSON roundtrip & Load/Save persistence
+	savePath := filepath.Join(tmpDir, "custom_pipeline.json")
+	cfgCustom := config.DefaultConfig()
+	cfgCustom.DefaultWordsTarget = 3500
+	cfgCustom.DefaultNarrativeStyle = "硬派武侠"
+	cfgCustom.DefaultMaxRewriteLoops = 5
+	cfgCustom.DefaultAutoLockIntents = true
+
+	if err := cfgCustom.Save(savePath); err != nil {
+		t.Fatalf("failed to save custom pipeline config: %v", err)
+	}
+
+	reloaded, err := config.Load(savePath)
+	if err != nil {
+		t.Fatalf("failed to reload custom pipeline config: %v", err)
+	}
+	if reloaded.DefaultWordsTarget != 3500 {
+		t.Errorf("expected DefaultWordsTarget 3500, got %d", reloaded.DefaultWordsTarget)
+	}
+	if reloaded.DefaultNarrativeStyle != "硬派武侠" {
+		t.Errorf("expected DefaultNarrativeStyle '硬派武侠', got %q", reloaded.DefaultNarrativeStyle)
+	}
+	if reloaded.DefaultMaxRewriteLoops != 5 {
+		t.Errorf("expected DefaultMaxRewriteLoops 5, got %d", reloaded.DefaultMaxRewriteLoops)
+	}
+	if !reloaded.DefaultAutoLockIntents {
+		t.Errorf("expected DefaultAutoLockIntents true, got false")
+	}
+}
