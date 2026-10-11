@@ -2129,6 +2129,46 @@ func TestChapterWorkshop_ChapterIntent_Integration(t *testing.T) {
 			t.Errorf("expected res.CoreConflict '常规冲突', got: %q", res.CoreConflict)
 		}
 	})
+
+	t.Run("case6_stale_intent_must_not_hijack_template_conflict", func(t *testing.T) {
+		intent := &domain.ChapterIntent{
+			ProjectID:     "p-intent",
+			ChapterIndex:  1,
+			VolumeIndex:   1,
+			Conflict:      "旧版过时冲突",
+			TensionTarget: 6,
+			Status:        domain.IntentStatusStale,
+		}
+		ws, client, _ := setup(intent)
+		client.suggestConflictText = "智能推演的常规冲突"
+
+		res, err := ws.ProduceChapter(context.Background(), WorkshopProduceRequest{
+			ProjectID:       "p-intent",
+			ChapterIndex:    1,
+			ReasoningModel:  "mock-r1",
+			WriterModel:     "mock-v3",
+			ReviewerModel:   "mock-reviewer",
+			WordsTarget:     2000,
+			AutoCommit:      true,
+			MaxRewriteLoops: 1,
+		})
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+
+		if res.CoreConflict != "智能推演的常规冲突" {
+			t.Errorf("expected res.CoreConflict '智能推演的常规冲突', got: %q", res.CoreConflict)
+		}
+		if client.suggestConflictCalls < 1 {
+			t.Errorf("expected client.suggestConflictCalls >= 1, got: %d", client.suggestConflictCalls)
+		}
+		if strings.Contains(client.capturedBeatsPrompt, "旧版过时冲突") {
+			t.Errorf("expected capturedBeatsPrompt NOT to contain '旧版过时冲突', got: %s", client.capturedBeatsPrompt)
+		}
+		if strings.Contains(client.capturedBeatsPrompt, "【本章意图卡") {
+			t.Errorf("expected capturedBeatsPrompt NOT to contain '【本章意图卡', got: %s", client.capturedBeatsPrompt)
+		}
+	})
 }
 
 func TestBuildChapterIntentPromptBlock(t *testing.T) {
