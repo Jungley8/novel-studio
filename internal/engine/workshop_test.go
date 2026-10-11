@@ -1449,6 +1449,246 @@ func TestChapterWorkshop_Summary_SaveSummaryFailureDoesNotTouchCheckpoint(t *tes
 	}
 }
 
+// 5. 测试要求：拒稿（REVISION_NEEDED）跑 ProduceChapter(AutoCommit=true) 未归档，断言 store 中无该章摘要
+func TestChapterWorkshop_Summary_RejectedHasNoSummary(t *testing.T) {
+	proj := &domain.Project{
+		ID:             "p-rejected-no-summary",
+		Title:          "拒稿无摘要测试",
+		TargetPlatform: "番茄脑洞",
+	}
+	mockStore := newMockSummaryWorkshopStore(proj)
+	fakeClient := &fakeSummaryWorkshopLLMClient{
+		reviewJSON: "```json\n" + `{
+			"verdict": "REVISION_NEEDED",
+			"score": 70,
+			"issues": ["情节拖沓，冲突平淡"],
+			"suggestions": "请重写"
+		}` + "\n```",
+	}
+
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-rejected-no-summary",
+		ChapterIndex:    1,
+		CoreConflict:    "初入险境",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if res.Committed {
+		t.Fatalf("expected chapter NOT to be committed on REVISION_NEEDED, got Committed=true")
+	}
+
+	// 断言 store 里无该章摘要
+	summary, err := mockStore.GetChapterSummary(context.Background(), "p-rejected-no-summary", 1)
+	if err != nil {
+		t.Fatalf("GetChapterSummary error: %v", err)
+	}
+	if summary != nil {
+		t.Fatalf("expected nil chapter summary in store for rejected chapter, got: %+v", summary)
+	}
+
+	summaries, err := mockStore.ListChapterSummaries(context.Background(), "p-rejected-no-summary", 0, 0)
+	if err != nil {
+		t.Fatalf("ListChapterSummaries error: %v", err)
+	}
+	if len(summaries) != 0 {
+		t.Fatalf("expected 0 chapter summaries in store for rejected chapter, got %d", len(summaries))
+	}
+	if len(mockStore.chapterSummaries) != 0 {
+		t.Fatalf("expected 0 chapter summaries in mockStore map for rejected chapter, got %d", len(mockStore.chapterSummaries))
+	}
+}
+
+// 6. 测试要求：AutoCommit=false 预演成功渲染 → 无摘要落库（预演不污染记忆）
+func TestChapterWorkshop_Summary_AutoCommitFalseHasNoSummary(t *testing.T) {
+	proj := &domain.Project{
+		ID:             "p-preview-no-summary",
+		Title:          "预演不污染记忆测试",
+		TargetPlatform: "番茄脑洞",
+	}
+	mockStore := newMockSummaryWorkshopStore(proj)
+	fakeClient := &fakeSummaryWorkshopLLMClient{}
+
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-preview-no-summary",
+		ChapterIndex:    1,
+		CoreConflict:    "破局交锋",
+		AutoCommit:      false,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if res.Committed {
+		t.Fatalf("expected chapter NOT to be committed when AutoCommit=false, got Committed=true")
+	}
+
+	summary, err := mockStore.GetChapterSummary(context.Background(), "p-preview-no-summary", 1)
+	if err != nil {
+		t.Fatalf("GetChapterSummary error: %v", err)
+	}
+	if summary != nil {
+		t.Fatalf("expected nil chapter summary for AutoCommit=false preview, got: %+v", summary)
+	}
+	if len(mockStore.chapterSummaries) != 0 {
+		t.Fatalf("expected 0 chapter summaries in store for AutoCommit=false preview, got %d", len(mockStore.chapterSummaries))
+	}
+}
+
+// 7. 测试要求：mutation 覆盖——失败路径的 TotalUsage 含摘要调用量（error + 非零 usage）
+func TestChapterWorkshop_Summary_FailurePathTokenAccounting(t *testing.T) {
+	proj := &domain.Project{
+		ID:             "p-summary-tokens",
+		Title:          "摘要失败路径记账测试",
+		TargetPlatform: "番茄脑洞",
+	}
+	mockStore := newMockSummaryWorkshopStore(proj)
+	// fakeClient 让 SummarizeChapter 返回非法 JSON，从而触发后处理解析错误并返回非零 usage
+	fakeClient := &fakeSummaryWorkshopLLMClient{
+		summaryJSON: "this is invalid json response from LLM",
+	}
+
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-summary-tokens",
+		ChapterIndex:    1,
+		CoreConflict:    "决战时刻",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if !res.Committed {
+		t.Fatalf("expected chapter to be committed despite summary post-processing error")
+	}
+
+	// 验证包含摘要失败告警
+	hasWarning := false
+	for _, issue := range res.Audit.Issues {
+		if strings.Contains(issue, "【摘要警告】生成章节摘要失败") {
+			hasWarning = true
+			break
+		}
+	}
+	if !hasWarning {
+		t.Errorf("expected audit issues to contain summary warning, got: %v", res.Audit.Issues)
+	}
+
+	// 验证 token 记账：
+	// 前序流程（beats + draft + ReviewCourt + settle）共 6 次调用（840 tokens）
+	// 加上失败的章节摘要 1 次调用（140 tokens），总计 7 次调用 = 980 tokens
+	const expectedTotalTokens = 980
+	const expectedPromptTokens = 420
+	const expectedCompletionTokens = 560
+	if res.TotalUsage.TotalTokens != expectedTotalTokens {
+		t.Errorf("expected TotalUsage.TotalTokens == %d (including failed summary usage), got %d", expectedTotalTokens, res.TotalUsage.TotalTokens)
+	}
+	if res.TotalUsage.PromptTokens != expectedPromptTokens {
+		t.Errorf("expected TotalUsage.PromptTokens == %d, got %d", expectedPromptTokens, res.TotalUsage.PromptTokens)
+	}
+	if res.TotalUsage.CompletionTokens != expectedCompletionTokens {
+		t.Errorf("expected TotalUsage.CompletionTokens == %d, got %d", expectedCompletionTokens, res.TotalUsage.CompletionTokens)
+	}
+}
+
+// 8. 测试要求：分卷回顾失败路径的 TotalUsage 包含回顾调用量（error + 非零 usage）
+func TestChapterWorkshop_VolumeRetrospective_FailurePathTokenAccounting(t *testing.T) {
+	proj := &domain.Project{
+		ID:             "p-retro-tokens",
+		Title:          "卷回顾失败路径记账测试",
+		TargetPlatform: "起点仙侠",
+		Framework: &domain.ProjectFramework{
+			VolumeArcs: []domain.VolumeArc{
+				{
+					VolumeIndex:       1,
+					Title:             "第一卷 仙门风云",
+					CoreGoal:          "拜入宗门立足",
+					Climax:            "大比夺魁斩叛逆",
+					EstimatedChapters: 1, // 第1章即为终章
+				},
+			},
+		},
+	}
+	mockStore := newMockSummaryWorkshopStore(proj)
+	fakeClient := &fakeSummaryWorkshopLLMClient{
+		volumeRetroJSON: "this is invalid json response from LLM for volume retrospective",
+	}
+
+	orch := NewOrchestrator(fakeClient)
+	qGate := NewQualityGate(fakeClient, nil)
+	chronicle := NewCanonChronicle(mockStore)
+	workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+
+	req := WorkshopProduceRequest{
+		ProjectID:       "p-retro-tokens",
+		ChapterIndex:    1,
+		CoreConflict:    "卷终大决战",
+		AutoCommit:      true,
+		MaxRewriteLoops: 1,
+	}
+
+	res, err := workshop.ProduceChapter(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProduceChapter failed: %v", err)
+	}
+
+	if !res.Committed {
+		t.Fatalf("expected chapter to be committed")
+	}
+
+	hasRetroWarning := false
+	for _, issue := range res.Audit.Issues {
+		if strings.Contains(issue, "【摘要警告】生成分卷回顾失败") {
+			hasRetroWarning = true
+			break
+		}
+	}
+	if !hasRetroWarning {
+		t.Errorf("expected audit issues to contain retro failure warning, got: %v", res.Audit.Issues)
+	}
+
+	// 验证 token 记账：
+	// 前序流程 6 次（840）+ 章节摘要 1 次（140）+ 失败的卷回顾 1 次（140）= 8 次调用 = 1120 tokens
+	const expectedTotalTokens = 1120
+	const expectedPromptTokens = 480
+	const expectedCompletionTokens = 640
+	if res.TotalUsage.TotalTokens != expectedTotalTokens {
+		t.Errorf("expected TotalUsage.TotalTokens == %d (including failed volume retrospective usage), got %d", expectedTotalTokens, res.TotalUsage.TotalTokens)
+	}
+	if res.TotalUsage.PromptTokens != expectedPromptTokens {
+		t.Errorf("expected TotalUsage.PromptTokens == %d, got %d", expectedPromptTokens, res.TotalUsage.PromptTokens)
+	}
+	if res.TotalUsage.CompletionTokens != expectedCompletionTokens {
+		t.Errorf("expected TotalUsage.CompletionTokens == %d, got %d", expectedCompletionTokens, res.TotalUsage.CompletionTokens)
+	}
+}
+
 // mockEchoListErrorStore wraps mockSummaryWorkshopStore to simulate ListChapters error during block 5.55.
 type mockEchoListErrorStore struct {
 	*mockSummaryWorkshopStore

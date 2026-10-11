@@ -701,35 +701,6 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		}
 	}
 
-	// 5.6 Summarize chapter if not technically blocked.
-	// 摘要失败永不阻塞归档（注释写明理由：摘要可由正文重建，与状态真相不同级）。
-	if !technicalBlocked {
-		cs, csUsage, csErr := SummarizeChapter(ctx, w.orch.client, req.ReasoningModel, horizon.Project, req.ChapterIndex, currentDraft, settledMutation)
-		if csErr != nil {
-			if auditReport != nil {
-				auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】生成章节摘要失败: %v", csErr))
-			}
-		} else {
-			addUsage(csUsage)
-			if saver, ok := w.store.(interface {
-				SaveChapterSummary(ctx context.Context, cs *domain.ChapterSummary) error
-			}); ok {
-				if cs.ProjectID == "" {
-					cs.ProjectID = req.ProjectID
-				}
-				if err := saver.SaveChapterSummary(ctx, &cs); err != nil {
-					if auditReport != nil {
-						auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】保存章节摘要失败: %v", err))
-					}
-				}
-			} else {
-				if auditReport != nil {
-					auditReport.Issues = append(auditReport.Issues, "【摘要警告】存储层未实现 SaveChapterSummary 接口")
-				}
-			}
-		}
-	}
-
 	// Collect unmatched character mutation names against Codex entries
 	unmatchedNames := w.findUnmatchedCharacterNames(ctx, req.ProjectID, settledMutation.CharacterMutations)
 	if len(unmatchedNames) > 0 {
@@ -880,6 +851,39 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			Phase:   PhaseCommitted,
 			Message: fmt.Sprintf("第 %d 章已成功原子结算并归档入库！", req.ChapterIndex),
 		})
+	}
+
+	// 5.6 Summarize chapter if committed.
+	// 摘要失败永不阻塞归档（注释写明理由：摘要可由正文重建，与状态真相不同级）。
+	if result.Committed {
+		cs, csUsage, csErr := SummarizeChapter(ctx, w.orch.client, req.ReasoningModel, horizon.Project, req.ChapterIndex, currentDraft, settledMutation)
+		if csErr != nil {
+			addUsage(csUsage)
+			if auditReport != nil {
+				auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】生成章节摘要失败: %v", csErr))
+			}
+		} else {
+			addUsage(csUsage)
+			if saver, ok := w.store.(interface {
+				SaveChapterSummary(ctx context.Context, cs *domain.ChapterSummary) error
+			}); ok {
+				if cs.ProjectID == "" {
+					cs.ProjectID = req.ProjectID
+				}
+				if err := saver.SaveChapterSummary(ctx, &cs); err != nil {
+					if auditReport != nil {
+						auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】保存章节摘要失败: %v", err))
+					}
+				}
+			} else {
+				if auditReport != nil {
+					auditReport.Issues = append(auditReport.Issues, "【摘要警告】存储层未实现 SaveChapterSummary 接口")
+				}
+			}
+		}
+		estimatedCostUSD = (float64(totalUsage.PromptTokens)*0.00014 + float64(totalUsage.CompletionTokens)*0.00028) / 1000.0
+		result.TotalUsage = totalUsage
+		result.EstimatedCostUSD = estimatedCostUSD
 
 		// Volume retrospective on volume arc completion.
 		// CommitChapter 返回的 Project 不带 framework 是 store 层既有契约，
@@ -934,6 +938,10 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 								} else {
 									vr, vrUsage, vrErr := BuildVolumeRetrospective(ctx, w.orch.client, req.ReasoningModel, activeProj, *arc, *currentSpan, chSummaries)
 									if vrErr != nil {
+										addUsage(vrUsage)
+										estimatedCostUSD = (float64(totalUsage.PromptTokens)*0.00014 + float64(totalUsage.CompletionTokens)*0.00028) / 1000.0
+										result.TotalUsage = totalUsage
+										result.EstimatedCostUSD = estimatedCostUSD
 										if auditReport != nil {
 											auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】生成分卷回顾失败: %v", vrErr))
 										}
