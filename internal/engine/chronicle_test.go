@@ -233,6 +233,42 @@ func (m *mockChronicleStore) GetEvent(ctx context.Context, projectID, eventID st
 func (m *mockChronicleStore) GetMatrixOverview(ctx context.Context, projectID string) (*domain.MatrixOverview, error) {
 	return nil, nil
 }
+func (m *mockChronicleStore) ListProjectAutomations(ctx context.Context) ([]*domain.ProjectAutomation, error) {
+	return nil, nil
+}
+func (m *mockChronicleStore) GetProjectAutomation(ctx context.Context, projectID string) (*domain.ProjectAutomation, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (m *mockChronicleStore) SaveProjectAutomation(ctx context.Context, a *domain.ProjectAutomation) error {
+	return nil
+}
+func (m *mockChronicleStore) SetAutomationPaused(ctx context.Context, projectID string, paused bool, reason string) error {
+	return nil
+}
+func (m *mockChronicleStore) RecordAutomationRun(ctx context.Context, projectID, status, message string, at time.Time) error {
+	return nil
+}
+func (m *mockChronicleStore) ListBookQueue(ctx context.Context) ([]*domain.BookQueueItem, error) {
+	return nil, nil
+}
+func (m *mockChronicleStore) GetBookQueueItem(ctx context.Context, id string) (*domain.BookQueueItem, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (m *mockChronicleStore) SaveBookQueueItem(ctx context.Context, item *domain.BookQueueItem) error {
+	return nil
+}
+func (m *mockChronicleStore) DeleteBookQueueItem(ctx context.Context, id string) error {
+	return nil
+}
+func (m *mockChronicleStore) ResetStaleQueueRunning(ctx context.Context) (int64, error) {
+	return 0, nil
+}
+func (m *mockChronicleStore) GetSchedulerState(ctx context.Context, key string) (string, error) {
+	return "", nil
+}
+func (m *mockChronicleStore) SetSchedulerState(ctx context.Context, key, value string) error {
+	return nil
+}
 func (m *mockChronicleStore) Close() error { return nil }
 func (m *mockChronicleStore) GetVolumeRetrospective(ctx context.Context, projectID string, volumeIndex int) (*domain.VolumeRetrospective, error) {
 	if m.retros != nil {

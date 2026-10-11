@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/Jungley8/novel-studio/internal/domain"
 )
 
 type ProviderConfig struct {
@@ -31,6 +33,7 @@ type Config struct {
 	DefaultNarrativeStyle  string          `json:"default_narrative_style"`
 	DefaultMaxRewriteLoops int             `json:"default_max_rewrite_loops"`
 	DefaultAutoLockIntents bool            `json:"default_auto_lock_intents"`
+	QueueTimes             []string        `json:"queue_times"`
 }
 
 func DefaultConfig() *Config {
@@ -52,6 +55,7 @@ func DefaultConfig() *Config {
 		DefaultNarrativeStyle:  "",
 		DefaultMaxRewriteLoops: 3,
 		DefaultAutoLockIntents: false,
+		QueueTimes:             []string{},
 	}
 }
 
@@ -64,6 +68,9 @@ func (c *Config) Validate() error {
 	}
 	if c.DefaultMaxRewriteLoops < 0 {
 		return fmt.Errorf("default_max_rewrite_loops cannot be negative, got %d", c.DefaultMaxRewriteLoops)
+	}
+	if err := domain.ValidateDailyTimes(c.QueueTimes); err != nil {
+		return fmt.Errorf("queue_times: %w", err)
 	}
 	return nil
 }

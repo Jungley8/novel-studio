@@ -173,3 +173,41 @@ func TestConfig_DefaultPipelineSettings(t *testing.T) {
 		t.Errorf("expected DefaultAutoLockIntents true, got false")
 	}
 }
+
+func TestConfig_QueueTimes(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// 1. Valid roundtrip
+	validPath := filepath.Join(tmpDir, "valid_queue.json")
+	cfg := config.DefaultConfig()
+	cfg.QueueTimes = []string{"03:00", "15:30"}
+	if err := cfg.Save(validPath); err != nil {
+		t.Fatalf("failed to save config with queue times: %v", err)
+	}
+
+	reloaded, err := config.Load(validPath)
+	if err != nil {
+		t.Fatalf("failed to load valid config with queue times: %v", err)
+	}
+	if len(reloaded.QueueTimes) != 2 || reloaded.QueueTimes[0] != "03:00" || reloaded.QueueTimes[1] != "15:30" {
+		t.Errorf("unexpected reloaded QueueTimes: %v", reloaded.QueueTimes)
+	}
+
+	// 2. Load rejects invalid hour (>23)
+	invalidHourPath := filepath.Join(tmpDir, "invalid_hour.json")
+	if err := os.WriteFile(invalidHourPath, []byte(`{"queue_times": ["25:00"]}`), 0644); err != nil {
+		t.Fatalf("failed to write invalid hour config: %v", err)
+	}
+	if _, err := config.Load(invalidHourPath); err == nil {
+		t.Fatalf("expected error for invalid hour in queue_times, got nil")
+	}
+
+	// 3. Load rejects invalid format (e.g. 9:00)
+	invalidFmtPath := filepath.Join(tmpDir, "invalid_fmt.json")
+	if err := os.WriteFile(invalidFmtPath, []byte(`{"queue_times": ["9:00"]}`), 0644); err != nil {
+		t.Fatalf("failed to write invalid fmt config: %v", err)
+	}
+	if _, err := config.Load(invalidFmtPath); err == nil {
+		t.Fatalf("expected error for invalid format in queue_times, got nil")
+	}
+}

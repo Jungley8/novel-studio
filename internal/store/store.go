@@ -2,10 +2,15 @@ package store
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/domain"
 )
+
+// ErrNotFound indicates that the requested entity was not found in the store.
+var ErrNotFound = errors.New("not found")
 
 // Store defines the persistence operations for NovelStudio.
 type Store interface {
@@ -69,6 +74,20 @@ type Store interface {
 	ListSceneMarkers(ctx context.Context, sceneID string) ([]domain.SceneMarker, error)
 	DeleteSceneMarker(ctx context.Context, id string) error
 	GetMatrixOverview(ctx context.Context, projectID string) (*domain.MatrixOverview, error)
+
+	// Automation & Book Queue (无人值守排程与新书队列)
+	ListProjectAutomations(ctx context.Context) ([]*domain.ProjectAutomation, error)
+	GetProjectAutomation(ctx context.Context, projectID string) (*domain.ProjectAutomation, error)
+	SaveProjectAutomation(ctx context.Context, a *domain.ProjectAutomation) error
+	SetAutomationPaused(ctx context.Context, projectID string, paused bool, reason string) error
+	RecordAutomationRun(ctx context.Context, projectID, status, message string, at time.Time) error
+	ListBookQueue(ctx context.Context) ([]*domain.BookQueueItem, error)
+	GetBookQueueItem(ctx context.Context, id string) (*domain.BookQueueItem, error)
+	SaveBookQueueItem(ctx context.Context, item *domain.BookQueueItem) error
+	DeleteBookQueueItem(ctx context.Context, id string) error
+	ResetStaleQueueRunning(ctx context.Context) (int64, error)
+	GetSchedulerState(ctx context.Context, key string) (string, error)
+	SetSchedulerState(ctx context.Context, key, value string) error
 
 	// Close database connection
 	Close() error

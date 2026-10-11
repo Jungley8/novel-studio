@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Jungley8/novel-studio/internal/config"
+	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/engine"
 )
 
@@ -87,6 +88,12 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 		s.cfg.DefaultNarrativeStyle = strings.TrimSpace(updated.DefaultNarrativeStyle)
 		s.cfg.DefaultAutoLockIntents = updated.DefaultAutoLockIntents
+
+		if err := domain.ValidateDailyTimes(updated.QueueTimes); err != nil {
+			errorResponse(w, http.StatusBadRequest, "queue_times: "+err.Error())
+			return
+		}
+		s.cfg.QueueTimes = updated.QueueTimes
 
 		// Update independent providers if specified
 		updateProvider := func(cur **config.ProviderConfig, in *config.ProviderConfig) {
