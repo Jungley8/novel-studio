@@ -704,3 +704,285 @@ func TestListForecasts_CleanProject(t *testing.T) {
 		t.Fatalf("expected forecast status to be 'active', got '%s'", list2[0].Status)
 	}
 }
+
+// TestSelectBranch_ArchivedForecastRejected verifies that selecting a branch on an archived
+// forecast is rejected fail-closed, keeping the archived forecast archived and existing active forecast intact.
+func TestSelectBranch_ArchivedForecastRejected(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test_select_archived_rej.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	projID := "proj_archived_rej_test"
+	if err := s.SaveProject(ctx, &domain.Project{ID: projID, Title: "归档前瞻拒绝测试"}); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	// 1. Forecast A (active initially)
+	fcA := &domain.Forecast{
+		ID:          "fc_A",
+		ProjectID:   projID,
+		BaseChapter: "1",
+		Divergence:  "分歧方案A",
+		BranchCount: 2,
+		Horizon:     2,
+		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Status:      domain.ForecastStatusActive,
+		Branches: []domain.ForecastBranch{
+			{ID: "branch_a1", BeatsSummary: "方案A节拍1"},
+			{ID: "branch_a2", BeatsSummary: "方案A节拍2"},
+		},
+		CreatedAt: time.Now().Add(-10 * time.Minute),
+	}
+	if err := s.SaveForecast(ctx, fcA); err != nil {
+		t.Fatalf("SaveForecast A failed: %v", err)
+	}
+
+	// 2. Forecast B (active, which archives A via SaveForecast single-active invariant)
+	fcB := &domain.Forecast{
+		ID:          "fc_B",
+		ProjectID:   projID,
+		BaseChapter: "1",
+		Divergence:  "分歧方案B",
+		BranchCount: 2,
+		Horizon:     2,
+		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Status:      domain.ForecastStatusActive,
+		Branches: []domain.ForecastBranch{
+			{ID: "branch_b1", BeatsSummary: "方案B节拍1"},
+			{ID: "branch_b2", BeatsSummary: "方案B节拍2"},
+		},
+		CreatedAt: time.Now(),
+	}
+	if err := s.SaveForecast(ctx, fcB); err != nil {
+		t.Fatalf("SaveForecast B failed: %v", err)
+	}
+
+	// Verify A is archived and B is active
+	var statusA, statusB string
+	if err := s.db.QueryRow(`SELECT status FROM narrative_forecasts WHERE id = ?`, fcA.ID).Scan(&statusA); err != nil {
+		t.Fatalf("query status A failed: %v", err)
+	}
+	if err := s.db.QueryRow(`SELECT status FROM narrative_forecasts WHERE id = ?`, fcB.ID).Scan(&statusB); err != nil {
+		t.Fatalf("query status B failed: %v", err)
+	}
+	if statusA != domain.ForecastStatusArchived || statusB != domain.ForecastStatusActive {
+		t.Fatalf("precondition failed: statusA=%s (want %s), statusB=%s (want %s)",
+			statusA, domain.ForecastStatusArchived, statusB, domain.ForecastStatusActive)
+	}
+
+	// 3. Attempt SelectBranch on archived forecast A -> MUST return error
+	plan, err := s.SelectBranch(ctx, projID, fcA.ID, "branch_a1")
+	if err == nil {
+		t.Fatalf("expected error selecting branch on archived forecast, but got nil; plan=%+v", plan)
+	}
+
+	// 4. Assert A is STILL archived, B is STILL active
+	if err := s.db.QueryRow(`SELECT status FROM narrative_forecasts WHERE id = ?`, fcA.ID).Scan(&statusA); err != nil {
+		t.Fatalf("re-query status A failed: %v", err)
+	}
+	if err := s.db.QueryRow(`SELECT status FROM narrative_forecasts WHERE id = ?`, fcB.ID).Scan(&statusB); err != nil {
+		t.Fatalf("re-query status B failed: %v", err)
+	}
+	if statusA != domain.ForecastStatusArchived {
+		t.Errorf("status A corrupted: expected %s, got %s", domain.ForecastStatusArchived, statusA)
+	}
+	if statusB != domain.ForecastStatusActive {
+		t.Errorf("status B corrupted: expected %s, got %s", domain.ForecastStatusActive, statusB)
+	}
+
+	// 5. Assert active plan was not set to A
+	activePlan, err := s.GetActivePlan(ctx, projID)
+	if err != nil {
+		t.Fatalf("GetActivePlan failed: %v", err)
+	}
+	if activePlan != nil && activePlan.ForecastID == fcA.ID {
+		t.Errorf("active plan erroneously set to archived forecast A: %+v", activePlan)
+	}
+}
+
+// TestSelectBranch_StaleForecastRejected verifies that selecting a branch on a stale forecast
+// (due to canon fingerprint mismatch) is rejected fail-closed.
+func TestSelectBranch_StaleForecastRejected(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test_select_stale_rej.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	projID := "proj_stale_rej_test"
+	if err := s.SaveProject(ctx, &domain.Project{ID: projID, Title: "失效前瞻拒绝测试"}); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	// 1. Commit chapter 1 into canon
+	ch1 := &domain.Chapter{
+		ID:           "ch_stale_rej_1",
+		ProjectID:    projID,
+		ChapterIndex: 1,
+		Title:        "第一章",
+		Content:      "初始正史内容",
+		CreatedAt:    time.Now().Add(-1 * time.Hour),
+	}
+	if _, err := s.CommitChapter(ctx, projID, ch1); err != nil {
+		t.Fatalf("CommitChapter 1 failed: %v", err)
+	}
+
+	// 2. Create forecast matching chapter 1 fingerprint
+	fc := &domain.Forecast{
+		ID:          "fc_stale_rej",
+		ProjectID:   projID,
+		BaseChapter: "1",
+		Divergence:  "分歧测试",
+		BranchCount: 2,
+		Horizon:     2,
+		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Status:      domain.ForecastStatusActive,
+		Branches: []domain.ForecastBranch{
+			{ID: "branch_s1", BeatsSummary: "节拍1"},
+			{ID: "branch_s2", BeatsSummary: "节拍2"},
+		},
+		CreatedAt: time.Now(),
+	}
+	if err := s.SaveForecast(ctx, fc); err != nil {
+		t.Fatalf("SaveForecast failed: %v", err)
+	}
+
+	// 3. Advance canon with chapter 2 to cause fingerprint mismatch
+	ch2 := &domain.Chapter{
+		ID:           "ch_stale_rej_2",
+		ProjectID:    projID,
+		ChapterIndex: 2,
+		Title:        "第二章正史推进",
+		Content:      "新的正史内容造成指纹改变",
+		CreatedAt:    time.Now(),
+	}
+	if _, err := s.CommitChapter(ctx, projID, ch2); err != nil {
+		t.Fatalf("CommitChapter 2 failed: %v", err)
+	}
+
+	// 4. Attempt SelectBranch -> MUST return error because forecast is stale
+	plan, err := s.SelectBranch(ctx, projID, fc.ID, "branch_s1")
+	if err == nil {
+		t.Fatalf("expected error selecting branch on stale forecast, but got nil; plan=%+v", plan)
+	}
+
+	// 5. Assert forecast status is marked stale in DB and not resurrected to active
+	var dbStatus string
+	if err := s.db.QueryRow(`SELECT status FROM narrative_forecasts WHERE id = ?`, fc.ID).Scan(&dbStatus); err != nil {
+		t.Fatalf("query status failed: %v", err)
+	}
+	if dbStatus != domain.ForecastStatusStale {
+		t.Errorf("expected forecast status to be 'stale', got '%s'", dbStatus)
+	}
+
+	// 6. Assert no active plan exists pointing to this forecast
+	var planCount int
+	if err := s.db.QueryRow(`SELECT count(*) FROM project_active_plan WHERE project_id = ? AND forecast_id = ? AND status = ?`,
+		projID, fc.ID, domain.PlanStatusActive).Scan(&planCount); err != nil {
+		t.Fatalf("query active plan count failed: %v", err)
+	}
+	if planCount != 0 {
+		t.Errorf("expected 0 active plans for stale forecast, got %d", planCount)
+	}
+}
+
+// TestSelectBranch_ActiveMaintainsSingleActive verifies that selecting a branch on an active forecast
+// succeeds and strictly maintains the single-active invariant across the project.
+func TestSelectBranch_ActiveMaintainsSingleActive(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test_select_single_active.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	projID := "proj_active_single_test"
+	if err := s.SaveProject(ctx, &domain.Project{ID: projID, Title: "单一活跃前瞻验证"}); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	// 1. Commit chapter 1
+	ch1 := &domain.Chapter{
+		ID:           "ch_sa_1",
+		ProjectID:    projID,
+		ChapterIndex: 1,
+		Title:        "第一章",
+		Content:      "正史内容",
+		CreatedAt:    time.Now(),
+	}
+	if _, err := s.CommitChapter(ctx, projID, ch1); err != nil {
+		t.Fatalf("CommitChapter failed: %v", err)
+	}
+
+	// 2. Create forecast A
+	fcA := &domain.Forecast{
+		ID:          "fc_single_A",
+		ProjectID:   projID,
+		BaseChapter: "1",
+		Divergence:  "分歧方案A",
+		BranchCount: 2,
+		Horizon:     2,
+		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Status:      domain.ForecastStatusActive,
+		Branches: []domain.ForecastBranch{
+			{ID: "branch_a1", BeatsSummary: "节拍A1", ExpectedDeltas: "+神兵"},
+			{ID: "branch_a2", BeatsSummary: "节拍A2", ExpectedDeltas: "+灵丹"},
+		},
+		CreatedAt: time.Now(),
+	}
+	if err := s.SaveForecast(ctx, fcA); err != nil {
+		t.Fatalf("SaveForecast failed: %v", err)
+	}
+
+	// 3. Select branch A1
+	plan, err := s.SelectBranch(ctx, projID, fcA.ID, "branch_a1")
+	if err != nil {
+		t.Fatalf("SelectBranch failed: %v", err)
+	}
+	if plan == nil {
+		t.Fatal("expected non-nil plan")
+	}
+	if plan.ForecastID != fcA.ID || plan.BranchID != "branch_a1" {
+		t.Errorf("unexpected plan: forecast=%s, branch=%s", plan.ForecastID, plan.BranchID)
+	}
+	if plan.Status != domain.PlanStatusActive {
+		t.Errorf("expected plan status %s, got %s", domain.PlanStatusActive, plan.Status)
+	}
+
+	// 4. Assert exactly ONE active forecast exists in narrative_forecasts for this project
+	var activeCount int
+	if err := s.db.QueryRow(`
+		SELECT count(*) 
+		FROM narrative_forecasts 
+		WHERE project_id = ? AND status = ?`,
+		projID, domain.ForecastStatusActive,
+	).Scan(&activeCount); err != nil {
+		t.Fatalf("query active forecast count failed: %v", err)
+	}
+	if activeCount != 1 {
+		t.Fatalf("expected exactly 1 active forecast row for project, got %d", activeCount)
+	}
+
+	// 5. Assert active plan points to A
+	activePlan, err := s.GetActivePlan(ctx, projID)
+	if err != nil {
+		t.Fatalf("GetActivePlan failed: %v", err)
+	}
+	if activePlan == nil {
+		t.Fatal("expected non-nil active plan")
+	}
+	if activePlan.ForecastID != fcA.ID || activePlan.BranchID != "branch_a1" {
+		t.Errorf("expected active plan pointing to forecast %s / branch branch_a1, got forecast %s / branch %s",
+			fcA.ID, activePlan.ForecastID, activePlan.BranchID)
+	}
+}

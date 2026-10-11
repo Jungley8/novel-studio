@@ -3675,6 +3675,34 @@ func (s *SQLiteStore) SelectBranch(ctx context.Context, projectID, forecastID, b
 		}
 	}()
 
+	// Status guard: ensure target forecast is active. stale and archived forecasts are strictly rejected.
+	var currentStatus string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT status 
+		FROM narrative_forecasts 
+		WHERE project_id = ? AND id = ?`,
+		projectID, forecastID,
+	).Scan(&currentStatus); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("forecast %s not found", forecastID)
+		}
+		return nil, fmt.Errorf("query forecast status failed: %w", err)
+	}
+
+	if currentStatus != domain.ForecastStatusActive {
+		return nil, fmt.Errorf("cannot select branch: forecast is %s, regenerate or create a new forecast first", currentStatus)
+	}
+
+	// Single-active invariant: archive any other active forecasts for this project
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE narrative_forecasts 
+		SET status = ? 
+		WHERE project_id = ? AND status = ? AND id != ?`,
+		domain.ForecastStatusArchived, projectID, domain.ForecastStatusActive, forecastID,
+	); err != nil {
+		return nil, fmt.Errorf("archive previous active forecasts failed: %w", err)
+	}
+
 	// 1. Write narrative_forecasts status
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE narrative_forecasts 
