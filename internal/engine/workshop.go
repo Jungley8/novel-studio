@@ -430,7 +430,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 				domain.ChapterTypeInterlude,
 				domain.ChapterTypeEscalation,
 			}
-			altType := domain.ChapterTypeEscalation
+			var altType domain.ChapterType
 			for _, c := range altCandidates {
 				if c != actualType && c != targetType {
 					consec := 1
