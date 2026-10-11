@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Jungley8/novel-studio/internal/config"
@@ -16,6 +17,8 @@ const (
 	DefaultContextBudgetTokens = 12000
 	// MaxCodexDetailsRunes defines the rune limit for individual Codex entry DetailsMarkdown before in-place truncation.
 	MaxCodexDetailsRunes = 300
+	// MaxRetrievedMemories defines the max number of historical summary memories retrieved via BM25.
+	MaxRetrievedMemories = 8
 )
 
 type budgetContextKey struct{}
@@ -220,6 +223,68 @@ func (c *CanonChronicle) AssembleHorizonTracedWithExtras(ctx context.Context, pr
 		}
 	}
 
+	// Compressible candidate definition
+	type compressibleCandidate struct {
+		id         string
+		category   string
+		desc       string
+		tokens     int
+		isUrgent   bool
+		distance   int
+		codexEntry *domain.CodexEntry
+	}
+
+	var retrievedCandidates []compressibleCandidate
+	intents, err := c.store.ListChapterIntents(ctx, projectID, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list chapter intents for retrieval: %w", err)
+	}
+	var targetIntent *domain.ChapterIntent
+	for _, it := range intents {
+		if it != nil && it.ChapterIndex == targetChapter {
+			targetIntent = it
+			break
+		}
+	}
+	if targetIntent != nil {
+		query := strings.TrimSpace(targetIntent.Conflict + " " + strings.Join(targetIntent.HookPayoffs, " "))
+		if query != "" {
+			hits, err := c.store.SearchMemory(ctx, projectID, query, MaxRetrievedMemories*3)
+			if err != nil {
+				return nil, nil, fmt.Errorf("search memory failed: %w", err)
+			}
+			seenRef := make(map[string]bool)
+			for _, hit := range hits {
+				if hit == nil {
+					continue
+				}
+				if hit.Kind != "summary" {
+					continue
+				}
+				if hit.ChapterIndex <= 0 || hit.ChapterIndex >= targetChapter-3 {
+					continue
+				}
+				if seenRef[hit.RefID] {
+					continue
+				}
+				seenRef[hit.RefID] = true
+
+				desc := fmt.Sprintf("【历史检索记忆·第%d章】%s", hit.ChapterIndex, strings.TrimSpace(hit.Raw))
+				retrievedCandidates = append(retrievedCandidates, compressibleCandidate{
+					id:       "retrieved/chapter:" + strconv.Itoa(hit.ChapterIndex),
+					category: "retrieved",
+					desc:     desc,
+					tokens:   domain.EstimateTokens(desc),
+					isUrgent: false,
+					distance: targetChapter - hit.ChapterIndex,
+				})
+				if len(retrievedCandidates) >= MaxRetrievedMemories {
+					break
+				}
+			}
+		}
+	}
+
 	// Layer 2: Rolling 3-Chapter Window
 	windowSize := 3
 	var recent []*domain.Chapter
@@ -371,16 +436,6 @@ func (c *CanonChronicle) AssembleHorizonTracedWithExtras(ctx context.Context, pr
 	// Compressible items collection:
 	// - Layer 3: Cross-volume callbacks for active hooks & foreshadowing
 	// - Layer 4: The Codex entries mentioned in rolling window
-	type compressibleCandidate struct {
-		id         string
-		category   string
-		desc       string
-		tokens     int
-		isUrgent   bool
-		distance   int
-		codexEntry *domain.CodexEntry
-	}
-
 	var callbackCandidates []compressibleCandidate
 	if len(older) > 0 {
 		for _, oldCh := range older {
@@ -604,6 +659,7 @@ func (c *CanonChronicle) AssembleHorizonTracedWithExtras(ctx context.Context, pr
 	allCompressible = append(allCompressible, callbackCandidates...)
 	allCompressible = append(allCompressible, codexCandidates...)
 	allCompressible = append(allCompressible, retroCandidates...)
+	allCompressible = append(allCompressible, retrievedCandidates...)
 
 	// Deterministic sorting: urgent items first, then closer distance to target chapter, then item ID tie-breaker
 	sort.SliceStable(allCompressible, func(i, j int) bool {
@@ -712,6 +768,22 @@ func (c *CanonChronicle) AssembleHorizonTracedWithExtras(ctx context.Context, pr
 		}
 		cbSb.WriteString("【往卷全局记忆 (Volume Retrospectives)】\n")
 		cbSb.WriteString(strings.Join(retainedRetroDescs, "\n\n"))
+	}
+
+	var retainedRetrievedDescs []string
+	for _, item := range allCompressible {
+		if retainedMap[item.id] && strings.HasPrefix(item.id, "retrieved/") {
+			retainedRetrievedDescs = append(retainedRetrievedDescs, item.desc)
+			trace.RetrievedIDs = append(trace.RetrievedIDs, strings.TrimPrefix(item.id, "retrieved/"))
+		}
+	}
+
+	if len(retainedRetrievedDescs) > 0 {
+		if cbSb.Len() > 0 {
+			cbSb.WriteString("\n\n")
+		}
+		cbSb.WriteString("【历史检索记忆 (Retrieved Memory)】\n")
+		cbSb.WriteString(strings.Join(retainedRetrievedDescs, "\n\n"))
 	}
 
 	if compiledText != "" {
