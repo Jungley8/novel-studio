@@ -10,12 +10,14 @@ import (
 )
 
 type mockLLMClient struct {
-	response           string
-	err                error
-	capturedUserPrompt string
+	response             string
+	err                  error
+	capturedUserPrompt   string
+	capturedSystemPrompt string
 }
 
 func (m *mockLLMClient) ChatCompletion(ctx context.Context, model string, systemPrompt, userPrompt string, temp float64) (string, error) {
+	m.capturedSystemPrompt = systemPrompt
 	m.capturedUserPrompt = userPrompt
 	if m.err != nil {
 		return "", m.err
@@ -24,6 +26,7 @@ func (m *mockLLMClient) ChatCompletion(ctx context.Context, model string, system
 }
 
 func (m *mockLLMClient) ChatCompletionWithUsage(ctx context.Context, model string, systemPrompt, userPrompt string, temp float64) (string, engine.TokenUsage, error) {
+	m.capturedSystemPrompt = systemPrompt
 	m.capturedUserPrompt = userPrompt
 	if m.err != nil {
 		return "", engine.TokenUsage{}, m.err
@@ -32,6 +35,7 @@ func (m *mockLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 }
 
 func (m *mockLLMClient) ChatCompletionStream(ctx context.Context, model string, systemPrompt, userPrompt string, temp float64) (<-chan engine.StreamChunk, error) {
+	m.capturedSystemPrompt = systemPrompt
 	m.capturedUserPrompt = userPrompt
 	ch := make(chan engine.StreamChunk, 2)
 	ch <- engine.StreamChunk{Delta: m.response}
@@ -161,6 +165,57 @@ func TestOrchestrator_RenderSceneWithHorizon(t *testing.T) {
 	if usage.TotalTokens != 300 {
 		t.Errorf("expected usage 300, got %d", usage.TotalTokens)
 	}
+
+	t.Run("locked_intent_pov_and_emotion", func(t *testing.T) {
+		mockLocked := &mockLLMClient{response: "漫天风雪呼啸。"}
+		orchLocked := engine.NewOrchestrator(mockLocked)
+		horizonLocked := &engine.CanonHorizon{
+			Project:       p,
+			TargetChapter: 2,
+			ConsumedIntent: &domain.ChapterIntent{
+				POV:          "第一人称",
+				EmotionCurve: []string{"压抑", "爆发"},
+				Status:       domain.IntentStatusLocked,
+			},
+		}
+		_, _, err := orchLocked.RenderSceneWithHorizon(context.Background(), "deepseek-chat", horizonLocked, beats, 2000)
+		if err != nil {
+			t.Fatalf("RenderSceneWithHorizon failed: %v", err)
+		}
+		if !strings.Contains(mockLocked.capturedSystemPrompt, "锁定「第一人称」（作者意图卡指定）") {
+			t.Errorf("expected systemPrompt to contain '锁定「第一人称」（作者意图卡指定）', got: %s", mockLocked.capturedSystemPrompt)
+		}
+		if !strings.Contains(mockLocked.capturedUserPrompt, "【本章意图卡指令（作者已锁定）】") {
+			t.Errorf("expected userPrompt to contain '【本章意图卡指令（作者已锁定）】', got: %s", mockLocked.capturedUserPrompt)
+		}
+		if !strings.Contains(mockLocked.capturedUserPrompt, "情绪曲线：压抑 → 爆发") {
+			t.Errorf("expected userPrompt to contain '情绪曲线：压抑 → 爆发', got: %s", mockLocked.capturedUserPrompt)
+		}
+	})
+
+	t.Run("draft_intent_skipped", func(t *testing.T) {
+		mockDraft := &mockLLMClient{response: "漫天风雪呼啸。"}
+		orchDraft := engine.NewOrchestrator(mockDraft)
+		horizonDraft := &engine.CanonHorizon{
+			Project:       p,
+			TargetChapter: 2,
+			ConsumedIntent: &domain.ChapterIntent{
+				POV:          "第一人称",
+				EmotionCurve: []string{"压抑", "爆发"},
+				Status:       domain.IntentStatusDraft,
+			},
+		}
+		_, _, err := orchDraft.RenderSceneWithHorizon(context.Background(), "deepseek-chat", horizonDraft, beats, 2000)
+		if err != nil {
+			t.Fatalf("RenderSceneWithHorizon failed: %v", err)
+		}
+		if !strings.Contains(mockDraft.capturedSystemPrompt, "锁定第三人称限制视角") {
+			t.Errorf("expected systemPrompt to contain default '锁定第三人称限制视角', got: %s", mockDraft.capturedSystemPrompt)
+		}
+		if strings.Contains(mockDraft.capturedUserPrompt, "【本章意图卡指令") {
+			t.Errorf("expected userPrompt NOT to contain '【本章意图卡指令', got: %s", mockDraft.capturedUserPrompt)
+		}
+	})
 }
 
 func TestOrchestrator_ReviewDraft(t *testing.T) {
@@ -654,6 +709,7 @@ func TestOrchestrator_DeriveBeats_ChapterIntent(t *testing.T) {
 			POV:           "主角",
 			EmotionCurve:  []string{"压抑", "反转"},
 			TensionTarget: 9,
+			Status:        domain.IntentStatusLocked,
 		},
 	}
 	out, err := orch.DeriveBeatsForChapterType(context.Background(), "mock-model", horizon, "暗夜伏击", domain.ChapterTypeEscalation)
@@ -681,6 +737,7 @@ func TestOrchestrator_DeriveBeats_ChapterIntent(t *testing.T) {
 		SelectedPlanText: "暗中联络丹堂长老",
 		ConsumedIntent: &domain.ChapterIntent{
 			Conflict: "拍卖会暗杀",
+			Status:   domain.IntentStatusLocked,
 		},
 	}
 	_, err = orchBoth.DeriveBeatsForChapterType(context.Background(), "mock-model", horizonBoth, "拍卖会暗杀", domain.ChapterTypeEscalation)
@@ -709,5 +766,23 @@ func TestOrchestrator_DeriveBeats_ChapterIntent(t *testing.T) {
 	}
 	if strings.Contains(mockNil.capturedUserPrompt, "【本章意图卡") {
 		t.Errorf("expected prompt NOT to contain intent header when ConsumedIntent is nil, got: %s", mockNil.capturedUserPrompt)
+	}
+
+	// 4. DRAFT ConsumedIntent: prompt should NOT contain intent header
+	mockDraft := &mockLLMClient{response: mockJSON}
+	orchDraft := engine.NewOrchestrator(mockDraft)
+	horizonDraft := &engine.CanonHorizon{
+		TargetChapter: 2,
+		ConsumedIntent: &domain.ChapterIntent{
+			Conflict: "草稿冲突",
+			Status:   domain.IntentStatusDraft,
+		},
+	}
+	_, err = orchDraft.DeriveBeatsForChapterType(context.Background(), "mock-model", horizonDraft, "常规冲突", domain.ChapterTypeEscalation)
+	if err != nil {
+		t.Fatalf("DeriveBeatsForChapterType failed: %v", err)
+	}
+	if strings.Contains(mockDraft.capturedUserPrompt, "【本章意图卡") {
+		t.Errorf("expected prompt NOT to contain intent header when ConsumedIntent is DRAFT, got: %s", mockDraft.capturedUserPrompt)
 	}
 }

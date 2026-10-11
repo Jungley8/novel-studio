@@ -12,12 +12,6 @@ import (
 	"github.com/Jungley8/novel-studio/internal/domain"
 )
 
-// TODO(WIRE): Integration wire point for workshop.go (to be connected after rhythm merges).
-// In ProduceChapter: after settler successfully finishes (SettleFromDraft) and before commit (CommitChapter):
-// Call SummarizeChapter(ctx, client, model, project, chapterIndex, draftText, settledMutation)
-// Save the resulting ChapterSummary into store via store.SaveChapterSummary.
-// If the current chapter marks the end of a volume arc, trigger BuildVolumeRetrospective and persist via store.SaveVolumeRetrospective.
-
 type ChapterSummary = domain.ChapterSummary
 type VolumeRetrospective = domain.VolumeRetrospective
 type VolumeArc = domain.VolumeArc

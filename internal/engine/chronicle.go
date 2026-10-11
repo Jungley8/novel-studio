@@ -52,7 +52,6 @@ type CanonHorizon struct {
 	StyleVaultAnchor    string                  `json:"style_vault_anchor,omitempty"`
 	SelectedPlanText    string                  `json:"selected_plan_text,omitempty"`
 	ConsumedIntent      *domain.ChapterIntent   `json:"consumed_intent,omitempty"`
-	EchoWarnings        []string                `json:"echo_warnings,omitempty"`
 }
 
 // VolumeRetrospectiveStore defines the query interface for volume retrospectives.
@@ -628,33 +627,6 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 		}
 	}
 
-	var echoRecentTexts []string
-	if len(older) > 0 {
-		echoSlice := older
-		if len(echoSlice) > 20 {
-			echoSlice = echoSlice[len(echoSlice)-20:]
-		}
-		for _, ch := range echoSlice {
-			echoRecentTexts = append(echoRecentTexts, ch.Content)
-		}
-	}
-
-	var draftText string
-	for _, ch := range chapters {
-		if ch.ChapterIndex == targetChapter {
-			draftText = ch.Content
-			break
-		}
-	}
-	if draftText == "" {
-		if cp, cpErr := c.store.GetCheckpoint(ctx, projectID, targetChapter); cpErr == nil && cp != nil {
-			draftText = cp.DraftText
-		}
-	}
-
-	echoWarnings := DetectEchoPhrases(echoRecentTexts, draftText)
-	// TODO(FOLLOWUP-echo-feed): EchoWarnings will be piped to review court / quality gate issues in a follow-up task.
-
 	return &CanonHorizon{
 		Project:             project,
 		TargetChapter:       targetChapter,
@@ -673,7 +645,6 @@ func (c *CanonChronicle) AssembleHorizonTraced(ctx context.Context, projectID st
 		CodexRelations:      codexRels,
 		CodexContextText:    strings.TrimSpace(codexSb.String()),
 		StyleVaultAnchor:    styleVaultAnchor,
-		EchoWarnings:        echoWarnings,
 	}, trace, nil
 }
 

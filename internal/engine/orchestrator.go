@@ -270,7 +270,7 @@ func (o *Orchestrator) DeriveBeatsForChapterType(
 		userPrompt = strings.Replace(userPrompt, "请推演输出严格合法的 JSON。", planBlock+"请推演输出严格合法的 JSON。", 1)
 	}
 
-	if horizon != nil && horizon.ConsumedIntent != nil {
+	if horizon != nil && horizon.ConsumedIntent != nil && horizon.ConsumedIntent.Status == domain.IntentStatusLocked {
 		intentBlock := buildChapterIntentPromptBlock(horizon.ConsumedIntent)
 		userPrompt = strings.Replace(userPrompt, "请推演输出严格合法的 JSON。", intentBlock+"请推演输出严格合法的 JSON。", 1)
 	}
@@ -338,7 +338,7 @@ func buildChapterIntentPromptBlock(intent *domain.ChapterIntent) string {
 	}
 	if !isStateMutationEmpty(intent.ExpectedMutation) {
 		if b, err := json.Marshal(intent.ExpectedMutation); err == nil {
-			lines = append(lines, fmt.Sprintf("预期状态变迁：%s", string(b)))
+			lines = append(lines, fmt.Sprintf("预期状态变迁（作者预期，仅供参考；严禁为迁就预期扭曲因果与人物行为，最终以写后结算为准）：%s", string(b)))
 		}
 	}
 	lines = append(lines, "铁律：冲突不得偏离此意图；与正史、状态机、世界公理冲突时以正史为准，并在节拍中体现调整与过渡。")
@@ -503,6 +503,34 @@ func (o *Orchestrator) RenderSceneStream(
 		wordBudgetDirective,
 		string(beatsJSON),
 	)
+
+	if horizon != nil && horizon.ConsumedIntent != nil && horizon.ConsumedIntent.Status == domain.IntentStatusLocked {
+		intent := horizon.ConsumedIntent
+		pov := strings.TrimSpace(intent.POV)
+		if pov != "" && pov != "第三人称限制视角" {
+			povLine := fmt.Sprintf("锁定「%s」（作者意图卡指定），聚焦视角角色的即时感知。", pov)
+			systemPrompt = strings.Replace(systemPrompt, "锁定第三人称限制视角，聚焦主角即时感知。", povLine, 1)
+		}
+
+		var curves []string
+		for _, c := range intent.EmotionCurve {
+			if s := strings.TrimSpace(c); s != "" {
+				curves = append(curves, s)
+			}
+		}
+		if pov != "" || len(curves) > 0 {
+			var intentLines []string
+			intentLines = append(intentLines, "【本章意图卡指令（作者已锁定）】")
+			if pov != "" {
+				intentLines = append(intentLines, fmt.Sprintf("视角：%s", pov))
+			}
+			if len(curves) > 0 {
+				intentLines = append(intentLines, fmt.Sprintf("情绪曲线：%s", strings.Join(curves, " → ")))
+			}
+			intentSection := strings.Join(intentLines, "\n") + "\n\n"
+			userPrompt = strings.Replace(userPrompt, "【必须执行的场景节拍", intentSection+"【必须执行的场景节拍", 1)
+		}
+	}
 
 	ctxRole := ContextWithRole(ctx, RoleWriter)
 	return SafeChatCompletionWithStreamFallback(ctxRole, o.client, writerModel, systemPrompt, userPrompt, 0.75, onDelta)
