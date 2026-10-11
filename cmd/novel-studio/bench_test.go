@@ -186,7 +186,7 @@ func TestRunBenchCLI_Smoke(t *testing.T) {
 	}
 }
 
-// TestOpenBenchSnapshot 验证快照复制一致性、清理逻辑与不存在文件报错
+// TestOpenBenchSnapshot 验证真实 SQLite 快照逻辑等价性、清理逻辑与不存在文件报错
 func TestOpenBenchSnapshot(t *testing.T) {
 	// 1. 不存在的文件应该报错
 	_, _, err := openBenchSnapshot(filepath.Join(t.TempDir(), "non-existent.db"))
@@ -194,12 +194,30 @@ func TestOpenBenchSnapshot(t *testing.T) {
 		t.Fatalf("expected error for non-existent source, got nil")
 	}
 
-	// 2. 正常文件流式复制与清理验证
+	// 2. 真实 SQLite fixture 逻辑等价性与清理验证
 	tempDir := t.TempDir()
-	srcPath := filepath.Join(tempDir, "source.db")
-	content := []byte("SQLITE-TEST-PAYLOAD-FOR-SNAPSHOT-ISOLATION-0123456789")
-	if err := os.WriteFile(srcPath, content, 0644); err != nil {
-		t.Fatalf("failed to write source fixture: %v", err)
+	srcPath := filepath.Join(tempDir, "novel.db")
+	s, err := store.NewSQLiteStore(srcPath)
+	if err != nil {
+		t.Fatalf("failed to init store: %v", err)
+	}
+
+	ctx := context.Background()
+	proj := &domain.Project{
+		ID:                    "proj-snap-fixture",
+		Title:                 "真实快照作品",
+		TargetPlatform:        "起点仙侠",
+		DefaultWordsTarget:    2000,
+		DefaultNarrativeStyle: "hardboiled",
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+	}
+	if err := s.SaveProject(ctx, proj); err != nil {
+		_ = s.Close()
+		t.Fatalf("failed to save project: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("failed to close store: %v", err)
 	}
 
 	snapPath, cleanup, err := openBenchSnapshot(srcPath)
@@ -210,13 +228,18 @@ func TestOpenBenchSnapshot(t *testing.T) {
 		t.Fatalf("expected non-empty snapshot path")
 	}
 
-	// 断言快照文件存在且内容一致
-	snapData, err := os.ReadFile(snapPath)
+	// 断言快照中项目可读且逻辑等价
+	snapStore, err := store.NewSQLiteStore(snapPath)
 	if err != nil {
-		t.Fatalf("failed to read snapshot file: %v", err)
+		t.Fatalf("failed to open snapshot store: %v", err)
 	}
-	if !bytes.Equal(content, snapData) {
-		t.Errorf("snapshot content mismatch: expected %q, got %q", content, snapData)
+	snapProj, err := snapStore.GetProject(ctx, proj.ID)
+	_ = snapStore.Close()
+	if err != nil {
+		t.Fatalf("failed to get project from snapshot: %v", err)
+	}
+	if snapProj == nil || snapProj.Title != proj.Title {
+		t.Errorf("expected project title %q, got %v", proj.Title, snapProj)
 	}
 
 	// 执行 cleanup 并断言临时目录被清理
@@ -224,6 +247,128 @@ func TestOpenBenchSnapshot(t *testing.T) {
 	cleanup()
 	if _, err := os.Stat(snapDir); !os.IsNotExist(err) {
 		t.Errorf("expected snapshot directory %s to be removed by cleanup, got err: %v", snapDir, err)
+	}
+}
+
+// TestOpenBenchSnapshot_SeesUncheckpointedWAL 验证未 checkpoint 的 WAL 帧在快照中可见，且源库零写入
+func TestOpenBenchSnapshot_SeesUncheckpointedWAL(t *testing.T) {
+	tempDir := t.TempDir()
+	src := filepath.Join(tempDir, "novel.db")
+
+	s, err := store.NewSQLiteStore(src)
+	if err != nil {
+		t.Fatalf("failed to init store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	proj := &domain.Project{
+		ID:                    "proj-wal-001",
+		Title:                 "WAL未检查点作品",
+		TargetPlatform:        "起点仙侠",
+		DefaultWordsTarget:    2000,
+		DefaultNarrativeStyle: "hardboiled",
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+	}
+	if err := s.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("save project failed: %v", err)
+	}
+
+	uniqueContent := "UNIQUE-WAL-UNCHECKPOINTED-PAYLOAD-9876543210"
+	ch := &domain.Chapter{
+		ID:           "ch-wal-001",
+		ProjectID:    proj.ID,
+		ChapterIndex: 1,
+		Title:        "第一章：雪夜长剑",
+		Content:      uniqueContent,
+		WordCount:    2100,
+		Beats: []domain.SceneBeat{
+			{Phase: "绝地反杀", Tension: 9, Action: "拔剑斩敌"},
+		},
+		CreatedAt: time.Now(),
+	}
+	if err := s.SaveChapter(ctx, ch); err != nil {
+		t.Fatalf("save chapter failed: %v", err)
+	}
+
+	// 断言 src+"-wal" 存在且 Size() > 0（确保场景真的是未 checkpoint 的 WAL）
+	walPath := src + "-wal"
+	walFi, err := os.Stat(walPath)
+	if err != nil {
+		t.Fatalf("expected WAL file to exist, got err: %v", err)
+	}
+	if walFi.Size() <= 0 {
+		t.Fatalf("expected WAL file size > 0, got %d", walFi.Size())
+	}
+
+	// 记录跑前源目录文件名集合与源文件字节
+	entriesBefore, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatalf("failed to read dir before snapshot: %v", err)
+	}
+	filesBefore := make(map[string]bool)
+	for _, e := range entriesBefore {
+		filesBefore[e.Name()] = true
+	}
+
+	dbBytesBefore, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("failed to read source db before snapshot: %v", err)
+	}
+	walBytesBefore, err := os.ReadFile(walPath)
+	if err != nil {
+		t.Fatalf("failed to read source wal before snapshot: %v", err)
+	}
+
+	// 生成快照
+	snapPath, cleanup, err := openBenchSnapshot(src)
+	if err != nil {
+		t.Fatalf("openBenchSnapshot failed: %v", err)
+	}
+	defer cleanup()
+
+	// 用 NewSQLiteStore 打开快照并断言章节与其唯一内容可见
+	snapStore, err := store.NewSQLiteStore(snapPath)
+	if err != nil {
+		t.Fatalf("failed to open snapshot store: %v", err)
+	}
+	gotCh, err := snapStore.GetChapter(ctx, ch.ProjectID, ch.ChapterIndex)
+	_ = snapStore.Close()
+	if err != nil {
+		t.Fatalf("failed to get chapter from snapshot: %v", err)
+	}
+	if gotCh == nil || gotCh.Content != uniqueContent {
+		t.Fatalf("expected chapter content %q in snapshot, got %+v", uniqueContent, gotCh)
+	}
+
+	// 再读源两文件字节（after）→ 与 before 逐字节相等
+	// 注：-shm 是读标记共享内存、天然可能变化，不应纳入断言
+	dbBytesAfter, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("failed to read source db after snapshot: %v", err)
+	}
+	if !bytes.Equal(dbBytesBefore, dbBytesAfter) {
+		t.Fatalf("source db bytes modified during snapshot backup!")
+	}
+
+	walBytesAfter, err := os.ReadFile(walPath)
+	if err != nil {
+		t.Fatalf("failed to read source wal after snapshot: %v", err)
+	}
+	if !bytes.Equal(walBytesBefore, walBytesAfter) {
+		t.Fatalf("source wal bytes modified during snapshot backup!")
+	}
+
+	// 记录源目录文件名集合（跑前/跑后）→ 断言无新增文件（不许 -wal/-shm 等落在数据目录）
+	entriesAfter, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatalf("failed to read dir after snapshot: %v", err)
+	}
+	for _, e := range entriesAfter {
+		if !filesBefore[e.Name()] {
+			t.Errorf("unexpected new file in source data directory after snapshot: %s", e.Name())
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Jungley8/novel-studio/internal/engine"
 	"github.com/Jungley8/novel-studio/internal/store"
+	sqlite "modernc.org/sqlite"
 )
 
 type benchJSONReport struct {
@@ -20,8 +22,12 @@ type benchJSONReport struct {
 	*engine.BenchReport
 }
 
-// openBenchSnapshot copies the source SQLite database file to an isolated temporary directory
-// and returns the snapshot file path along with a cleanup function to remove the directory.
+type onlineBackuper interface {
+	NewBackup(dstUri string) (*sqlite.Backup, error)
+}
+
+// openBenchSnapshot creates an isolated online backup snapshot of the SQLite database
+// via a read-only source connection and returns the snapshot file path along with a cleanup function.
 func openBenchSnapshot(src string) (string, func(), error) {
 	if _, err := os.Stat(src); err != nil {
 		return "", nil, err
@@ -37,27 +43,52 @@ func openBenchSnapshot(src string) (string, func(), error) {
 		_ = os.RemoveAll(tmpDir)
 	}
 
-	srcFile, err := os.Open(src)
+	dsn := src + "?mode=ro&_pragma=busy_timeout(5000)&_pragma=query_only(1)"
+
+	srcDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("打开源数据库失败: %w", err)
 	}
-	defer srcFile.Close()
+	defer srcDB.Close()
 
-	dstFile, err := os.Create(snapshotPath)
+	ctx := context.Background()
+	conn, err := srcDB.Conn(ctx)
 	if err != nil {
 		cleanup()
-		return "", nil, fmt.Errorf("创建快照文件失败: %w", err)
+		return "", nil, fmt.Errorf("获取源数据库连接失败: %w", err)
 	}
+	defer conn.Close()
 
-	if _, err := io.Copy(dstFile, srcFile); err != nil {
-		_ = dstFile.Close()
+	err = conn.Raw(func(driverConn any) error {
+		b, ok := driverConn.(onlineBackuper)
+		if !ok {
+			return fmt.Errorf("驱动连接 %T 未实现 onlineBackuper 接口", driverConn)
+		}
+
+		bck, err := b.NewBackup(snapshotPath)
+		if err != nil {
+			return fmt.Errorf("创建在线备份失败: %w", err)
+		}
+
+		if _, err := bck.Step(-1); err != nil {
+			_ = bck.Finish()
+			return fmt.Errorf("执行在线备份失败: %w", err)
+		}
+
+		dstConn, err := bck.Commit()
+		if err != nil {
+			return fmt.Errorf("提交在线备份失败: %w", err)
+		}
+
+		if err := dstConn.Close(); err != nil {
+			return fmt.Errorf("关闭快照目标连接失败: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
 		cleanup()
-		return "", nil, fmt.Errorf("复制快照文件失败: %w", err)
-	}
-	if err := dstFile.Close(); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("关闭快照文件失败: %w", err)
+		return "", nil, fmt.Errorf("备份数据库失败: %w", err)
 	}
 
 	return snapshotPath, cleanup, nil
