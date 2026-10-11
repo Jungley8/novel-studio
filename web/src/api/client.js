@@ -198,6 +198,7 @@ export const api = {
   getAnalyticsHeatmap: (projectId) => apiFetch(`/api/projects/${projectId}/analytics/heatmap`),
   getAnalyticsTension: (projectId) => apiFetch(`/api/projects/${projectId}/analytics/tension`),
   getBenchReport: (projectId) => apiFetch(`/api/projects/${projectId}/bench`),
+  getProjectMetrics: (projectId) => apiFetch(`/api/projects/${projectId}/metrics`),
 
   // Activity Ledger (内容生产与变更时间线)
   listActivity: (projectId, params = {}) => {

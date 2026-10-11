@@ -8,80 +8,14 @@ import (
 	"path/filepath"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
+	"github.com/Jungley8/novel-studio/internal/metrics"
 	"github.com/Jungley8/novel-studio/internal/store"
 )
 
-// MetricsSummary encapsulates aggregated chapter quality statistics for a project.
-type MetricsSummary struct {
-	Chapters                       int
-	CommittedChapters              int
-	NeedsHumanChapters             int
-	TechnicalBlockedChapters       int
-	ProducedChapters               int
-	UnderTargetChapters            int
-	RewriteChapters                int
-	UnclosedReconciliationChapters int
-	CompactionFailedChapters       int
-	WordPassRate                   float64 // 1 - UnderTarget/Chapters
-	AvgScore                       float64
-	RewriteRate                    float64
-	HookClaimsTotal                int
-	HookClaimsValidated            int
-	HookClaimsRejected             int
-	HookPassRate                   float64
-}
+type MetricsSummary = metrics.Summary
 
-// aggregateMetrics aggregates chapter quality metrics for reporting.
 func aggregateMetrics(items []*domain.ChapterQualityMetrics) MetricsSummary {
-	var summary MetricsSummary
-	if len(items) == 0 {
-		return summary
-	}
-
-	summary.Chapters = len(items)
-	totalScore := 0
-
-	for _, it := range items {
-		if it == nil {
-			continue
-		}
-		switch it.Outcome {
-		case domain.ChapterOutcomeCommitted:
-			summary.CommittedChapters++
-		case domain.ChapterOutcomeNeedsHuman:
-			summary.NeedsHumanChapters++
-		case domain.ChapterOutcomeTechnicalBlocked:
-			summary.TechnicalBlockedChapters++
-		case domain.ChapterOutcomeProduced:
-			summary.ProducedChapters++
-		}
-		if it.UnderTarget {
-			summary.UnderTargetChapters++
-		}
-		if it.RewriteLoops > 0 {
-			summary.RewriteChapters++
-		}
-		if it.UnresolvedObservations > 0 {
-			summary.UnclosedReconciliationChapters++
-		}
-		if it.CompactionFailed {
-			summary.CompactionFailedChapters++
-		}
-		totalScore += it.Score
-		summary.HookClaimsTotal += it.HookClaimsTotal
-		summary.HookClaimsValidated += it.HookClaimsValidated
-		summary.HookClaimsRejected += it.HookClaimsRejected
-	}
-
-	summary.WordPassRate = 1.0 - float64(summary.UnderTargetChapters)/float64(summary.Chapters)
-	summary.AvgScore = float64(totalScore) / float64(summary.Chapters)
-	summary.RewriteRate = float64(summary.RewriteChapters) / float64(summary.Chapters)
-
-	if summary.HookClaimsTotal > 0 {
-		summary.HookPassRate = float64(summary.HookClaimsValidated) / float64(summary.HookClaimsTotal)
-	}
-
-	return summary
+	return metrics.Aggregate(items)
 }
 
 func printProjectMetrics(projectID, projectTitle string, summary MetricsSummary) {

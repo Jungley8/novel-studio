@@ -137,7 +137,8 @@ import {
   ListChecks,
   Rocket,
   AlertTriangle,
-  CalendarClock
+  CalendarClock,
+  Gauge
 } from 'lucide-vue-next';
 
 const navGroups = computed(() => [
@@ -177,6 +178,7 @@ const navGroups = computed(() => [
       { id: 'activity', label: '动态时间线', desc: '内容生产与变更留痕，可看全文详情', icon: History },
       { id: 'graph', label: '关系图谱', desc: '实体与势力错综关联图', icon: Network, badge: state.codexRelations.length ? `${state.codexRelations.length}条` : '' },
       { id: 'analytics', label: '全书体检', desc: '篇幅节奏、字数与走势', icon: BarChart3 },
+      { id: 'metrics', label: '质量指标', desc: '章节终态、达标率与返工走势', icon: Gauge },
     ]
   },
   {
