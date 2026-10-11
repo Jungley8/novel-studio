@@ -242,14 +242,9 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		})
 	}
 
-	// 1. Synthesize Canon Horizon
-	horizon, err := w.chronicle.AssembleHorizon(ctx, req.ProjectID, req.ChapterIndex)
-	if err != nil {
-		return nil, fmt.Errorf("assemble canon horizon failed: %w", err)
-	}
-	if req.NarrativeStyle != "" {
-		horizon.NarrativeTone = req.NarrativeStyle
-	}
+	// 1. Data loading for plan and intent (prior to horizon assembly for budgeting)
+	var selectedPlanText string
+	var planEmits []WorkshopEvent
 
 	// 1.1 Inject Active Narrative Tree Plan (if available)
 	// 取活跃剧情树计划（若从 checkpoint 恢复且已有 beats，虽重取计划注入 horizon，但因 beats 已存在会跳过 DeriveBeats 推演，自然跳过再次影响）
@@ -260,31 +255,75 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		if pErr != nil {
 			planInjectWarning = fmt.Sprintf("【计划注入警告】获取活跃计划失败: %v", pErr)
 		} else if plan != nil && plan.Status == domain.PlanStatusActive && strings.TrimSpace(plan.PlanText) != "" {
-			horizon.SelectedPlanText = plan.PlanText
-			emit(WorkshopEvent{
+			selectedPlanText = plan.PlanText
+			planEmits = append(planEmits, WorkshopEvent{
 				Phase:   PhaseHorizon,
 				Message: "已注入作者选定的发展路线（剧情树计划），本章节拍将向该方向对齐",
 			})
 		}
 	}
 
+	// 1.2 Chapter Intent Card (if available)
+	var consumedIntent *domain.ChapterIntent
+	var intentEmits []WorkshopEvent
+
 	if intent, iErr := w.store.GetChapterIntent(ctx, req.ProjectID, req.ChapterIndex); iErr != nil {
 		intentWarning = fmt.Sprintf("【意图卡警告】读取意图卡失败: %v", iErr)
 	} else if intent != nil {
 		switch intent.Status {
 		case domain.IntentStatusLocked:
-			horizon.ConsumedIntent = intent
-			emit(WorkshopEvent{Phase: PhaseHorizon, Message: fmt.Sprintf("已装载第 %d 章意图卡（状态 LOCKED）", req.ChapterIndex)})
+			consumedIntent = intent
+			intentEmits = append(intentEmits, WorkshopEvent{Phase: PhaseHorizon, Message: fmt.Sprintf("已装载第 %d 章意图卡（状态 LOCKED）", req.ChapterIndex)})
 		case domain.IntentStatusDraft:
 			intentWarning = fmt.Sprintf("【意图卡提示】第 %d 章意图卡为草稿（DRAFT，未锁定），已跳过注入；锁定后本章节拍才会对齐该意图", req.ChapterIndex)
-			emit(WorkshopEvent{Phase: PhaseHorizon, Message: fmt.Sprintf("第 %d 章意图卡为草稿（DRAFT，未锁定），已跳过注入", req.ChapterIndex)})
+			intentEmits = append(intentEmits, WorkshopEvent{Phase: PhaseHorizon, Message: fmt.Sprintf("第 %d 章意图卡为草稿（DRAFT，未锁定），已跳过注入", req.ChapterIndex)})
 		case domain.IntentStatusStale:
 			intentWarning = fmt.Sprintf("【意图卡警告】第 %d 章意图卡已过期（STALE，上游卷纲已变更），已跳过注入；请重推意图卡并重新锁定后再生产", req.ChapterIndex)
-			emit(WorkshopEvent{Phase: PhaseHorizon, Message: fmt.Sprintf("第 %d 章意图卡已过期（STALE，上游卷纲已变更），已跳过注入", req.ChapterIndex)})
+			intentEmits = append(intentEmits, WorkshopEvent{Phase: PhaseHorizon, Message: fmt.Sprintf("第 %d 章意图卡已过期（STALE，上游卷纲已变更），已跳过注入", req.ChapterIndex)})
 		default:
 			intentWarning = fmt.Sprintf("【意图卡警告】第 %d 章意图卡状态非法（%q），已跳过注入（Fail-Closed）", req.ChapterIndex, intent.Status)
-			emit(WorkshopEvent{Phase: PhaseHorizon, Message: fmt.Sprintf("第 %d 章意图卡状态非法（%q），已跳过注入", req.ChapterIndex, intent.Status)})
+			intentEmits = append(intentEmits, WorkshopEvent{Phase: PhaseHorizon, Message: fmt.Sprintf("第 %d 章意图卡状态非法（%q），已跳过注入", req.ChapterIndex, intent.Status)})
 		}
+	}
+
+	var extras []AccountedExtra
+	if selectedPlanText != "" {
+		if block := buildPlanPromptBlock(selectedPlanText); block != "" {
+			extras = append(extras, AccountedExtra{
+				ID:   "inject/plan",
+				Text: block,
+			})
+		}
+	}
+	if consumedIntent != nil && consumedIntent.Status == domain.IntentStatusLocked {
+		if block := buildChapterIntentPromptBlock(consumedIntent); block != "" {
+			extras = append(extras, AccountedExtra{
+				ID:   "inject/intent",
+				Text: block,
+			})
+		}
+	}
+
+	// 1.3 Synthesize Canon Horizon with accounted extras
+	horizon, err := w.chronicle.AssembleHorizonWithExtras(ctx, req.ProjectID, req.ChapterIndex, extras...)
+	if err != nil {
+		return nil, fmt.Errorf("assemble canon horizon failed: %w", err)
+	}
+	if req.NarrativeStyle != "" {
+		horizon.NarrativeTone = req.NarrativeStyle
+	}
+	if selectedPlanText != "" {
+		horizon.SelectedPlanText = selectedPlanText
+	}
+	if consumedIntent != nil {
+		horizon.ConsumedIntent = consumedIntent
+	}
+
+	for _, ev := range planEmits {
+		emit(ev)
+	}
+	for _, ev := range intentEmits {
+		emit(ev)
 	}
 
 	emit(WorkshopEvent{Phase: PhaseHorizon, Message: "正史视界组装完成 (3章密封正史与开放伏笔已就绪)"})

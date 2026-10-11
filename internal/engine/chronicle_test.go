@@ -1735,3 +1735,114 @@ func TestCanonChronicle_AcctFix_CodexRelationsAccounted(t *testing.T) {
 		t.Errorf("expected 1 retained CodexRelations entry, got %d", len(horizonRel.CodexRelations))
 	}
 }
+
+// TestCanonChronicle_AcctFix_TracedWithExtras verifies that injected extras (plan/intent)
+// are accurately accounted as protected context tokens and fail-closed on budget overflow.
+func TestCanonChronicle_AcctFix_TracedWithExtras(t *testing.T) {
+	mockStore := newAcctAnchorBase()
+	chronicle := NewCanonChronicle(mockStore)
+	chronicle.SetBudgetTokens(12000)
+
+	// 1. Run without extras
+	horizonBase, traceBase, err := chronicle.AssembleHorizonTraced(context.Background(), "p_acct_anchor", 2)
+	if err != nil {
+		t.Fatalf("AssembleHorizonTraced failed: %v", err)
+	}
+	if horizonBase == nil || traceBase == nil {
+		t.Fatalf("expected non-nil horizon and trace")
+	}
+
+	planBlock := buildPlanPromptBlock("主角假意投降魔教，借雷劫暗算魔尊")
+	intent := &domain.ChapterIntent{
+		Conflict: "魔宗大殿夺宝",
+		POV:      "韩立",
+		Status:   domain.IntentStatusLocked,
+	}
+	intentBlock := buildChapterIntentPromptBlock(intent)
+
+	extraPlan := AccountedExtra{ID: "inject/plan", Text: planBlock}
+	extraIntent := AccountedExtra{ID: "inject/intent", Text: intentBlock}
+	extraEmpty := AccountedExtra{ID: "inject/empty", Text: ""}
+
+	planTokens := domain.EstimateTokens(planBlock)
+	intentTokens := domain.EstimateTokens(intentBlock)
+
+	// 2. Run with extras (including empty extra to test that empty extras do not pollute)
+	horizonWithExtras, traceWithExtras, err := chronicle.AssembleHorizonTracedWithExtras(
+		context.Background(), "p_acct_anchor", 2, extraPlan, extraIntent, extraEmpty,
+	)
+	if err != nil {
+		t.Fatalf("AssembleHorizonTracedWithExtras failed: %v", err)
+	}
+	if horizonWithExtras == nil || traceWithExtras == nil {
+		t.Fatalf("expected non-nil horizon and trace with extras")
+	}
+
+	// Verify tokens are precisely accounted
+	expectedTokenDiff := planTokens + intentTokens
+	actualTokenDiff := traceWithExtras.EstimatedTokens - traceBase.EstimatedTokens
+	if actualTokenDiff != expectedTokenDiff {
+		t.Errorf("token diff mismatch: got %d, want %d (plan=%d, intent=%d)",
+			actualTokenDiff, expectedTokenDiff, planTokens, intentTokens)
+	}
+
+	// Verify ProtectedIDs contains inject/plan and inject/intent, but NOT inject/empty
+	hasPlan := false
+	hasIntent := false
+	hasEmpty := false
+	for _, id := range traceWithExtras.ProtectedIDs {
+		if id == "inject/plan" {
+			hasPlan = true
+		}
+		if id == "inject/intent" {
+			hasIntent = true
+		}
+		if id == "inject/empty" {
+			hasEmpty = true
+		}
+	}
+	if !hasPlan {
+		t.Errorf("expected ProtectedIDs to contain 'inject/plan', got %v", traceWithExtras.ProtectedIDs)
+	}
+	if !hasIntent {
+		t.Errorf("expected ProtectedIDs to contain 'inject/intent', got %v", traceWithExtras.ProtectedIDs)
+	}
+	if hasEmpty {
+		t.Errorf("expected ProtectedIDs NOT to contain 'inject/empty', got %v", traceWithExtras.ProtectedIDs)
+	}
+
+	// 3. Budget overflow test:
+	// Probe exact base protected tokens without extras using budget=1
+	chronicleProbe := NewCanonChronicle(mockStore)
+	chronicleProbe.SetBudgetTokens(1)
+	_, traceProbe, errProbe := chronicleProbe.AssembleHorizonTraced(context.Background(), "p_acct_anchor", 2)
+	if errProbe == nil || traceProbe == nil {
+		t.Fatalf("expected protected-overflow probe error, got: %v", errProbe)
+	}
+	baseProtectedTokens := traceProbe.EstimatedTokens
+
+	// Set budget to exactly baseProtectedTokens. Without extras it passes protected check.
+	// But with extraPlan it must fail-closed with protected-overflow.
+	chronicleOverflow := NewCanonChronicle(mockStore)
+	chronicleOverflow.SetBudgetTokens(baseProtectedTokens)
+
+	horizonOF, traceOF, errOF := chronicleOverflow.AssembleHorizonTracedWithExtras(
+		context.Background(), "p_acct_anchor", 2, extraPlan,
+	)
+	if errOF == nil {
+		t.Fatalf("expected protected-overflow error when budget (%d) < baseProtected (%d) + extraPlan (%d), got nil",
+			baseProtectedTokens, baseProtectedTokens, planTokens)
+	}
+	if horizonOF != nil {
+		t.Errorf("expected nil horizon on protected overflow, got %v", horizonOF)
+	}
+	if traceOF == nil {
+		t.Fatalf("expected non-nil trace on protected overflow")
+	}
+	if !traceOF.Truncated {
+		t.Errorf("expected traceOF.Truncated=true")
+	}
+	if !strings.Contains(errOF.Error(), "inject/plan") {
+		t.Errorf("expected error to mention 'inject/plan', got: %v", errOF)
+	}
+}

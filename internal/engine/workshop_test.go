@@ -3030,3 +3030,247 @@ func TestChapterWorkshop_AltRetry_BlockedHistoryStillPicksLoopCandidate(t *testi
 		t.Errorf("expected retry (altType) to use AFTERMATH, got sys=%q", mockClient.beatsSys[1])
 	}
 }
+
+func TestChapterWorkshop_PlanAndIntentAccountedBudget(t *testing.T) {
+	setupWorkshopWithPlanAndIntent := func(plan *domain.ActivePlan, intent *domain.ChapterIntent) (*ChapterWorkshop, *mockWorkshopLLMClient, *mockCheckpointWorkshopStore, *[]WorkshopEvent) {
+		beatsResp := `{
+			"beats": [
+				{"phase": "蓄力压迫", "tension": 6, "action": "反派逼近洞府", "expectation_broken": "反派预料主角会求饶"},
+				{"phase": "绝地反转", "tension": 9, "action": "主角引动大阵反杀", "expectation_broken": "反派被镇压"}
+			],
+			"state_mutation": {
+				"inventory_delta": "+战利品",
+				"power_delta": "威名大振"
+			}
+		}`
+		reviewResp := `{
+			"verdict": "ACCEPTED",
+			"score": 90,
+			"issues": [],
+			"suggestions": "节奏明快，表现良好"
+		}`
+		mockClient := &mockWorkshopLLMClient{
+			beatsJSON:   beatsResp,
+			renderDraft: "夜幕低垂。林凡指尖轻扣石壁。阵纹骤亮，雷光咆哮如龙！",
+			reviewJSON:  reviewResp,
+		}
+		orch := NewOrchestrator(mockClient)
+		qGate := NewQualityGate(mockClient, nil)
+		mockStore := &mockCheckpointWorkshopStore{
+			mockChronicleStore: &mockChronicleStore{
+				project: &domain.Project{
+					ID:             "p-planacct",
+					Title:          "万域封神",
+					TargetPlatform: "番茄脑洞",
+					WorldRules:     "杀生夺灵，因果必报",
+				},
+				codexEntries: []*domain.CodexEntry{
+					{
+						ID:        "codex_p-planacct_pro",
+						ProjectID: "p-planacct",
+						Category:  domain.CategoryCharacter,
+						Archetype: "PROTAGONIST",
+						Name:      "林凡",
+						Realm:     "练气圆满",
+						Inventory: "青玉短剑",
+					},
+				},
+				chapters: []*domain.Chapter{},
+				hooks:    []*domain.PlotHook{},
+			},
+			activePlan: plan,
+		}
+		if intent != nil {
+			_ = mockStore.SaveChapterIntent(context.Background(), intent)
+		}
+		chronicle := NewCanonChronicle(mockStore)
+		workshop := NewChapterWorkshop(orch, chronicle, qGate, mockStore)
+		var events []WorkshopEvent
+		return workshop, mockClient, mockStore, &events
+	}
+
+	baseReq := func(events *[]WorkshopEvent) WorkshopProduceRequest {
+		return WorkshopProduceRequest{
+			ProjectID:       "p-planacct",
+			ChapterIndex:    1,
+			CoreConflict:    "宗门反派夜袭抢夺古经",
+			ReasoningModel:  "mock-r1",
+			WriterModel:     "mock-v3",
+			ReviewerModel:   "mock-reviewer",
+			WordsTarget:     2000,
+			AutoCommit:      false,
+			MaxRewriteLoops: 1,
+			OnProgress: func(ev WorkshopEvent) {
+				*events = append(*events, ev)
+			},
+		}
+	}
+
+	t.Run("case1_locked_intent_active_plan_normal_budget", func(t *testing.T) {
+		plan := &domain.ActivePlan{
+			ProjectID: "p-planacct",
+			Status:    domain.PlanStatusActive,
+			PlanText:  "计划：主角假意投降魔教，实则借雷劫暗算魔尊",
+		}
+		intent := &domain.ChapterIntent{
+			ProjectID:    "p-planacct",
+			ChapterIndex: 1,
+			VolumeIndex:  1,
+			Conflict:     "魔宗大殿夺宝",
+			POV:          "林凡",
+			Status:       domain.IntentStatusLocked,
+		}
+		ws, client, _, events := setupWorkshopWithPlanAndIntent(plan, intent)
+		ws.chronicle.SetBudgetTokens(12000)
+
+		res, err := ws.ProduceChapter(context.Background(), baseReq(events))
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+		if res.Audit == nil {
+			t.Fatalf("expected non-nil Audit report")
+		}
+
+		// Prompt assertions
+		if !strings.Contains(client.capturedBeatsPrompt, "作者选定的发展路线") {
+			t.Errorf("expected beats prompt to contain plan header, got: %s", client.capturedBeatsPrompt)
+		}
+		if !strings.Contains(client.capturedBeatsPrompt, "计划：主角假意投降魔教，实则借雷劫暗算魔尊") {
+			t.Errorf("expected beats prompt to contain plan text, got: %s", client.capturedBeatsPrompt)
+		}
+		if !strings.Contains(client.capturedBeatsPrompt, "【本章意图卡") {
+			t.Errorf("expected beats prompt to contain intent header, got: %s", client.capturedBeatsPrompt)
+		}
+		if !strings.Contains(client.capturedBeatsPrompt, "魔宗大殿夺宝") {
+			t.Errorf("expected beats prompt to contain intent conflict, got: %s", client.capturedBeatsPrompt)
+		}
+
+		// Event ordering assertions:
+		// plan event -> intent event -> horizon assembled event
+		planIdx, intentIdx, assembledIdx := -1, -1, -1
+		for i, ev := range *events {
+			if strings.Contains(ev.Message, "已注入作者选定的发展路线") {
+				planIdx = i
+			}
+			if strings.Contains(ev.Message, "已装载第 1 章意图卡（状态 LOCKED）") {
+				intentIdx = i
+			}
+			if strings.Contains(ev.Message, "正史视界组装完成") {
+				assembledIdx = i
+			}
+		}
+		if planIdx == -1 {
+			t.Errorf("expected plan injection event to be emitted")
+		}
+		if intentIdx == -1 {
+			t.Errorf("expected intent loaded event to be emitted")
+		}
+		if assembledIdx == -1 {
+			t.Errorf("expected horizon assembled event to be emitted")
+		}
+		if !(planIdx < intentIdx && intentIdx < assembledIdx) {
+			t.Errorf("expected event order plan (%d) < intent (%d) < assembled (%d)", planIdx, intentIdx, assembledIdx)
+		}
+	})
+
+	t.Run("case2_budget_exceeded_by_extras_fail_closed", func(t *testing.T) {
+		plan := &domain.ActivePlan{
+			ProjectID: "p-planacct",
+			Status:    domain.PlanStatusActive,
+			PlanText:  "计划：主角假意投降魔教，实则借雷劫暗算魔尊",
+		}
+		intent := &domain.ChapterIntent{
+			ProjectID:    "p-planacct",
+			ChapterIndex: 1,
+			VolumeIndex:  1,
+			Conflict:     "魔宗大殿夺宝",
+			POV:          "林凡",
+			Status:       domain.IntentStatusLocked,
+		}
+		ws, _, _, events := setupWorkshopWithPlanAndIntent(plan, intent)
+
+		// Probe base protected tokens without extras
+		probeChron := NewCanonChronicle(ws.store)
+		probeChron.SetBudgetTokens(1)
+		_, traceProbe, errProbe := probeChron.AssembleHorizonTraced(context.Background(), "p-planacct", 1)
+		if errProbe == nil || traceProbe == nil {
+			t.Fatalf("expected protected overflow probe error, got: %v", errProbe)
+		}
+		baseProtectedTokens := traceProbe.EstimatedTokens
+
+		// Set budget to baseProtectedTokens + 5.
+		// Without extras, baseProtectedTokens <= budget would pass.
+		// But with extras (plan + intent), totalProtected > budget, so AssembleHorizonWithExtras must fail-closed.
+		ws.chronicle.SetBudgetTokens(baseProtectedTokens + 5)
+
+		_, err := ws.ProduceChapter(context.Background(), baseReq(events))
+		if err == nil {
+			t.Fatalf("expected ProduceChapter to fail with budget overflow, got nil")
+		}
+		if !strings.Contains(err.Error(), "assemble canon horizon failed") {
+			t.Errorf("expected error to contain 'assemble canon horizon failed', got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "context budget exceeded by protected items") {
+			t.Errorf("expected error to mention protected overflow, got: %v", err)
+		}
+
+		// Fail-closed event assertion: NO plan or intent injected events emitted before assemble failed!
+		for _, ev := range *events {
+			if strings.Contains(ev.Message, "已注入作者选定的发展路线") {
+				t.Errorf("fail-closed violation: emitted plan injection event despite assemble failure: %s", ev.Message)
+			}
+			if strings.Contains(ev.Message, "已装载第 1 章意图卡") {
+				t.Errorf("fail-closed violation: emitted intent load event despite assemble failure: %s", ev.Message)
+			}
+		}
+	})
+
+	t.Run("case3_draft_intent_no_plan_zero_extras", func(t *testing.T) {
+		intent := &domain.ChapterIntent{
+			ProjectID:    "p-planacct",
+			ChapterIndex: 1,
+			VolumeIndex:  1,
+			Conflict:     "草稿冲突",
+			POV:          "林凡",
+			Status:       domain.IntentStatusDraft,
+		}
+		ws, client, _, events := setupWorkshopWithPlanAndIntent(nil, intent)
+
+		// Probe base protected tokens
+		probeChron := NewCanonChronicle(ws.store)
+		probeChron.SetBudgetTokens(1)
+		_, traceProbe, _ := probeChron.AssembleHorizonTraced(context.Background(), "p-planacct", 1)
+		baseProtectedTokens := traceProbe.EstimatedTokens
+
+		// Set budget to baseProtectedTokens + 10.
+		// Since plan is nil and intent is DRAFT, extras is ZERO.
+		// Thus totalProtected = baseProtectedTokens <= budget, so it must SUCCEED!
+		ws.chronicle.SetBudgetTokens(baseProtectedTokens + 10)
+
+		res, err := ws.ProduceChapter(context.Background(), baseReq(events))
+		if err != nil {
+			t.Fatalf("expected ProduceChapter to succeed with zero extras under tight budget, got: %v", err)
+		}
+		if res.Audit == nil {
+			t.Fatalf("expected non-nil Audit report")
+		}
+
+		if strings.Contains(client.capturedBeatsPrompt, "作者选定的发展路线") {
+			t.Errorf("expected beats prompt NOT to contain plan text, got: %s", client.capturedBeatsPrompt)
+		}
+		if strings.Contains(client.capturedBeatsPrompt, "【本章意图卡") {
+			t.Errorf("expected beats prompt NOT to contain intent block, got: %s", client.capturedBeatsPrompt)
+		}
+
+		foundDraftSkipEvent := false
+		for _, ev := range *events {
+			if strings.Contains(ev.Message, "第 1 章意图卡为草稿（DRAFT，未锁定），已跳过注入") {
+				foundDraftSkipEvent = true
+				break
+			}
+		}
+		if !foundDraftSkipEvent {
+			t.Errorf("expected draft skip event to be emitted")
+		}
+	})
+}
