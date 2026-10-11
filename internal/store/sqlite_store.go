@@ -2,10 +2,13 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -3447,30 +3450,77 @@ func (s *SQLiteStore) Close() error {
 // The Forecast & Narrative Tree (前瞻推演与活跃规划)
 // -----------------------------------------------------------------------------
 
-// ComputeFingerprint calculates the deterministic fingerprint of a project's canon state:
-// Rule: fmt.Sprintf("%d:%s:%d", maxArchivedChapterIndex, lastChapterID, openOrFermentingHooksCount)
-// - maxArchivedChapterIndex: MAX(chapter_index) from chapters table (0 if none)
-// - lastChapterID: id of the chapter with MAX(chapter_index) ("" if none)
-// - openOrFermentingHooksCount: COUNT(*) of plot_hooks where status IN ('OPEN', 'FERMENTING')
-// Any new archived chapter, uncommitted chapter, or hook transition deterministically alters this fingerprint.
+// ComputeFingerprint calculates the deterministic v2 fingerprint of a project's upstream premise:
+// Rule: "v2:<frameworkHash16>:<hooksHash16>", each segment the first 16 hex chars of sha256
+// (crypto/sha256 + hex precedent per chapter_history.go) over:
+//   - framework: the raw framework_json column of projects ("" when NULL/absent —
+//     framework-less legacy data is a legal state, hashed as empty, never an error)
+//   - hooks: the hook IDENTITY set — plot_hooks id + created_chapter + target_chapter,
+//     WITHOUT status, sorted before joining for determinism
+//
+// v2 semantics: normal execution NEVER stales a plan. Archiving chapters (positional shift:
+// maxChapter/lastID) and hook status flow (OPEN/FERMENTING/RESOLVED) are execution, not rewrites.
+// Only upstream rewrites stale a plan: framework/volume-outline premise changes, history rewritten
+// below base (uncommit/delete), or hook-set surgery (add/delete hooks, as opposed to status flow).
+// Empty projects (no framework, no hooks) hash zero values: deterministic and stable, never random.
+// Clean switch (pre-v1.0, no dual-track, no migration code): the legacy "maxChapter:lastID:hookCount"
+// fingerprint never carries a "v2:" prefix, so any stored legacy fingerprint mismatches on first
+// compare and goes stale fail-closed (regenerate rather than hallucinate injections).
 func (s *SQLiteStore) ComputeFingerprint(ctx context.Context, projectID string) string {
-	var maxChapter int
-	var lastChapterID sql.NullString
+	var frameworkRaw sql.NullString
 	_ = s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(MAX(chapter_index), 0), 
-		       COALESCE((SELECT id FROM chapters WHERE project_id = ? ORDER BY chapter_index DESC LIMIT 1), '')
-		FROM chapters WHERE project_id = ?`, projectID, projectID).Scan(&maxChapter, &lastChapterID)
-
-	var hookCount int
-	_ = s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM plot_hooks 
-		WHERE project_id = ? AND status IN ('OPEN', 'FERMENTING')`, projectID).Scan(&hookCount)
-
-	lastID := ""
-	if lastChapterID.Valid {
-		lastID = lastChapterID.String
+		SELECT COALESCE(framework_json, '')
+		FROM projects WHERE id = ?`, projectID).Scan(&frameworkRaw)
+	fwStr := ""
+	if frameworkRaw.Valid {
+		fwStr = frameworkRaw.String
 	}
-	return fmt.Sprintf("%d:%s:%d", maxChapter, lastID, hookCount)
+	fwSum := sha256.Sum256([]byte(fwStr))
+	fwHex := hex.EncodeToString(fwSum[:])[:16]
+
+	var identities []string
+	if rows, err := s.db.QueryContext(ctx, `
+		SELECT id, created_chapter, target_chapter
+		FROM plot_hooks WHERE project_id = ?`, projectID); err == nil {
+		for rows.Next() {
+			var id string
+			var created, target int
+			if err := rows.Scan(&id, &created, &target); err != nil {
+				continue
+			}
+			identities = append(identities, fmt.Sprintf("%s:%d:%d", id, created, target))
+		}
+		_ = rows.Close()
+	}
+	sort.Strings(identities)
+	hooksSum := sha256.Sum256([]byte(strings.Join(identities, "|")))
+	hooksHex := hex.EncodeToString(hooksSum[:])[:16]
+
+	return fmt.Sprintf("v2:%s:%s", fwHex, hooksHex)
+}
+
+// forecastStaleByFingerprint reports whether an active forecast must transition to stale under v2 rules.
+// Rule: stored fingerprint != current v2 fingerprint (upstream premise rewrite) → stale; else
+// MAX(chapter_index) < BaseChapter (history below base rewritten via uncommit/delete) → stale.
+// BaseChapter is a string column: strconv.Atoi parse failure is fail-closed stale. The MAX lookup
+// lives here (ComputeFingerprint no longer queries it), copying the COALESCE(MAX(...)) precedent.
+// Running past base+horizon introduces NO new rule (GetActivePlan's in-memory consumed derivation
+// already covers overrun; out-of-range stays untouched).
+// Pure query (one MAX lookup) + no row iteration: safe to call after rows.Close() in ListForecasts;
+// MUST NOT be called inside a rows loop on this single-connection pool (deadlock regression line).
+func (s *SQLiteStore) forecastStaleByFingerprint(ctx context.Context, projectID string, f *domain.Forecast, currFP string) bool {
+	if f.Fingerprint != currFP {
+		return true
+	}
+	base, err := strconv.Atoi(strings.TrimSpace(f.BaseChapter))
+	if err != nil {
+		return true
+	}
+	var maxChapter int
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(chapter_index), 0) FROM chapters WHERE project_id = ?`, projectID).Scan(&maxChapter); err != nil {
+		return true
+	}
+	return maxChapter < base
 }
 
 // SaveForecast persists a new narrative forecast and enforces the single-active invariant:
@@ -3571,9 +3621,10 @@ func (s *SQLiteStore) LoadForecast(ctx context.Context, projectID, forecastID st
 		_ = json.Unmarshal([]byte(branchesJSON), &f.Branches)
 	}
 
-	// Fingerprint check: compare stored fingerprint with current deterministic canon fingerprint
+	// Fingerprint check: v2 premise fingerprint plus fail-closed guard for history
+	// rewritten below base (see forecastStaleByFingerprint). Normal execution never stales.
 	currFP := s.ComputeFingerprint(ctx, projectID)
-	if f.Status == domain.ForecastStatusActive && f.Fingerprint != currFP {
+	if f.Status == domain.ForecastStatusActive && s.forecastStaleByFingerprint(ctx, projectID, &f, currFP) {
 		f.Status = domain.ForecastStatusStale
 		_, _ = s.db.ExecContext(ctx, `UPDATE narrative_forecasts SET status = ? WHERE id = ?`, domain.ForecastStatusStale, f.ID)
 		_, _ = s.db.ExecContext(ctx, `
@@ -3629,7 +3680,7 @@ func (s *SQLiteStore) ListForecasts(ctx context.Context, projectID string) ([]*d
 		currFP := s.ComputeFingerprint(ctx, projectID)
 		now := time.Now()
 		for _, f := range list {
-			if f.Status == domain.ForecastStatusActive && f.Fingerprint != currFP {
+			if f.Status == domain.ForecastStatusActive && s.forecastStaleByFingerprint(ctx, projectID, f, currFP) {
 				f.Status = domain.ForecastStatusStale
 				_, _ = s.db.ExecContext(ctx, `UPDATE narrative_forecasts SET status = ? WHERE id = ?`, domain.ForecastStatusStale, f.ID)
 				_, _ = s.db.ExecContext(ctx, `

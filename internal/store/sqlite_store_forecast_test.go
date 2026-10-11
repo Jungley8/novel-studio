@@ -190,8 +190,11 @@ func TestSQLiteStore_SelectBranch_IsolationGuard(t *testing.T) {
 	}
 }
 
-// Case ③: 新章归档后旧 forecast 读出 stale
-func TestSQLiteStore_FingerprintMismatch_MarksForecastStale(t *testing.T) {
+// Case ③ (v2 rewrite): archiving a new chapter is normal execution per plan — forecast stays ACTIVE.
+// v2 product ruling: only upstream rewrites stale a plan (framework premise change, history
+// rewritten below base, hook-set surgery). Positional shift (maxChapter/lastID) and hook status
+// flow are execution, not rewrites.
+func TestSQLiteStore_ExecutionChapterArchive_KeepsForecastActive(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "test_forecast_stale.db")
 
@@ -263,16 +266,19 @@ func TestSQLiteStore_FingerprintMismatch_MarksForecastStale(t *testing.T) {
 		t.Fatalf("CommitChapter 2 failed: %v", err)
 	}
 
-	// Reading forecast now MUST evaluate fingerprint mismatch and read out as stale
+	// Reading forecast now MUST stay active: archiving chapter 2 per plan is execution,
+	// not an upstream rewrite, so the v2 fingerprint (framework + hook identities) is unchanged
+	// and maxChapter(2) >= baseChapter(1).
 	loaded2, err := s.LoadForecast(ctx, projID, fc.ID)
 	if err != nil {
 		t.Fatalf("LoadForecast after chapter archive failed: %v", err)
 	}
-	if loaded2.Status != domain.ForecastStatusStale {
-		t.Fatalf("expected forecast status to be 'stale' after new chapter archive, got '%s'", loaded2.Status)
+	if loaded2.Status != domain.ForecastStatusActive {
+		t.Fatalf("expected forecast status to stay 'active' after in-plan chapter archive, got '%s'", loaded2.Status)
 	}
 
-	// Active plan must also be updated to stale
+	// Active plan must also stay active (consumed derivation is in-memory; divergence needs
+	// ExpectedDeltas keywords, absent here)
 	activePlan, err := s.GetActivePlan(ctx, projID)
 	if err != nil {
 		t.Fatalf("GetActivePlan failed: %v", err)
@@ -280,8 +286,8 @@ func TestSQLiteStore_FingerprintMismatch_MarksForecastStale(t *testing.T) {
 	if activePlan == nil {
 		t.Fatal("expected non-nil active plan")
 	}
-	if activePlan.Status != domain.PlanStatusStale {
-		t.Fatalf("expected active plan status to be 'stale', got '%s'", activePlan.Status)
+	if activePlan.Status != domain.PlanStatusActive {
+		t.Fatalf("expected active plan status to stay 'active', got '%s'", activePlan.Status)
 	}
 }
 
@@ -298,6 +304,20 @@ func TestSQLiteStore_SingleActiveInvariant_OnCreateForecast(t *testing.T) {
 
 	projID := "proj_single_active"
 	_ = s.SaveProject(ctx, &domain.Project{ID: projID, Title: "单一活跃不变式测试"})
+
+	// v2: seed the base chapter (production always branches from existing canon:
+	// base == maxChapter at creation, so base must exist for the forecast to stay active)
+	ch0 := &domain.Chapter{
+		ID:           "ch_sa_base_1",
+		ProjectID:    projID,
+		ChapterIndex: 1,
+		Title:        "第一章",
+		Content:      "正史开篇",
+		CreatedAt:    time.Now().Add(-1 * time.Hour),
+	}
+	if _, err := s.CommitChapter(ctx, projID, ch0); err != nil {
+		t.Fatalf("CommitChapter base failed: %v", err)
+	}
 
 	fc1 := &domain.Forecast{
 		ID:          "fc_first",
@@ -390,6 +410,19 @@ func TestSQLiteStore_GetActivePlan_DerivedConsumed(t *testing.T) {
 	projID := "proj_consume_test"
 	_ = s.SaveProject(ctx, &domain.Project{ID: projID, Title: "消费派生测试"})
 
+	// v2: seed the base chapter (production branches from existing canon)
+	ch1base := &domain.Chapter{
+		ID:           "ch_c_1",
+		ProjectID:    projID,
+		ChapterIndex: 1,
+		Title:        "第一章正史",
+		Content:      "主角下山",
+		CreatedAt:    time.Now().Add(-1 * time.Hour),
+	}
+	if _, err := s.CommitChapter(ctx, projID, ch1base); err != nil {
+		t.Fatalf("CommitChapter base failed: %v", err)
+	}
+
 	// Forecast covering chapter 2 and chapter 3
 	fc := &domain.Forecast{
 		ID:          "fc_consume_1",
@@ -467,6 +500,19 @@ func TestSQLiteStore_GetActivePlan_DivergedDetection(t *testing.T) {
 
 	projID := "proj_diverge_test"
 	_ = s.SaveProject(ctx, &domain.Project{ID: projID, Title: "偏离检测测试"})
+
+	// v2: seed the base chapter (production branches from existing canon)
+	ch1base := &domain.Chapter{
+		ID:           "ch_div_1",
+		ProjectID:    projID,
+		ChapterIndex: 1,
+		Title:        "第一章正史",
+		Content:      "主角与王长老结仇",
+		CreatedAt:    time.Now().Add(-1 * time.Hour),
+	}
+	if _, err := s.CommitChapter(ctx, projID, ch1base); err != nil {
+		t.Fatalf("CommitChapter base failed: %v", err)
+	}
 
 	fc := &domain.Forecast{
 		ID:          "fc_div_1",
@@ -579,7 +625,7 @@ func TestListForecasts_NoDeadlockAfterChapterCommit(t *testing.T) {
 		t.Fatalf("SelectBranch failed: %v", err)
 	}
 
-	// 追加一章（使指纹变化）
+	// 追加一章（按计划执行——v2 指纹只覆盖框架+钩子身份，不再变化）
 	ch2 := &domain.Chapter{
 		ID:           "ch_dl_2",
 		ProjectID:    projID,
@@ -607,20 +653,20 @@ func TestListForecasts_NoDeadlockAfterChapterCommit(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("expected 1 forecast, got %d", len(list))
 	}
-	if list[0].Status != domain.ForecastStatusStale {
-		t.Fatalf("expected forecast status to be 'stale', got '%s'", list[0].Status)
+	if list[0].Status != domain.ForecastStatusActive {
+		t.Fatalf("expected forecast status to stay 'active' after in-plan chapter commit (v2), got '%s'", list[0].Status)
 	}
 
-	// 确认数据库中 project_active_plan 确实被更新为 stale
+	// 确认数据库中 project_active_plan 仍为 active（执行不 stale）
 	var dbPlanStatus string
 	if err := s.db.QueryRow(`SELECT status FROM project_active_plan WHERE project_id = ?`, projID).Scan(&dbPlanStatus); err != nil {
 		t.Fatalf("query db plan status failed: %v", err)
 	}
-	if dbPlanStatus != string(domain.PlanStatusStale) {
-		t.Fatalf("expected project_active_plan in db to be 'stale', got '%s'", dbPlanStatus)
+	if dbPlanStatus != string(domain.PlanStatusActive) {
+		t.Fatalf("expected project_active_plan in db to stay 'active', got '%s'", dbPlanStatus)
 	}
 
-	// 断言关联 active plan 变 stale
+	// 断言关联 active plan 仍为 active
 	activePlan, err := s.GetActivePlan(ctx, projID)
 	if err != nil {
 		t.Fatalf("GetActivePlan failed: %v", err)
@@ -628,8 +674,8 @@ func TestListForecasts_NoDeadlockAfterChapterCommit(t *testing.T) {
 	if activePlan == nil {
 		t.Fatal("expected non-nil active plan")
 	}
-	if activePlan.Status != domain.PlanStatusStale {
-		t.Fatalf("expected active plan status to be 'stale', got '%s'", activePlan.Status)
+	if activePlan.Status != domain.PlanStatusActive {
+		t.Fatalf("expected active plan status to stay 'active', got '%s'", activePlan.Status)
 	}
 }
 
@@ -835,6 +881,21 @@ func TestSelectBranch_StaleForecastRejected(t *testing.T) {
 		t.Fatalf("CommitChapter 1 failed: %v", err)
 	}
 
+	// 1b. Seed a hook BEFORE the forecast so the v2 fingerprint covers its identity
+	hook := &domain.PlotHook{
+		ID:             "hook_stale_rej_1",
+		ProjectID:      projID,
+		Title:          "玉佩之谜",
+		Details:        "母亲遗物",
+		CreatedChapter: 1,
+		TargetChapter:  6,
+		Status:         domain.HookStatusOpen,
+		CreatedAt:      time.Now(),
+	}
+	if err := s.SavePlotHook(ctx, hook); err != nil {
+		t.Fatalf("SavePlotHook failed: %v", err)
+	}
+
 	// 2. Create forecast matching chapter 1 fingerprint
 	fc := &domain.Forecast{
 		ID:          "fc_stale_rej",
@@ -855,17 +916,10 @@ func TestSelectBranch_StaleForecastRejected(t *testing.T) {
 		t.Fatalf("SaveForecast failed: %v", err)
 	}
 
-	// 3. Advance canon with chapter 2 to cause fingerprint mismatch
-	ch2 := &domain.Chapter{
-		ID:           "ch_stale_rej_2",
-		ProjectID:    projID,
-		ChapterIndex: 2,
-		Title:        "第二章正史推进",
-		Content:      "新的正史内容造成指纹改变",
-		CreatedAt:    time.Now(),
-	}
-	if _, err := s.CommitChapter(ctx, projID, ch2); err != nil {
-		t.Fatalf("CommitChapter 2 failed: %v", err)
+	// 3. Upstream rewrite: surgically delete the hook (hook-set surgery, NOT status flow)
+	// to cause a v2 fingerprint mismatch. (v2: plain chapter commits are execution and stay active.)
+	if err := s.DeletePlotHook(ctx, hook.ID); err != nil {
+		t.Fatalf("DeletePlotHook failed: %v", err)
 	}
 
 	// 4. Attempt SelectBranch -> MUST return error because forecast is stale
@@ -984,5 +1038,359 @@ func TestSelectBranch_ActiveMaintainsSingleActive(t *testing.T) {
 	if activePlan.ForecastID != fcA.ID || activePlan.BranchID != "branch_a1" {
 		t.Errorf("expected active plan pointing to forecast %s / branch branch_a1, got forecast %s / branch %s",
 			fcA.ID, activePlan.ForecastID, activePlan.BranchID)
+	}
+}
+
+// v2: framework premise change is an upstream rewrite → forecast goes stale.
+func TestSQLiteStore_FrameworkChange_MarksForecastStale(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test_fw_stale.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	projID := "proj_fw_stale"
+	proj := &domain.Project{
+		ID:         projID,
+		Title:      "框架变更测试",
+		WorldRules: "天道因果不可违逆",
+		Framework:  &domain.ProjectFramework{ThemePremise: "天道因果循环"},
+	}
+	if err := s.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	ch1 := &domain.Chapter{
+		ID:           "ch_fw_1",
+		ProjectID:    projID,
+		ChapterIndex: 1,
+		Title:        "第一章",
+		Content:      "初始正史内容",
+		CreatedAt:    time.Now().Add(-1 * time.Hour),
+	}
+	if _, err := s.CommitChapter(ctx, projID, ch1); err != nil {
+		t.Fatalf("CommitChapter 1 failed: %v", err)
+	}
+
+	fc := &domain.Forecast{
+		ID:          "fc_fw_1",
+		ProjectID:   projID,
+		BaseChapter: "1",
+		Divergence:  "框架分歧",
+		BranchCount: 2,
+		Horizon:     3,
+		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Status:      domain.ForecastStatusActive,
+		Branches: []domain.ForecastBranch{
+			{ID: "b1", BeatsSummary: "节拍1"},
+			{ID: "b2", BeatsSummary: "节拍2"},
+		},
+		CreatedAt: time.Now(),
+	}
+	if err := s.SaveForecast(ctx, fc); err != nil {
+		t.Fatalf("SaveForecast failed: %v", err)
+	}
+	if _, err := s.SelectBranch(ctx, projID, fc.ID, "b1"); err != nil {
+		t.Fatalf("SelectBranch failed: %v", err)
+	}
+
+	loaded1, err := s.LoadForecast(ctx, projID, fc.ID)
+	if err != nil {
+		t.Fatalf("LoadForecast failed: %v", err)
+	}
+	if loaded1.Status != domain.ForecastStatusActive {
+		t.Fatalf("expected active before framework change, got %s", loaded1.Status)
+	}
+
+	// Upstream rewrite: change one char of framework_json via the Project update path
+	updated, err := s.GetProject(ctx, projID)
+	if err != nil {
+		t.Fatalf("GetProject failed: %v", err)
+	}
+	updated.Framework.ThemePremise = "天道因果循环改"
+	if err := s.SaveProject(ctx, updated); err != nil {
+		t.Fatalf("SaveProject (framework update) failed: %v", err)
+	}
+
+	loaded2, err := s.LoadForecast(ctx, projID, fc.ID)
+	if err != nil {
+		t.Fatalf("LoadForecast after framework change failed: %v", err)
+	}
+	if loaded2.Status != domain.ForecastStatusStale {
+		t.Fatalf("expected forecast 'stale' after framework premise change, got '%s'", loaded2.Status)
+	}
+
+	activePlan, err := s.GetActivePlan(ctx, projID)
+	if err != nil {
+		t.Fatalf("GetActivePlan failed: %v", err)
+	}
+	if activePlan == nil {
+		t.Fatal("expected non-nil active plan")
+	}
+	if activePlan.Status != domain.PlanStatusStale {
+		t.Fatalf("expected active plan 'stale', got '%s'", activePlan.Status)
+	}
+}
+
+// v2: history rewritten below base (uncommit down past base) → stale via maxChapter < baseChapter.
+func TestSQLiteStore_RewriteBelowBase_MarksForecastStale(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test_belowbase_stale.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	projID := "proj_belowbase_stale"
+	if err := s.SaveProject(ctx, &domain.Project{ID: projID, Title: "基下改写测试"}); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	for i, id := range []string{"ch_bb_1", "ch_bb_2"} {
+		ch := &domain.Chapter{
+			ID:           id,
+			ProjectID:    projID,
+			ChapterIndex: i + 1,
+			Title:        "正史章",
+			Content:      "正史内容",
+			CreatedAt:    time.Now().Add(time.Duration(i-2) * time.Hour),
+		}
+		if _, err := s.CommitChapter(ctx, projID, ch); err != nil {
+			t.Fatalf("CommitChapter %d failed: %v", i+1, err)
+		}
+	}
+
+	fc := &domain.Forecast{
+		ID:          "fc_bb_1",
+		ProjectID:   projID,
+		BaseChapter: "1",
+		Divergence:  "基下分歧",
+		BranchCount: 2,
+		Horizon:     3,
+		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Status:      domain.ForecastStatusActive,
+		Branches: []domain.ForecastBranch{
+			{ID: "b1", BeatsSummary: "节拍1"},
+			{ID: "b2", BeatsSummary: "节拍2"},
+		},
+		CreatedAt: time.Now(),
+	}
+	if err := s.SaveForecast(ctx, fc); err != nil {
+		t.Fatalf("SaveForecast failed: %v", err)
+	}
+	if _, err := s.SelectBranch(ctx, projID, fc.ID, "b1"); err != nil {
+		t.Fatalf("SelectBranch failed: %v", err)
+	}
+
+	// Uncommit only allows the latest chapter: retract ch2 first, then ch1.
+	// base=1 and max drops to 0 < base → stale.
+	if _, _, err := s.UncommitChapter(ctx, projID, 2); err != nil {
+		t.Fatalf("UncommitChapter 2 failed: %v", err)
+	}
+	if _, _, err := s.UncommitChapter(ctx, projID, 1); err != nil {
+		t.Fatalf("UncommitChapter 1 failed: %v", err)
+	}
+
+	loaded, err := s.LoadForecast(ctx, projID, fc.ID)
+	if err != nil {
+		t.Fatalf("LoadForecast after below-base rewrite failed: %v", err)
+	}
+	if loaded.Status != domain.ForecastStatusStale {
+		t.Fatalf("expected forecast 'stale' after history rewritten below base, got '%s'", loaded.Status)
+	}
+
+	activePlan, err := s.GetActivePlan(ctx, projID)
+	if err != nil {
+		t.Fatalf("GetActivePlan failed: %v", err)
+	}
+	if activePlan == nil {
+		t.Fatal("expected non-nil active plan")
+	}
+	if activePlan.Status != domain.PlanStatusStale {
+		t.Fatalf("expected active plan 'stale', got '%s'", activePlan.Status)
+	}
+}
+
+// v2: hook-set surgery (delete) changes hook identities → stale.
+func TestSQLiteStore_HookDeletion_MarksForecastStale(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test_hookdel_stale.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	projID := "proj_hookdel_stale"
+	if err := s.SaveProject(ctx, &domain.Project{ID: projID, Title: "钩子删除测试"}); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	ch1 := &domain.Chapter{
+		ID:           "ch_hd_1",
+		ProjectID:    projID,
+		ChapterIndex: 1,
+		Title:        "第一章",
+		Content:      "初始正史内容",
+		CreatedAt:    time.Now().Add(-1 * time.Hour),
+	}
+	if _, err := s.CommitChapter(ctx, projID, ch1); err != nil {
+		t.Fatalf("CommitChapter 1 failed: %v", err)
+	}
+
+	hook := &domain.PlotHook{
+		ID:             "hook_hd_1",
+		ProjectID:      projID,
+		Title:          "玉佩之谜",
+		Details:        "母亲遗物",
+		CreatedChapter: 1,
+		TargetChapter:  6,
+		Status:         domain.HookStatusOpen,
+		CreatedAt:      time.Now(),
+	}
+	if err := s.SavePlotHook(ctx, hook); err != nil {
+		t.Fatalf("SavePlotHook failed: %v", err)
+	}
+
+	fc := &domain.Forecast{
+		ID:          "fc_hd_1",
+		ProjectID:   projID,
+		BaseChapter: "1",
+		Divergence:  "钩子分歧",
+		BranchCount: 2,
+		Horizon:     3,
+		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Status:      domain.ForecastStatusActive,
+		Branches: []domain.ForecastBranch{
+			{ID: "b1", BeatsSummary: "节拍1"},
+			{ID: "b2", BeatsSummary: "节拍2"},
+		},
+		CreatedAt: time.Now(),
+	}
+	if err := s.SaveForecast(ctx, fc); err != nil {
+		t.Fatalf("SaveForecast failed: %v", err)
+	}
+	if _, err := s.SelectBranch(ctx, projID, fc.ID, "b1"); err != nil {
+		t.Fatalf("SelectBranch failed: %v", err)
+	}
+
+	// Hook-set surgery (distinct from status flow): delete the hook.
+	if err := s.DeletePlotHook(ctx, hook.ID); err != nil {
+		t.Fatalf("DeletePlotHook failed: %v", err)
+	}
+
+	loaded, err := s.LoadForecast(ctx, projID, fc.ID)
+	if err != nil {
+		t.Fatalf("LoadForecast after hook deletion failed: %v", err)
+	}
+	if loaded.Status != domain.ForecastStatusStale {
+		t.Fatalf("expected forecast 'stale' after hook deletion, got '%s'", loaded.Status)
+	}
+
+	activePlan, err := s.GetActivePlan(ctx, projID)
+	if err != nil {
+		t.Fatalf("GetActivePlan failed: %v", err)
+	}
+	if activePlan == nil {
+		t.Fatal("expected non-nil active plan")
+	}
+	if activePlan.Status != domain.PlanStatusStale {
+		t.Fatalf("expected active plan 'stale', got '%s'", activePlan.Status)
+	}
+}
+
+// v2: hook STATUS flow (OPEN→RESOLVED) is execution, not surgery → stays active.
+func TestSQLiteStore_HookStatusTransition_KeepsForecastActive(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test_hookstatus_active.db")
+
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	projID := "proj_hookstatus_active"
+	if err := s.SaveProject(ctx, &domain.Project{ID: projID, Title: "钩子流转测试"}); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	ch1 := &domain.Chapter{
+		ID:           "ch_hs_1",
+		ProjectID:    projID,
+		ChapterIndex: 1,
+		Title:        "第一章",
+		Content:      "初始正史内容",
+		CreatedAt:    time.Now().Add(-1 * time.Hour),
+	}
+	if _, err := s.CommitChapter(ctx, projID, ch1); err != nil {
+		t.Fatalf("CommitChapter 1 failed: %v", err)
+	}
+
+	hook := &domain.PlotHook{
+		ID:             "hook_hs_1",
+		ProjectID:      projID,
+		Title:          "玉佩之谜",
+		Details:        "母亲遗物",
+		CreatedChapter: 1,
+		TargetChapter:  6,
+		Status:         domain.HookStatusOpen,
+		CreatedAt:      time.Now(),
+	}
+	if err := s.SavePlotHook(ctx, hook); err != nil {
+		t.Fatalf("SavePlotHook failed: %v", err)
+	}
+
+	fc := &domain.Forecast{
+		ID:          "fc_hs_1",
+		ProjectID:   projID,
+		BaseChapter: "1",
+		Divergence:  "钩子分歧",
+		BranchCount: 2,
+		Horizon:     3,
+		Fingerprint: s.ComputeFingerprint(ctx, projID),
+		Status:      domain.ForecastStatusActive,
+		Branches: []domain.ForecastBranch{
+			{ID: "b1", BeatsSummary: "节拍1"},
+			{ID: "b2", BeatsSummary: "节拍2"},
+		},
+		CreatedAt: time.Now(),
+	}
+	if err := s.SaveForecast(ctx, fc); err != nil {
+		t.Fatalf("SaveForecast failed: %v", err)
+	}
+	if _, err := s.SelectBranch(ctx, projID, fc.ID, "b1"); err != nil {
+		t.Fatalf("SelectBranch failed: %v", err)
+	}
+
+	// Status flow only: resolve the hook in place (identity unchanged).
+	hook.Status = domain.HookStatusResolved
+	if err := s.SavePlotHook(ctx, hook); err != nil {
+		t.Fatalf("SavePlotHook (resolve) failed: %v", err)
+	}
+
+	loaded, err := s.LoadForecast(ctx, projID, fc.ID)
+	if err != nil {
+		t.Fatalf("LoadForecast after hook resolve failed: %v", err)
+	}
+	if loaded.Status != domain.ForecastStatusActive {
+		t.Fatalf("expected forecast to stay 'active' after hook status transition, got '%s'", loaded.Status)
+	}
+
+	activePlan, err := s.GetActivePlan(ctx, projID)
+	if err != nil {
+		t.Fatalf("GetActivePlan failed: %v", err)
+	}
+	if activePlan == nil {
+		t.Fatal("expected non-nil active plan")
+	}
+	if activePlan.Status != domain.PlanStatusActive {
+		t.Fatalf("expected active plan to stay 'active', got '%s'", activePlan.Status)
 	}
 }
