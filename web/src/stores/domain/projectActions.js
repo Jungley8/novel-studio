@@ -69,13 +69,13 @@ export function createProjectActions(state, notify, helpers, dialogs) {
         if (helpers && helpers.loadAnalytics) {
           await helpers.loadAnalytics();
         }
-        if (helpers && helpers.restoreCheckpoint) {
-          if (isSwitch) {
-            // 显式指定新作品的下一章，禁止用旧作品的 editingChapterIndex 取断点。
-            await helpers.restoreCheckpoint(state.chapters.length + 1);
-          } else {
-            await helpers.restoreCheckpoint();
+        if (isSwitch) {
+          // 切换作品：恢复该作品“最近推进的一章”在途断点（含已归档章节的重修稿）。
+          if (helpers && helpers.restoreLatestCheckpoint) {
+            await helpers.restoreLatestCheckpoint();
           }
+        } else if (helpers && helpers.restoreCheckpoint) {
+          await helpers.restoreCheckpoint();
         }
         return true;
       } catch (e) {

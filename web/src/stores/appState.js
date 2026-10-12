@@ -424,6 +424,8 @@ actionHelpers.loadCodexRelations = codexActs.loadCodexRelations;
 actionHelpers.loadAnalytics = matrixActs.loadAnalytics;
 actionHelpers.selectProject = projectActs.selectProject;
 actionHelpers.restoreCheckpoint = workbenchActs.restoreCheckpoint;
+actionHelpers.restoreLatestCheckpoint = workbenchActs.restoreLatestCheckpoint;
+actionHelpers.applyCheckpoint = workbenchActs.applyCheckpoint;
 actionHelpers.saveCheckpoint = workbenchActs.saveCheckpoint;
 actionHelpers.runLinter = workbenchActs.runLinter;
 

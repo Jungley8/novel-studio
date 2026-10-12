@@ -370,56 +370,80 @@ export function createWorkbenchActions(state, notify, helpers, dialogs) {
       }
     },
 
+    // 将断点数据整体灌入工作台（草稿/分段/审校/返工轮次与工序定位）。
+    // 返回 true 表示断点有效并已恢复。
+    applyCheckpoint(cp) {
+      if (!cp || (!cp.draft_text && !(cp.beats && cp.beats.length) && !cp.core_conflict)) {
+        return false;
+      }
+      if (cp.draft_text) {
+        state.workbench.content = cp.draft_text;
+      }
+      state.editingChapterIndex = cp.chapter_index;
+      if (cp.core_conflict && !state.workbench.coreConflict) {
+        state.workbench.coreConflict = cp.core_conflict;
+      }
+      if (cp.beats && cp.beats.length) {
+        state.workbench.beats = cp.beats;
+      }
+      if (cp.state_mutation) {
+        state.workbench.stateMutation = cp.state_mutation;
+      }
+      if (cp.audit_report) {
+        state.reviewResult = cp.audit_report;
+        if (cp.audit_report.linter) {
+          state.linterReport = {
+            ...cp.audit_report.linter,
+            hit_banned_words: Array.isArray(cp.audit_report.linter.hit_banned_words) ? cp.audit_report.linter.hit_banned_words : [],
+            top_repeated_ngrams: Array.isArray(cp.audit_report.linter.top_repeated_ngrams) ? cp.audit_report.linter.top_repeated_ngrams : [],
+            empirical_tells: Array.isArray(cp.audit_report.linter.empirical_tells) ? cp.audit_report.linter.empirical_tells : [],
+          };
+        }
+      }
+      if (cp.rewrite_loops) {
+        state.rewriteLoopCount = cp.rewrite_loops;
+      }
+      if (cp.phase === 'AUDITED' || cp.phase === 'REWRITING') {
+        state.activeStep = cp.audit_report?.verdict === 'ACCEPTED' ? 6 : 5;
+      } else if (cp.phase === 'DRAFTED' || cp.draft_text) {
+        state.activeStep = 3;
+      } else if (cp.phase === 'BEATS_DERIVED' || (cp.beats && cp.beats.length)) {
+        state.activeStep = 2;
+      }
+      if (this.runLinter && state.workbench.content) {
+        this.runLinter();
+      }
+      state.lastSavedAt = new Date();
+      return true;
+    },
+
     async restoreCheckpoint(targetIndex) {
       if (!state.currentProject) return;
       if (state.workbench.content && state.workbench.content.trim() && !targetIndex) return;
       const idx = targetIndex || state.editingChapterIndex || (state.chapters ? state.chapters.length + 1 : 1);
       try {
         const cp = await api.getCheckpoint(state.currentProject.id, idx);
-        if (cp && (cp.draft_text || (cp.beats && cp.beats.length) || cp.core_conflict)) {
-          if (cp.draft_text) {
-            state.workbench.content = cp.draft_text;
-          }
-          state.editingChapterIndex = cp.chapter_index;
-          if (cp.core_conflict && !state.workbench.coreConflict) {
-            state.workbench.coreConflict = cp.core_conflict;
-          }
-          if (cp.beats && cp.beats.length) {
-            state.workbench.beats = cp.beats;
-          }
-          if (cp.state_mutation) {
-            state.workbench.stateMutation = cp.state_mutation;
-          }
-          if (cp.audit_report) {
-            state.reviewResult = cp.audit_report;
-            if (cp.audit_report.linter) {
-              state.linterReport = {
-                ...cp.audit_report.linter,
-                hit_banned_words: Array.isArray(cp.audit_report.linter.hit_banned_words) ? cp.audit_report.linter.hit_banned_words : [],
-                top_repeated_ngrams: Array.isArray(cp.audit_report.linter.top_repeated_ngrams) ? cp.audit_report.linter.top_repeated_ngrams : [],
-                empirical_tells: Array.isArray(cp.audit_report.linter.empirical_tells) ? cp.audit_report.linter.empirical_tells : [],
-              };
-            }
-          }
-          if (cp.rewrite_loops) {
-            state.rewriteLoopCount = cp.rewrite_loops;
-          }
-          if (cp.phase === 'AUDITED' || cp.phase === 'REWRITING') {
-            state.activeStep = cp.audit_report?.verdict === 'ACCEPTED' ? 6 : 5;
-          } else if (cp.phase === 'DRAFTED' || cp.draft_text) {
-            state.activeStep = 3;
-          } else if (cp.phase === 'BEATS_DERIVED' || (cp.beats && cp.beats.length)) {
-            state.activeStep = 2;
-          }
-          if (this.runLinter && state.workbench.content) {
-            this.runLinter();
-          }
-          state.lastSavedAt = new Date();
+        if (this.applyCheckpoint(cp)) {
           const detail = cp.draft_text ? `共 ${cp.draft_text.length} 字` : '包含分段构思';
           notify('已恢复草稿', `已载入第 ${cp.chapter_index} 章进度（${detail}）`, 'info');
         }
       } catch (err) {
         console.warn('restore checkpoint failed:', err);
+      }
+    },
+
+    // 恢复该作品最近更新的在途断点（切换作品时使用）：
+    // 既覆盖“下一章草稿”，也覆盖“已归档章节的重修稿”，避免切换后丢失截稿现场。
+    async restoreLatestCheckpoint() {
+      if (!state.currentProject) return;
+      try {
+        const cp = await api.getLatestCheckpoint(state.currentProject.id);
+        if (this.applyCheckpoint(cp)) {
+          const detail = cp.draft_text ? `共 ${cp.draft_text.length} 字` : '包含分段构思';
+          notify('已恢复在途草稿', `已载入第 ${cp.chapter_index} 章进度（${detail}）`, 'info');
+        }
+      } catch (err) {
+        console.warn('restore latest checkpoint failed:', err);
       }
     },
 

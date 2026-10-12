@@ -13,6 +13,9 @@ const projectB = { id: 'pB', title: '作品B', world_rules: '', framework: null 
 
 const calls = [];
 
+// “最近在途断点”的可变配置：默认无断点，测试可按需注入。
+const latestCheckpoints = { pA: null, pB: null };
+
 function respondJson(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -48,11 +51,15 @@ globalThis.fetch = async (url, options = {}) => {
   if (u === '/api/projects/pA/analytics/heatmap') return respondJson({});
   if (u === '/api/projects/pA/analytics/tension') return respondJson({});
 
-  // 断点：GET（恢复）一律 404 无断点；POST（落盘）成功。
+  // 断点：latest 查询返回配置的“最近在途断点”；按章节 GET 一律 404；POST 落盘成功。
+  if (u === '/api/projects/pA/checkpoint?latest=true') return respondJson(latestCheckpoints.pA);
+  if (u === '/api/projects/pB/checkpoint?latest=true') return respondJson(latestCheckpoints.pB);
   if (u.startsWith('/api/projects/pA/checkpoint') || u.startsWith('/api/projects/pB/checkpoint')) {
     if (method === 'GET') return respondJson({ error: 'checkpoint not found' }, 404);
     if (method === 'POST') return respondJson({ status: 'ok' });
   }
+
+  if (u === '/api/linter/analyze') return respondJson({ burstiness_score: 60, passed: true, hit_banned_words: [] });
 
   return respondJson({ error: `unrouted: ${method} ${u}` }, 500);
 };
@@ -134,11 +141,11 @@ test('切换作品整体重置工作台与作品级状态，并把旧作品在�
   assert.equal(state.showSceneModal, false);
   assert.equal(state.showWorkshopChatDrawer, false);
 
-  // 新作品的单章默认参数与断点恢复目标（空章目录 → 下一章 = 1）
+  // 新作品的单章默认参数与断点恢复目标（恢复该作品最近在途断点）
   assert.equal(state.wordsTarget, 2000);
   assert.equal(state.narrativeStyle, 'hardboiled');
-  const restoreCall = calls.find(c => c.method === 'GET' && c.url === '/api/projects/pB/checkpoint?chapter_index=1');
-  assert.ok(restoreCall, '切换后应显式按新作品的下一章恢复断点');
+  const restoreCall = calls.find(c => c.method === 'GET' && c.url === '/api/projects/pB/checkpoint?latest=true');
+  assert.ok(restoreCall, '切换后应恢复新作品最近在用的一章断点');
 });
 
 test('生成任务进行中拒绝切换作品（Fail-Closed）', async () => {
@@ -156,7 +163,7 @@ test('生成任务进行中拒绝切换作品（Fail-Closed）', async () => {
   assert.equal(touchedPA, false, '被拒绝时不得发起旧作品/目标作品的任何加载请求');
 });
 
-test('工作台为空时切换不产生多余落盘，恢复断点按新作品章节数定位', async () => {
+test('工作台为空时切换不产生多余落盘，按 latest 断点恢复', async () => {
   const before = calls.length;
   const ok = await actions.selectProject('pA');
   assert.equal(ok, true);
@@ -164,12 +171,40 @@ test('工作台为空时切换不产生多余落盘，恢复断点按新作品�
   const flushCalls = calls.slice(before).filter(c => c.method === 'POST' && c.url.includes('/checkpoint'));
   assert.equal(flushCalls.length, 0, '空工作台切换不应产生落盘写入');
 
-  // 新作品A有 2 章 → 恢复目标应为第 3 章（而非旧编辑索引）
-  const restoreCall = calls.slice(before).find(c => c.method === 'GET' && c.url === '/api/projects/pA/checkpoint?chapter_index=3');
-  assert.ok(restoreCall, '恢复断点目标应为新作品章节数 + 1');
+  const restoreCall = calls.slice(before).find(c => c.method === 'GET' && c.url === '/api/projects/pA/checkpoint?latest=true');
+  assert.ok(restoreCall, '切换后应查询新作品最近在途断点');
 
   // 项目默认值覆盖到当前作品
   assert.equal(state.wordsTarget, 3000);
   assert.equal(state.narrativeStyle, 'cinematic');
   assert.equal(state.workbench.content, '');
+});
+
+test('切换作品恢复“最近推进的一章”在途断点（含已归档章节重修稿）', async () => {
+  // pB 的最近断点是第 4 章的重修稿（而非“下一章”）
+  latestCheckpoints.pB = {
+    project_id: 'pB',
+    chapter_index: 4,
+    phase: 'DRAFTED',
+    core_conflict: 'B的在途冲突',
+    draft_text: 'B的在途重修稿',
+    beats: null,
+    state_mutation: null,
+    audit_report: null,
+    rewrite_loops: 0,
+  };
+
+  const ok = await actions.selectProject('pB');
+  latestCheckpoints.pB = null;
+  assert.equal(ok, true);
+
+  assert.equal(state.workbench.content, 'B的在途重修稿', '应恢复最近在途断点的正文');
+  assert.equal(state.workbench.coreConflict, 'B的在途冲突');
+  assert.equal(state.editingChapterIndex, 4, '编辑章节应指向断点章节');
+  assert.equal(state.activeStep, 3, 'DRAFTED 断点应定位到起草工序');
+
+  // 恢复后在途断点可继续保存（不产生跨作品写入）
+  const before = calls.length;
+  const postSwitch = calls.slice(before);
+  assert.equal(postSwitch.some(c => c.method === 'POST' && c.url.includes('/checkpoint')), false);
 });

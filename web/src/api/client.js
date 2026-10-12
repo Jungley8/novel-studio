@@ -182,6 +182,7 @@ export const api = {
   rewriteDraft: (projectId, data) => apiFetch(`/api/projects/${projectId}/rewrite-draft`, { method: 'POST', body: JSON.stringify(data) }),
   rewriteDraftStream: (projectId, data, callbacks) => streamFetch(`/api/projects/${projectId}/rewrite-draft`, data, callbacks),
   getCheckpoint: (projectId, chapterIndex) => apiFetch(`/api/projects/${projectId}/checkpoint?chapter_index=${chapterIndex}`),
+  getLatestCheckpoint: (projectId) => apiFetch(`/api/projects/${projectId}/checkpoint?latest=true`),
   saveCheckpoint: (projectId, data) => apiFetch(`/api/projects/${projectId}/checkpoint`, { method: 'POST', body: JSON.stringify(data) }),
   clearCheckpoint: (projectId, chapterIndex) => apiFetch(`/api/projects/${projectId}/checkpoint?chapter_index=${chapterIndex}`, { method: 'DELETE' }),
   produceAutonomous: (projectId, data) => apiFetch(`/api/projects/${projectId}/workshop/produce`, { method: 'POST', body: JSON.stringify(data) }),
