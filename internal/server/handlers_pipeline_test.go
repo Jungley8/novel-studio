@@ -56,6 +56,14 @@ func setupPipelineTestServer(t *testing.T, failLLM bool) (*server.Server, store.
 		} else if strings.Contains(systemPrompt, "创世总纲") || strings.Contains(userPrompt, "创世总纲") {
 			content = `{
 				"theme_premise": "万古长夜，一人一剑逆伐诸仙",
+				"protagonist": {
+					"name": "顾渊",
+					"identity": "边荒游魂，无灵根凡人",
+					"initial_realm": "凡胎境",
+					"goal": "查明血案真相，逆伐诸仙",
+					"voice_tone": "隐忍果决",
+					"inventory": ["不灭印"]
+				},
 				"world_axioms": ["天道崩塌", "灵气含毒"],
 				"power_ladder": [
 					{"realm": "凡胎境", "description": "凡俗武夫", "bottleneck": "开辟气海", "drawback": "寿不过百"}

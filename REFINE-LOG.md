@@ -591,6 +591,28 @@ web 侧 `pnpm test` 4/4 通过，`pnpm run build:dev` 可产出非压缩构建�
 
 验证：`go test ./internal/engine/ -race` 全绿；实战续产验证（见下）。
 
+
+### 第十二轮：创世去硬编码 —— 主角档案归框架（2026-10-13 凌晨 · 全自动成书实战第六障碍）
+
+实战：（续产第 1 章时）状态结算对账反复报「物品记入顾渊名下，但正文主角为程穗」。
+根因：`seed.go` 内 `protagonistName := "顾渊"` 写死（遗留演示数据）——每本书的主角
+条目都叫顾渊、随身物品写死仙侠三件套（凡骨铁印/粗布短褐/引路符），还硬编码种入
+地点「聚仙楼」与道具「凡骨残印」；配角别名写死楚掌柜/柳依依；渲染提示词示例句
+也含「顾渊」。框架推演的配角与正文意图围绕灵感（程穗）展开，主角条目却永远
+是顾渊 → 框架级人格分裂 → 状态机错位、审校必然低分、返工闭环无法收敛。
+
+修复（严格 Fail-Closed，无任何硬编码回退）：
+1. `domain.ProjectFramework` 新增 `protagonist` 档案（name/identity/initial_realm/
+   goal/voice_tone/inventory）；创世提示词新增「0. 主角归属铁律」：灵感点名者即
+   主角，严禁改名换人/另立并列主角；key_characters 明示不含主角；
+2. `SeedGenesisArtifacts` 全量改为档案驱动；档案缺失 → 直接报错拒绝启动；
+   删除全部写死的主角名/仙侠物品/聚仙楼/凡骨残印/配角别名/写死腔调；
+3. 种子后一并剥离 `fw.Protagonist`（与 Factions/KeyCharacters/SeedHooks 同规）；
+4. 渲染提示词示例句去人物名。
+
+验证：`seed_test` 重写（档案驱动断言 + 无地点/道具自动种入 + 缺档案 Fail-Closed
+用例）；mock/fake 夹具同步注入 protagonist；全量 `go test ./... -race` 全绿。
+
 ### 后续待办
 
 - （无）——已知互斥缺口全部闭环。

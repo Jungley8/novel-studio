@@ -43,15 +43,43 @@ func SeedGenesisArtifacts(ctx context.Context, store GenesisSeedStore, proj *dom
 		return nil
 	}
 
-	initialRealm := "凡胎境"
-	if len(fw.PowerLadder) > 0 {
-		initialRealm = fw.PowerLadder[0].Realm
+	proto := fw.Protagonist
+	if proto == nil || strings.TrimSpace(proto.Name) == "" {
+		return fmt.Errorf("seed genesis: framework missing protagonist profile; regenerate the framework bootstrap")
 	}
 
-	protagonistName := "顾渊"
-	protagonistGoal := fw.ThemePremise
+	initialRealm := strings.TrimSpace(proto.InitialRealm)
+	if initialRealm == "" && len(fw.PowerLadder) > 0 {
+		initialRealm = fw.PowerLadder[0].Realm
+	}
+	if initialRealm == "" {
+		initialRealm = "初始"
+	}
+
+	protagonistName := strings.TrimSpace(proto.Name)
+	protagonistGoal := strings.TrimSpace(proto.Goal)
 	if protagonistGoal == "" {
-		protagonistGoal = "查明宗门覆灭真相，逆伐伪神"
+		protagonistGoal = fw.ThemePremise
+	}
+
+	var inventoryItems []string
+	for _, it := range proto.Inventory {
+		if trimmed := strings.TrimSpace(it); trimmed != "" {
+			inventoryItems = append(inventoryItems, trimmed)
+		}
+	}
+	inventoryText := strings.Join(inventoryItems, ", ")
+	if inventoryText == "" {
+		inventoryText = "无"
+	}
+	structuredItems := make([]domain.InventoryItem, 0, len(inventoryItems))
+	for _, it := range inventoryItems {
+		structuredItems = append(structuredItems, domain.InventoryItem{Name: it, Quantity: 1, Quality: "初始随身物", AcquiredAt: 0})
+	}
+
+	identityText := strings.TrimSpace(proto.Identity)
+	if identityText == "" {
+		identityText = "未设定"
 	}
 
 	projectID := proj.ID
@@ -63,22 +91,22 @@ func SeedGenesisArtifacts(ctx context.Context, store GenesisSeedStore, proj *dom
 		Category:           domain.CategoryCharacter,
 		Name:               protagonistName,
 		ColorTag:           "#f59e0b",
-		Summary:            fmt.Sprintf("全书核心主角 | 境界: %s | 动机: %s", initialRealm, protagonistGoal),
-		DetailsMarkdown:    fmt.Sprintf("### %s (全书核心主角)\n- **初始境界**: %s\n- **核心动机**: %s\n- **随身底牌**: 凡骨铁印x1, 粗布短褐x1, 引路符x1\n- **初始状态**: 良好\n", protagonistName, initialRealm, protagonistGoal),
+		Summary:            fmt.Sprintf("全书核心主角 | 身份: %s | 境界: %s | 动机: %s", identityText, initialRealm, protagonistGoal),
+		DetailsMarkdown:    fmt.Sprintf("### %s (全书核心主角)\n- **身份**: %s\n- **初始境界/实力**: %s\n- **核心动机**: %s\n- **随身物品**: %s\n- **初始状态**: 良好\n", protagonistName, identityText, initialRealm, protagonistGoal, inventoryText),
 		Archetype:          "PROTAGONIST",
-		VoiceTone:          "内敛隐忍，遇死地杀伐果决",
+		VoiceTone:          strings.TrimSpace(proto.VoiceTone),
 		CoreMotivation:     protagonistGoal,
 		CurrentDisposition: "FRIENDLY",
 		TrackingMode:       domain.TrackingModeAlwaysInject,
 		Aliases:            []string{"主角", protagonistName, fmt.Sprintf("%s (%s)", protagonistName, initialRealm)},
 		Realm:              initialRealm,
-		Inventory:          "凡骨铁印x1, 粗布短褐x1, 引路符x1",
+		Inventory:          inventoryText,
 		HealthStatus:       "良好",
 		StructuredLevel: &domain.PowerLevel{
 			Realm: initialRealm,
 			History: []domain.LevelTransition{
 				{
-					FromRealm: "凡俗白身",
+					FromRealm: "初始",
 					ToRealm:   initialRealm,
 					Chapter:   0,
 					Reason:    "创世开局设定",
@@ -86,13 +114,9 @@ func SeedGenesisArtifacts(ctx context.Context, store GenesisSeedStore, proj *dom
 				},
 			},
 		},
-		StructuredItems: []domain.InventoryItem{
-			{Name: "凡骨铁印", Quantity: 1, Quality: "上古不灭残印", AcquiredAt: 0},
-			{Name: "粗布短褐", Quantity: 1, Quality: "随身布衣", AcquiredAt: 0},
-			{Name: "引路符", Quantity: 1, Quality: "低阶符箓", AcquiredAt: 0},
-		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		StructuredItems: structuredItems,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
 	}
 	_ = store.SaveCodexEntry(ctx, protEntry)
 
@@ -111,8 +135,11 @@ func SeedGenesisArtifacts(ctx context.Context, store GenesisSeedStore, proj *dom
 		_ = store.SavePlotHook(ctx, hook)
 	}
 
-	// 2. Seed key cast characters into The Codex
+	// 2. Seed key cast characters into The Codex (protagonist excluded by contract)
 	for i, kc := range fw.KeyCharacters {
+		if strings.TrimSpace(kc.Name) == "" || strings.TrimSpace(kc.Name) == protagonistName {
+			continue
+		}
 		archetype := "SUPPORTING"
 		disposition := "NEUTRAL"
 		voiceTone := "言简意赅，语带锋芒"
@@ -121,25 +148,18 @@ func SeedGenesisArtifacts(ctx context.Context, store GenesisSeedStore, proj *dom
 		if strings.Contains(kc.Role, "宿敌") || strings.Contains(kc.Role, "魔") || strings.Contains(kc.Role, "反派") {
 			archetype = "ANTAGONIST"
 			disposition = "HOSTILE"
-			voiceTone = "言语极轻尖细，像钝刀刮生锈铁皮，伪善转为狰狞"
+			voiceTone = "表面客气，话里藏刀，真正发狠时语气反而更轻"
 			colorTag = "#f43f5e"
 		} else if strings.Contains(kc.Role, "搭档") || strings.Contains(kc.Role, "同盟") || strings.Contains(kc.Role, "女配") {
 			archetype = "DEUTERAGONIST"
 			disposition = "WARY"
-			voiceTone = "灵动中藏着敏锐算计，惊骇时语带轻颤"
+			voiceTone = "机敏直接，试探与真心并存"
 			colorTag = "#8b5cf6"
 		} else if strings.Contains(kc.Role, "导师") || strings.Contains(kc.Role, "领路") {
 			archetype = "MENTOR"
 			disposition = "FRIENDLY"
-			voiceTone = "沧桑威严，如老僧入定"
+			voiceTone = "沉稳克制，言简意深"
 			colorTag = "#3b82f6"
-		}
-
-		aliases := []string{}
-		if kc.Name == "楚掌柜" {
-			aliases = []string{"疯子楚", "白衣修罗"}
-		} else if kc.Name == "柳依依" {
-			aliases = []string{"小师妹", "柳姑娘"}
 		}
 
 		entry := &domain.CodexEntry{
@@ -155,40 +175,11 @@ func SeedGenesisArtifacts(ctx context.Context, store GenesisSeedStore, proj *dom
 			CoreMotivation:     kc.Goal,
 			CurrentDisposition: disposition,
 			TrackingMode:       domain.TrackingModeAutoMention,
-			Aliases:            aliases,
 			CreatedAt:          time.Now(),
 			UpdatedAt:          time.Now(),
 		}
 		_ = store.SaveCodexEntry(ctx, entry)
 	}
-
-	// 3. Seed Location & Item into The Codex
-	_ = store.SaveCodexEntry(ctx, &domain.CodexEntry{
-		ID:              fmt.Sprintf("codex_%s_loc_1", projectID),
-		ProjectID:       projectID,
-		Category:        domain.CategoryLocation,
-		Name:            "聚仙楼",
-		ColorTag:        "#eab308",
-		Summary:         "风雪隘口残破茶肆客栈，黄绫帘子破损，暗伏化龙暗哨与机关地道",
-		DetailsMarkdown: "北地官道上唯一的歇脚茶棚客栈，内设通天阁暗桩地道，是第一卷杀局起点。",
-		TrackingMode:    domain.TrackingModeAutoMention,
-		Aliases:         []string{"风雪茶肆", "聚仙客栈"},
-		CreatedAt:       time.Now(),
-		UpdatedAt:       time.Now(),
-	})
-	_ = store.SaveCodexEntry(ctx, &domain.CodexEntry{
-		ID:              fmt.Sprintf("codex_%s_item_1", projectID),
-		ProjectID:       projectID,
-		Category:        domain.CategoryItem,
-		Name:            "凡骨残印",
-		ColorTag:        "#06b6d4",
-		Summary:         "主角胸口深处的上古神纹残印，可化解魔毒，吞噬神明诅咒",
-		DetailsMarkdown: "上古宗门覆灭遗留的不灭凡铁残印，唯有凡人无灵根胎骨可驭，遇魔毒神威自显。",
-		TrackingMode:    domain.TrackingModeAutoMention,
-		Aliases:         []string{"残骨铁印", "凡骨铁印"},
-		CreatedAt:       time.Now(),
-		UpdatedAt:       time.Now(),
-	})
 
 	// 4. Seed Factions into The Codex
 	for i, f := range fw.Factions {
@@ -212,6 +203,7 @@ func SeedGenesisArtifacts(ctx context.Context, store GenesisSeedStore, proj *dom
 		_ = store.SaveCodexEntry(ctx, entry)
 	}
 
+	fw.Protagonist = nil
 	fw.Factions = nil
 	fw.KeyCharacters = nil
 	fw.SeedHooks = nil

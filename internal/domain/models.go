@@ -108,14 +108,27 @@ type VolumeSection struct {
 }
 
 // ProjectFramework encapsulates the macro architecture, lore, power scale, and volume questlines.
+// ProtagonistProfile is the bootstrap-generated lead-character dossier used to
+// seed the protagonist codex entry. It must honor any protagonist explicitly
+// named in the author's concept; every project has exactly one.
+type ProtagonistProfile struct {
+	Name         string   `json:"name"`
+	Identity     string   `json:"identity"`
+	InitialRealm string   `json:"initial_realm"`
+	Goal         string   `json:"goal"`
+	VoiceTone    string   `json:"voice_tone"`
+	Inventory    []string `json:"inventory,omitempty"`
+}
+
 type ProjectFramework struct {
-	ThemePremise  string             `json:"theme_premise"`
-	WorldAxioms   []string           `json:"world_axioms"`
-	PowerLadder   []PowerLadderTier  `json:"power_ladder"`
-	Factions      []Faction          `json:"factions"`
-	KeyCharacters []CharacterProfile `json:"key_characters"`
-	VolumeArcs    []VolumeArc        `json:"volume_arcs"`
-	SeedHooks     []PlotHook         `json:"seed_hooks,omitempty"`
+	ThemePremise  string              `json:"theme_premise"`
+	Protagonist   *ProtagonistProfile `json:"protagonist"`
+	WorldAxioms   []string            `json:"world_axioms"`
+	PowerLadder   []PowerLadderTier   `json:"power_ladder"`
+	Factions      []Faction           `json:"factions"`
+	KeyCharacters []CharacterProfile  `json:"key_characters"`
+	VolumeArcs    []VolumeArc         `json:"volume_arcs"`
+	SeedHooks     []PlotHook          `json:"seed_hooks,omitempty"`
 }
 
 // Project represents a novel book project.

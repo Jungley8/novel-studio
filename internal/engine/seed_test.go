@@ -42,7 +42,15 @@ func TestSeedGenesisArtifacts(t *testing.T) {
 
 	fw := &domain.ProjectFramework{
 		ThemePremise: "逆天改命，查明血仇",
-		WorldAxioms:  []string{"众生皆为草芥", "唯争一线生机"},
+		Protagonist: &domain.ProtagonistProfile{
+			Name:         "沈青梧",
+			Identity:     "边荒游侠",
+			InitialRealm: "凡胎境",
+			Goal:         "查明血案真相，踏平伪神",
+			VoiceTone:    "沉稳果决",
+			Inventory:    []string{"粗布行囊", "青铜残片"},
+		},
+		WorldAxioms: []string{"众生皆为草芥", "唯争一线生机"},
 		PowerLadder: []domain.PowerLadderTier{
 			{Realm: "凡胎境", Bottleneck: "肉身凡胎", Drawback: "气血枯败"},
 		},
@@ -106,14 +114,14 @@ func TestSeedGenesisArtifacts(t *testing.T) {
 	if protEntry.Category != domain.CategoryCharacter {
 		t.Errorf("expected protagonist category %s, got %s", domain.CategoryCharacter, protEntry.Category)
 	}
-	if protEntry.Name != "顾渊" {
-		t.Errorf("expected protagonist name 顾渊, got %s", protEntry.Name)
+	if protEntry.Name != "沈青梧" {
+		t.Errorf("expected protagonist name 沈青梧, got %s", protEntry.Name)
 	}
 	if protEntry.StructuredLevel == nil || protEntry.StructuredLevel.Realm != "凡胎境" {
 		t.Errorf("expected StructuredLevel with realm 凡胎境, got %+v", protEntry.StructuredLevel)
 	}
-	if len(protEntry.StructuredItems) == 0 {
-		t.Errorf("expected protagonist StructuredItems to be populated")
+	if len(protEntry.StructuredItems) != 2 || protEntry.StructuredItems[0].Name != "粗布行囊" {
+		t.Errorf("expected profile-driven StructuredItems, got %+v", protEntry.StructuredItems)
 	}
 
 	// 2. 断言伏笔落库
@@ -137,8 +145,8 @@ func TestSeedGenesisArtifacts(t *testing.T) {
 			if c.Archetype != "MENTOR" {
 				t.Errorf("expected archetype MENTOR for 楚掌柜, got %s", c.Archetype)
 			}
-			if len(c.Aliases) == 0 || c.Aliases[0] != "疯子楚" {
-				t.Errorf("expected aliases for 楚掌柜, got %v", c.Aliases)
+			if len(c.Aliases) != 0 {
+				t.Errorf("expected no hardcoded aliases for 楚掌柜, got %v", c.Aliases)
 			}
 		}
 	}
@@ -147,13 +155,13 @@ func TestSeedGenesisArtifacts(t *testing.T) {
 	}
 
 	locEntries, err := s.ListCodexEntries(ctx, proj.ID, domain.CategoryLocation)
-	if err != nil || len(locEntries) == 0 || locEntries[0].Name != "聚仙楼" {
-		t.Errorf("expected location 聚仙楼 to be seeded, got %v", locEntries)
+	if err != nil || len(locEntries) != 0 {
+		t.Errorf("expected no auto-seeded locations (genre-agnostic seeding), got %v", locEntries)
 	}
 
 	itemEntries, err := s.ListCodexEntries(ctx, proj.ID, domain.CategoryItem)
-	if err != nil || len(itemEntries) == 0 || itemEntries[0].Name != "凡骨残印" {
-		t.Errorf("expected item 凡骨残印 to be seeded, got %v", itemEntries)
+	if err != nil || len(itemEntries) != 0 {
+		t.Errorf("expected no auto-seeded items (genre-agnostic seeding), got %v", itemEntries)
 	}
 
 	facEntries, err := s.ListCodexEntries(ctx, proj.ID, domain.CategoryFaction)
@@ -162,9 +170,9 @@ func TestSeedGenesisArtifacts(t *testing.T) {
 	}
 
 	// 4. 断言 fw 内存对象已剥离
-	if fw.Factions != nil || fw.KeyCharacters != nil || fw.SeedHooks != nil {
-		t.Fatalf("expected transient fields in memory fw to be stripped (nil), got factions=%v, chars=%v, hooks=%v",
-			fw.Factions, fw.KeyCharacters, fw.SeedHooks)
+	if fw.Protagonist != nil || fw.Factions != nil || fw.KeyCharacters != nil || fw.SeedHooks != nil {
+		t.Fatalf("expected transient fields in memory fw to be stripped (nil), got protagonist=%v, factions=%v, chars=%v, hooks=%v",
+			fw.Protagonist, fw.Factions, fw.KeyCharacters, fw.SeedHooks)
 	}
 
 	// 5. 断言 GetProject 读到剥离后的 framework
@@ -183,5 +191,17 @@ func TestSeedGenesisArtifacts(t *testing.T) {
 	}
 	if len(savedProj.Framework.SeedHooks) != 0 {
 		t.Errorf("expected saved framework seed hooks to be empty, got %d", len(savedProj.Framework.SeedHooks))
+	}
+
+	// 6. Fail-closed: a framework without a protagonist profile must be rejected.
+	bareFW := &domain.ProjectFramework{ThemePremise: "缺失主角的框架"}
+	bareProj := &domain.Project{
+		ID:        "proj_test_seed_bare",
+		Title:     "无主之书",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := engine.SeedGenesisArtifacts(ctx, s, bareProj, bareFW); err == nil {
+		t.Fatalf("expected fail-closed error when framework lacks a protagonist profile")
 	}
 }

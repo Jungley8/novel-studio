@@ -1295,6 +1295,14 @@ func (c *HTTPLLMClient) generateMockResponse(model, systemPrompt, userPrompt str
 		cTokens := 600
 		resp := `{
   "theme_premise": "凡人无灵根，天道被不可名状的神明寄生；修士飞升实为祭品；主角掌凡骨铁印隐忍弑神",
+  "protagonist": {
+    "name": "顾渊",
+    "identity": "边荒无灵根凡人",
+    "initial_realm": "凡胎境",
+    "goal": "查明宗门覆灭真相，隐忍弑神",
+    "voice_tone": "内敛隐忍，遇死地杀伐果决",
+    "inventory": ["凡骨铁印", "粗布短褐", "引路符"]
+  },
   "world_axioms": [
     "不可直视神明法相，凡人目睹必发狂化肉泥",
     "天地灵气皆附带神明蛊毒，修真境界越高异化越深",
