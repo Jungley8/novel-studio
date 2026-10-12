@@ -338,6 +338,27 @@ func (s *Server) handleWorkshopProduce(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 
+	// Fail-Closed：并发生产互斥。人工点击“一键成章”视为人工接管，
+	// 先释放自身的编辑租约，再登记生产锁（调度器运行期间会跳过该作品）。
+	s.coord.ReleaseEdit(projectID)
+	release, err := s.coord.BeginProduction(projectID, "一键成章")
+	if err != nil {
+		if info, active := s.coord.Production(projectID); active {
+			chapterNote := ""
+			if info.Chapter > 0 {
+				chapterNote = fmt.Sprintf("·第 %d 章", info.Chapter)
+			}
+			errorResponse(w, http.StatusConflict, fmt.Sprintf("该作品正在生产（%s%s），请等待完成后再试", info.Label, chapterNote))
+		} else {
+			errorResponse(w, http.StatusConflict, "作品存在其它窗口的人工编辑租约，已拒绝并发生产")
+		}
+		return
+	}
+	defer release()
+	if req.ChapterIndex > 0 {
+		s.coord.SetProductionChapter(projectID, req.ChapterIndex)
+	}
+
 	isSSE := strings.Contains(r.Header.Get("Accept"), "text/event-stream") || r.URL.Query().Get("stream") == "true"
 	if isSSE {
 		// Clear any write deadline for this long-lived SSE streaming connection

@@ -172,6 +172,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 		s.handleRewriteDraft(w, r, projectID)
 	case "checkpoint":
 		s.handleProjectCheckpoint(w, r, projectID)
+	case "edit-lease":
+		s.handleProjectEditLease(w, r, projectID)
 	case "framework":
 		s.handleProjectFramework(w, r, projectID, parts)
 	case "codex":
@@ -252,6 +254,10 @@ func (s *Server) handleProjectChapters(w http.ResponseWriter, r *http.Request, p
 			errorResponse(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		// Fail-Closed：后台生产锁生效期间拒绝人工定稿（避免并发覆盖正史与状态双写）。
+		if s.rejectIfProducing(w, projectID, "定稿") {
+			return
+		}
 		c.ProjectID = projectID
 		if c.ID == "" {
 			c.ID = fmt.Sprintf("ch_%s_%d", projectID, c.ChapterIndex)
@@ -323,6 +329,10 @@ func (s *Server) handleProjectChapterSub(w http.ResponseWriter, r *http.Request,
 			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
+		// Fail-Closed：后台生产锁生效期间拒绝撤回归档（状态时钟被生产方掌握）。
+		if s.rejectIfProducing(w, projectID, "撤回归档") {
+			return
+		}
 		cp, updatedProj, err := s.store.UncommitChapter(ctx, projectID, chapterIndex)
 		if err != nil {
 			if errors.Is(err, store.ErrNonLatestChapter) {
@@ -353,6 +363,10 @@ func (s *Server) handleProjectChapterSub(w http.ResponseWriter, r *http.Request,
 		}
 		jsonResponse(w, http.StatusOK, chapter)
 	case http.MethodDelete:
+		// Fail-Closed：后台生产锁生效期间拒绝删除/撤回章节。
+		if s.rejectIfProducing(w, projectID, "删除或撤回章节") {
+			return
+		}
 		toDraft := r.URL.Query().Get("to_draft") == "true"
 		if toDraft {
 			cp, updatedProj, err := s.store.UncommitChapter(ctx, projectID, chapterIndex)
@@ -383,6 +397,55 @@ func (s *Server) handleProjectChapterSub(w http.ResponseWriter, r *http.Request,
 			"status":  "deleted",
 			"message": fmt.Sprintf("第 %d 章已成功删除", chapterIndex),
 		})
+	default:
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// rejectIfProducing 在后台生产锁生效期间拒绝正史写入口；返回 true 表示已写出 409。
+func (s *Server) rejectIfProducing(w http.ResponseWriter, projectID, action string) bool {
+	info, active := s.coord.Production(projectID)
+	if !active {
+		return false
+	}
+	chapterNote := ""
+	if info.Chapter > 0 {
+		chapterNote = fmt.Sprintf("·第 %d 章", info.Chapter)
+	}
+	errorResponse(w, http.StatusConflict, fmt.Sprintf("该作品正在后台生产（%s%s），请等待完成后再%s", info.Label, chapterNote, action))
+	return true
+}
+
+// handleProjectEditLease 处理前台编辑租约：
+//   - POST：获取/续期（默认 TTL 120s，允许 30~600s）
+//   - DELETE：释放
+//
+// 租约存在期间，调度器不会对同一作品启动自动续产（Fail-Closed）。
+func (s *Server) handleProjectEditLease(w http.ResponseWriter, r *http.Request, projectID string) {
+	switch r.Method {
+	case http.MethodPost:
+		var req struct {
+			TTLSeconds int `json:"ttl_seconds"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req) // 允许空 Body（使用默认 TTL）
+		ttl := req.TTLSeconds
+		if ttl <= 0 {
+			ttl = 120
+		}
+		if ttl < 30 {
+			ttl = 30
+		}
+		if ttl > 600 {
+			ttl = 600
+		}
+		expiry := s.coord.AcquireEdit(projectID, time.Duration(ttl)*time.Second)
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"status":     "held",
+			"expires_at": expiry.UTC().Format(time.RFC3339),
+		})
+	case http.MethodDelete:
+		s.coord.ReleaseEdit(projectID)
+		jsonResponse(w, http.StatusOK, map[string]string{"status": "released"})
 	default:
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
 	}

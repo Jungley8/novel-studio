@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jungley8/novel-studio/internal/coord"
 	"github.com/Jungley8/novel-studio/internal/domain"
 )
 
@@ -278,6 +279,51 @@ func TestDueSlot(t *testing.T) {
 				t.Errorf("dueSlot slot = %v, want %v", gotSlot, tt.wantSlot)
 			}
 		})
+	}
+}
+
+// 前台编辑租约生效（coord.ErrBusy）时：跳过该作品、不记录 last_run（下一趟重试）、
+// 不告警、不暂停自动化。
+func TestRunOnce_AutomationBusySkip(t *testing.T) {
+	now := time.Date(2026, 10, 11, 10, 0, 0, 0, time.UTC)
+	st := newFakeStore()
+	st.automations = []*domain.ProjectAutomation{
+		{
+			ProjectID:    "proj_edit",
+			ProjectTitle: "正在被编辑的书",
+			Enabled:      true,
+			Times:        []string{"09:00"},
+			QuotaKind:    domain.QuotaKindChapters,
+			QuotaCount:   1,
+		},
+	}
+	cont := &fakeContinuationRunner{
+		fn: func(ctx context.Context, projectID string, kind domain.AutomationQuotaKind, count int) (bool, string, error) {
+			return false, "", coord.ErrBusy
+		},
+	}
+	book := &fakeBookRunner{}
+	n := &fakeNotifier{}
+
+	sched := New(st, cont, book, n, Options{
+		Now: func() time.Time { return now },
+	})
+
+	count, err := sched.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected RunOnce err: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("busy project must not be counted as executed, got %d", count)
+	}
+	if len(st.recordedRuns) != 0 {
+		t.Fatalf("busy skip must not record a run (due slot retries next tick), got %+v", st.recordedRuns)
+	}
+	if len(st.pausedCalls) != 0 {
+		t.Fatalf("busy skip must not pause automation, got %+v", st.pausedCalls)
+	}
+	if len(n.titles) != 0 {
+		t.Fatalf("busy skip must not notify, got %+v", n.titles)
 	}
 }
 

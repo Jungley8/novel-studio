@@ -67,9 +67,17 @@ func (r *schedulerRuntime) RunContinuation(
 	count int,
 	progress func(string),
 ) (halted bool, message string, err error) {
-	if r.srv == nil || r.srv.workshop == nil || r.srv.store == nil {
-		return false, "", errors.New("workshop or store not configured")
+	if r.srv == nil || r.srv.workshop == nil || r.srv.store == nil || r.srv.coord == nil {
+		return false, "", errors.New("workshop, store or coordinator not configured")
 	}
+
+	// Fail-Closed：人工编辑租约未过期或已有生产任务时拒绝开工；
+	// 调度器收到 coord.ErrBusy 会跳过本轮并在下一趟自动重试。
+	release, err := r.srv.coord.BeginProduction(projectID, "排程自动续产")
+	if err != nil {
+		return false, "", err
+	}
+	defer release()
 
 	words, loops, style, reasoningModel, writerModel, reviewerModel := r.resolveDefaults()
 
@@ -81,6 +89,7 @@ func (r *schedulerRuntime) RunContinuation(
 				return false, "", fmt.Errorf("list chapters for project %s: %w", projectID, err)
 			}
 			next := nextChapterIndex(chapters)
+			r.srv.coord.SetProductionChapter(projectID, next)
 
 			var onProg engine.ProgressCallback
 			if progress != nil {
@@ -129,6 +138,7 @@ func (r *schedulerRuntime) RunContinuation(
 				return false, "", fmt.Errorf("list chapters for project %s: %w", projectID, err)
 			}
 			next := nextChapterIndex(chapters)
+			r.srv.coord.SetProductionChapter(projectID, 0)
 
 			arcs := engine.BackfillVolumeArcs(project.Framework.VolumeArcs)
 			arc := findArcForChapter(arcs, next)
@@ -139,6 +149,9 @@ func (r *schedulerRuntime) RunContinuation(
 			var onProg func(engine.VolumeEvent)
 			if progress != nil {
 				onProg = func(ev engine.VolumeEvent) {
+					if ev.ChapterIndex > 0 {
+						r.srv.coord.SetProductionChapter(projectID, ev.ChapterIndex)
+					}
 					progress(ev.Message)
 				}
 			}

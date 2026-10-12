@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Jungley8/novel-studio/internal/coord"
 	"github.com/Jungley8/novel-studio/internal/domain"
 )
 
@@ -215,6 +216,12 @@ func (s *Scheduler) RunOnce(ctx context.Context) (int, error) {
 		}
 
 		halted, msg, err := s.cont.RunContinuation(ctx, pid, a.QuotaKind, a.QuotaCount, progress)
+		if errors.Is(err, coord.ErrBusy) {
+			// 作品正被人工编辑或已有生产任务在跑：本轮跳过，不记录 last_run，
+			// 下一趟 tick 自动重试（用户收工 / 生产结束后自然衔接）。
+			s.opts.Logf("[scheduler] skip project %s: %v", pid, err)
+			continue
+		}
 		if err != nil {
 			_ = s.store.RecordAutomationRun(ctx, pid, "error", err.Error(), now)
 			s.notify("NovelStudio 自动批产失败", fmt.Sprintf("《%s》运行出错：%v", title, err))

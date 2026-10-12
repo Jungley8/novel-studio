@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Jungley8/novel-studio/internal/config"
+	"github.com/Jungley8/novel-studio/internal/coord"
 	"github.com/Jungley8/novel-studio/internal/engine"
 	"github.com/Jungley8/novel-studio/internal/notify"
 	"github.com/Jungley8/novel-studio/internal/scheduler"
@@ -30,6 +31,7 @@ type Server struct {
 	workshop    *engine.ChapterWorkshop
 	scheduler   *scheduler.Scheduler
 	schedCancel context.CancelFunc
+	coord       *coord.Coordinator
 	mux         *http.ServeMux
 	fs          fs.FS
 }
@@ -80,6 +82,7 @@ func New(
 		chronicle:   chronicle,
 		qualityGate: qualityGate,
 		workshop:    workshop,
+		coord:       coord.New(),
 		mux:         http.NewServeMux(),
 		fs:          webFS,
 	}
