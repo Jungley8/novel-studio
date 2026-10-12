@@ -72,7 +72,9 @@ type CharacterProfile struct {
 	Name    string `json:"name"`
 	Role    string `json:"role"` // 领路人/宿敌/同盟/异教首领
 	Realm   string `json:"realm"`
-	Goal    string `json:"goal"`
+	Want    string `json:"want"`
+	Need    string `json:"need"`
+	Ghost   string `json:"ghost"`
 	FateArc string `json:"fate_arc"` // 宿命终局
 }
 
@@ -115,7 +117,9 @@ type ProtagonistProfile struct {
 	Name         string   `json:"name"`
 	Identity     string   `json:"identity"`
 	InitialRealm string   `json:"initial_realm"`
-	Goal         string   `json:"goal"`
+	Want         string   `json:"want"`
+	Need         string   `json:"need"`
+	Ghost        string   `json:"ghost"`
 	VoiceTone    string   `json:"voice_tone"`
 	Inventory    []string `json:"inventory,omitempty"`
 }

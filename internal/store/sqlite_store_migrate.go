@@ -102,7 +102,9 @@ func (s *SQLiteStore) migrate() error {
 		tracking_mode TEXT DEFAULT 'AUTO_MENTION',
 		archetype TEXT DEFAULT '',
 		voice_tone TEXT DEFAULT '',
-		core_motivation TEXT DEFAULT '',
+		want TEXT DEFAULT '',
+		need TEXT DEFAULT '',
+		ghost TEXT DEFAULT '',
 		current_disposition TEXT DEFAULT '',
 		realm TEXT DEFAULT '',
 		inventory TEXT DEFAULT '',
@@ -374,7 +376,9 @@ func (s *SQLiteStore) migrate() error {
 	_, _ = s.db.Exec(`UPDATE projects SET default_narrative_style = 'hardboiled' WHERE default_narrative_style IS NULL OR default_narrative_style = '';`)
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN archetype TEXT DEFAULT '';`)
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN voice_tone TEXT DEFAULT '';`)
-	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN core_motivation TEXT DEFAULT '';`)
+	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN want TEXT DEFAULT '';`)
+	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN need TEXT DEFAULT '';`)
+	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN ghost TEXT DEFAULT '';`)
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN current_disposition TEXT DEFAULT '';`)
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN realm TEXT DEFAULT '';`)
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN inventory TEXT DEFAULT '';`)
@@ -384,6 +388,13 @@ func (s *SQLiteStore) migrate() error {
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN alignment TEXT DEFAULT '';`)
 	_, _ = s.db.Exec(`ALTER TABLE codex_entries ADD COLUMN threat_level TEXT DEFAULT '';`)
 	_, _ = s.db.Exec(`ALTER TABLE chapter_quality_metrics ADD COLUMN outcome TEXT NOT NULL DEFAULT 'committed';`)
+
+	var coreMotivationColCount int
+	_ = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('codex_entries') WHERE name = 'core_motivation'`).Scan(&coreMotivationColCount)
+	if coreMotivationColCount > 0 {
+		_, _ = s.db.Exec(`UPDATE codex_entries SET want = core_motivation WHERE (want IS NULL OR want = '') AND core_motivation IS NOT NULL AND core_motivation != ''`)
+		_, _ = s.db.Exec(`ALTER TABLE codex_entries DROP COLUMN core_motivation`) // SQLite 3.35+（modernc v1.60.1 满足）
+	}
 
 	// One-time data migration from legacy projects.protagonist_json into codex_entries
 	var colCount int
@@ -435,10 +446,10 @@ func (s *SQLiteStore) migrate() error {
 						_, _ = s.db.Exec(`
 							INSERT INTO codex_entries (
 								id, project_id, category, name, color_tag, summary, details_markdown,
-								tracking_mode, archetype, voice_tone, core_motivation, current_disposition,
+								tracking_mode, archetype, voice_tone, want, need, ghost, current_disposition,
 								realm, inventory, health_status, structured_level_json, structured_items_json,
 								created_at, updated_at
-							) VALUES (?, ?, 'CHARACTER', ?, '#fbbf24', ?, ?, 'ALWAYS_INJECT', 'PROTAGONIST', '', ?, '', ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+							) VALUES (?, ?, 'CHARACTER', ?, '#fbbf24', ?, ?, 'ALWAYS_INJECT', 'PROTAGONIST', '', ?, '', '', '', ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
 							ON CONFLICT(id) DO NOTHING
 						`, eid, lr.pid, name, "全书核心主角", "【全书核心主角档案】", legacy.CoreGoal, realm, legacy.Inventory, legacy.HealthStatus, string(levelBytes), string(itemsBytes))
 					}
@@ -479,9 +490,9 @@ func (s *SQLiteStore) migrate() error {
 						_, _ = s.db.Exec(`
 							INSERT INTO codex_entries (
 								id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
-								archetype, voice_tone, core_motivation, current_disposition, realm, inventory, health_status,
+								archetype, voice_tone, want, need, ghost, current_disposition, realm, inventory, health_status,
 								structured_level_json, structured_items_json, alignment, threat_level, created_at, updated_at
-							) VALUES (?, ?, 'FACTION', ?, '', ?, ?, 'AUTO_MENTION', '', '', '', '', '', '', '', '', '', ?, ?, datetime('now'), datetime('now'))
+							) VALUES (?, ?, 'FACTION', ?, '', ?, ?, 'AUTO_MENTION', '', '', '', '', '', '', '', '', '', '', '', ?, ?, datetime('now'), datetime('now'))
 							ON CONFLICT(id) DO NOTHING
 						`, entryID, fr.pid, fac.Name, fmt.Sprintf("立场: %s | 威胁度: %s", fac.Alignment, fac.ThreatLevel), fac.Doctrine, fac.Alignment, fac.ThreatLevel)
 					}

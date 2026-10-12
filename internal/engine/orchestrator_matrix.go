@@ -204,7 +204,7 @@ func (o *Orchestrator) AnalyzeProtagonistState(
 		updated.Inventory = dto.Inventory
 	}
 	if dto.CoreGoal != "" {
-		updated.CoreMotivation = dto.CoreGoal
+		updated.Want = dto.CoreGoal
 		updated.Summary = dto.CoreGoal
 	}
 	if dto.HealthStatus != "" {

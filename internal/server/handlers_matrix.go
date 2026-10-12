@@ -96,8 +96,14 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 			if protEntry.Realm == "" {
 				protEntry.Realm = initialRealm
 			}
-			if protEntry.CoreMotivation == "" {
-				protEntry.CoreMotivation = fw.ThemePremise
+			if protEntry.Want == "" && fw.Protagonist != nil {
+				protEntry.Want = fw.Protagonist.Want
+			}
+			if protEntry.Need == "" && fw.Protagonist != nil {
+				protEntry.Need = fw.Protagonist.Need
+			}
+			if protEntry.Ghost == "" && fw.Protagonist != nil {
+				protEntry.Ghost = fw.Protagonist.Ghost
 			}
 			if protEntry.Archetype == "" {
 				protEntry.Archetype = "PROTAGONIST"
@@ -137,7 +143,10 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 				ProjectID:       projectID,
 				Category:        domain.CategoryCharacter,
 				Name:            kc.Name,
-				Summary:         fmt.Sprintf("定位: %s | 境界: %s | 动机: %s", kc.Role, kc.Realm, kc.Goal),
+				Want:            kc.Want,
+				Need:            kc.Need,
+				Ghost:           kc.Ghost,
+				Summary:         fmt.Sprintf("定位: %s | 境界: %s | 欲望: %s", kc.Role, kc.Realm, kc.Want),
 				DetailsMarkdown: fmt.Sprintf("宿命终局: %s", kc.FateArc),
 				TrackingMode:    domain.TrackingModeAutoMention,
 				CreatedAt:       time.Now(),

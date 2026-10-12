@@ -46,7 +46,9 @@ func TestSeedGenesisArtifacts(t *testing.T) {
 			Name:         "沈青梧",
 			Identity:     "边荒游侠",
 			InitialRealm: "凡胎境",
-			Goal:         "查明血案真相，踏平伪神",
+			Want:         "查明血案真相，踏平伪神",
+			Need:         "放下执念，接纳同道",
+			Ghost:        "家族一夜被屠，唯独自己苟活",
 			VoiceTone:    "沉稳果决",
 			Inventory:    []string{"粗布行囊", "青铜残片"},
 		},
@@ -59,7 +61,9 @@ func TestSeedGenesisArtifacts(t *testing.T) {
 				Name:    "楚掌柜",
 				Role:    "引路导师",
 				Realm:   "金丹境",
-				Goal:    "护道周全",
+				Want:    "护道周全",
+				Need:    "打破宿命，不再做无谓牺牲",
+				Ghost:   "曾眼睁睁看着前代圣子夭折",
 				FateArc: "功成身退",
 			},
 		},
@@ -123,6 +127,9 @@ func TestSeedGenesisArtifacts(t *testing.T) {
 	if len(protEntry.StructuredItems) != 2 || protEntry.StructuredItems[0].Name != "粗布行囊" {
 		t.Errorf("expected profile-driven StructuredItems, got %+v", protEntry.StructuredItems)
 	}
+	if protEntry.Want != "查明血案真相，踏平伪神" || protEntry.Need != "放下执念，接纳同道" || protEntry.Ghost != "家族一夜被屠，唯独自己苟活" {
+		t.Errorf("expected protagonist Want/Need/Ghost, got Want=%q, Need=%q, Ghost=%q", protEntry.Want, protEntry.Need, protEntry.Ghost)
+	}
 
 	// 2. 断言伏笔落库
 	hooks, err := s.ListPlotHooks(ctx, proj.ID)
@@ -147,6 +154,9 @@ func TestSeedGenesisArtifacts(t *testing.T) {
 			}
 			if len(c.Aliases) != 0 {
 				t.Errorf("expected no hardcoded aliases for 楚掌柜, got %v", c.Aliases)
+			}
+			if c.Want != "护道周全" || c.Need != "打破宿命，不再做无谓牺牲" || c.Ghost != "曾眼睁睁看着前代圣子夭折" {
+				t.Errorf("expected mentor Want/Need/Ghost, got Want=%q, Need=%q, Ghost=%q", c.Want, c.Need, c.Ghost)
 			}
 		}
 	}

@@ -61,7 +61,9 @@ type CodexEntry struct {
 	TrackingMode       TrackingMode     `json:"tracking_mode"`
 	Archetype          string           `json:"archetype,omitempty"`           // 角色定位: "PROTAGONIST" | "ANTAGONIST" | "DEUTERAGONIST" | "MENTOR" | "SUPPORTING"
 	VoiceTone          string           `json:"voice_tone,omitempty"`          // 台词声口与语言风格 (如: 惜字如金、冷嘲热讽、文雅阴柔)
-	CoreMotivation     string           `json:"core_motivation,omitempty"`     // 核心底层动机与软肋
+	Want               string           `json:"want,omitempty"`                // 内在欲望：角色自以为追求的外在目标（可能被执念扭曲）
+	Need               string           `json:"need,omitempty"`                // 真实需求：角色真正需要面对与成长的内心课题（常与 Want 冲突）
+	Ghost              string           `json:"ghost,omitempty"`               // 核心鬼魂：过去创伤/执念，驱动其恐惧与扭曲行为
 	CurrentDisposition string           `json:"current_disposition,omitempty"` // 当前对主角立场态势: "HOSTILE" | "WARY" | "NEUTRAL" | "FRIENDLY" | "DEVOTED"
 	Progressions       []Progression    `json:"progressions,omitempty"`
 	Relations          []EntityRelation `json:"relations,omitempty"`

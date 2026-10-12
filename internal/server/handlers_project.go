@@ -711,8 +711,14 @@ func (s *Server) handleProjectStateMachine(w http.ResponseWriter, r *http.Reques
 		if update.Summary != "" {
 			protEntry.Summary = update.Summary
 		}
-		if update.CoreMotivation != "" {
-			protEntry.CoreMotivation = update.CoreMotivation
+		if update.Want != "" {
+			protEntry.Want = update.Want
+		}
+		if update.Need != "" {
+			protEntry.Need = update.Need
+		}
+		if update.Ghost != "" {
+			protEntry.Ghost = update.Ghost
 		}
 		if update.StructuredLevel != nil {
 			protEntry.StructuredLevel = update.StructuredLevel
@@ -820,6 +826,32 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 
 	// 注册核心主角至设定集 (Codex)
 	protName := "主角"
+	protWant := ""
+	protNeed := ""
+	protGhost := ""
+	if fw.Protagonist != nil {
+		if strings.TrimSpace(fw.Protagonist.Name) != "" {
+			protName = strings.TrimSpace(fw.Protagonist.Name)
+		}
+		protWant = strings.TrimSpace(fw.Protagonist.Want)
+		protNeed = strings.TrimSpace(fw.Protagonist.Need)
+		protGhost = strings.TrimSpace(fw.Protagonist.Ghost)
+	}
+	summaryWant := protWant
+	if summaryWant == "" {
+		summaryWant = fw.ThemePremise
+	}
+
+	protDetailsSb := strings.Builder{}
+	protDetailsSb.WriteString(fmt.Sprintf("【全书核心主角档案】\n- 初始境界：%s\n- 外在欲望：%s\n", initialRealm, summaryWant))
+	if protNeed != "" {
+		protDetailsSb.WriteString(fmt.Sprintf("- 真实需求：%s\n", protNeed))
+	}
+	if protGhost != "" {
+		protDetailsSb.WriteString(fmt.Sprintf("- 核心创伤：%s\n", protGhost))
+	}
+	protDetailsSb.WriteString("- 随身底牌与物品：随身物品待起草\n- 当前状态：良好")
+
 	protEntry := &domain.CodexEntry{
 		ID:              fmt.Sprintf("codex_%s_pro", projectID),
 		ProjectID:       projectID,
@@ -827,9 +859,12 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 		Archetype:       "PROTAGONIST",
 		Name:            protName,
 		Realm:           initialRealm,
+		Want:            protWant,
+		Need:            protNeed,
+		Ghost:           protGhost,
 		Aliases:         []string{"主角", fmt.Sprintf("%s (%s)", protName, initialRealm)},
-		Summary:         fmt.Sprintf("全书核心主角 | 初始境界: %s | 核心长线动机: %s", initialRealm, fw.ThemePremise),
-		DetailsMarkdown: fmt.Sprintf("【全书核心主角档案】\n- 初始境界：%s\n- 核心终极目标：%s\n- 随身底牌与物品：随身物品待起草\n- 当前状态：良好", initialRealm, fw.ThemePremise),
+		Summary:         fmt.Sprintf("全书核心主角 | 初始境界: %s | 欲望: %s", initialRealm, summaryWant),
+		DetailsMarkdown: protDetailsSb.String(),
 		Inventory:       "随身物品待起草",
 		HealthStatus:    "良好",
 		TrackingMode:    domain.TrackingModeAlwaysInject,
@@ -869,7 +904,10 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 			ProjectID:       projectID,
 			Category:        domain.CategoryCharacter,
 			Name:            kc.Name,
-			Summary:         fmt.Sprintf("定位: %s | 境界: %s | 动机: %s", kc.Role, kc.Realm, kc.Goal),
+			Want:            kc.Want,
+			Need:            kc.Need,
+			Ghost:           kc.Ghost,
+			Summary:         fmt.Sprintf("定位: %s | 境界: %s | 欲望: %s", kc.Role, kc.Realm, kc.Want),
 			DetailsMarkdown: fmt.Sprintf("宿命终局: %s", kc.FateArc),
 			TrackingMode:    domain.TrackingModeAutoMention,
 			CreatedAt:       time.Now(),

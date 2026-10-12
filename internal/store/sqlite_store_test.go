@@ -691,7 +691,9 @@ func TestSQLiteStore_MultiCharacterMutationCommit(t *testing.T) {
 		Summary:            "聚仙楼暗桩掌柜，实为魔修潜伏者",
 		Archetype:          "ANTAGONIST",
 		VoiceTone:          "阴鸷寡言，常带讥讽冷笑",
-		CoreMotivation:     "搜集修士精血向魔尊邀功",
+		Want:               "搜集修士精血向魔尊邀功",
+		Need:               "脱离魔宗钳制自立门户",
+		Ghost:              "昔年叛逃正道的血誓咒印",
 		CurrentDisposition: "WARY",
 		TrackingMode:       domain.TrackingModeAlwaysInject,
 	}
@@ -708,7 +710,9 @@ func TestSQLiteStore_MultiCharacterMutationCommit(t *testing.T) {
 		Summary:            "同门暗哨，精通符箓易容",
 		Archetype:          "DEUTERAGONIST",
 		VoiceTone:          "娇憨机敏，语速极快",
-		CoreMotivation:     "寻找失踪的亲兄",
+		Want:               "寻找失踪的亲兄",
+		Need:               "承认兄长早已身死道消",
+		Ghost:              "亲眼目睹宗门覆灭的梦魇",
 		CurrentDisposition: "FRIENDLY",
 		TrackingMode:       domain.TrackingModeAutoMention,
 	}
@@ -992,5 +996,100 @@ func TestSQLiteStore_ListNeedsHumanCheckpoints(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unmarshal checkpoint") {
 		t.Errorf("expected error message mentioning unmarshal checkpoint, got: %v", err)
+	}
+}
+
+func TestCodexEntry_InnerPsy_Roundtrip(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "roundtrip.db")
+	s, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	defer s.Close()
+
+	proj := &domain.Project{
+		ID:        "proj_roundtrip",
+		Title:     "万道独尊",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := s.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("save project: %v", err)
+	}
+
+	entry := &domain.CodexEntry{
+		ID:                 "char_psy_1",
+		ProjectID:          proj.ID,
+		Category:           domain.CategoryCharacter,
+		Name:               "林凡",
+		Summary:            "追求极道之巅的剑修",
+		Archetype:          "PROTAGONIST",
+		VoiceTone:          "冷冽锋芒",
+		Want:               "登临绝顶，剑斩诸天神魔",
+		Need:               "承认自身凡胎弱小，接纳他人羁绊",
+		Ghost:              "至亲因自身逞强而惨死的创伤执念",
+		CurrentDisposition: "FRIENDLY",
+		TrackingMode:       domain.TrackingModeAlwaysInject,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}
+
+	// 1. Initial insert roundtrip
+	if err := s.SaveCodexEntry(ctx, entry); err != nil {
+		t.Fatalf("SaveCodexEntry failed: %v", err)
+	}
+
+	got, err := s.GetCodexEntry(ctx, proj.ID, entry.ID)
+	if err != nil {
+		t.Fatalf("GetCodexEntry failed: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("expected non-nil codex entry")
+	}
+
+	if got.Want != entry.Want {
+		t.Errorf("roundtrip Want mismatch: expected %q, got %q", entry.Want, got.Want)
+	}
+	if got.Need != entry.Need {
+		t.Errorf("roundtrip Need mismatch: expected %q, got %q", entry.Need, got.Need)
+	}
+	if got.Ghost != entry.Ghost {
+		t.Errorf("roundtrip Ghost mismatch: expected %q, got %q", entry.Ghost, got.Ghost)
+	}
+
+	// 2. Also verify GetProtagonistEntry roundtrip
+	gotProt, err := s.GetProtagonistEntry(ctx, proj.ID)
+	if err != nil {
+		t.Fatalf("GetProtagonistEntry failed: %v", err)
+	}
+	if gotProt == nil {
+		t.Fatalf("expected non-nil protagonist entry")
+	}
+	if gotProt.Want != entry.Want || gotProt.Need != entry.Need || gotProt.Ghost != entry.Ghost {
+		t.Errorf("GetProtagonistEntry inner psy mismatch: want=%q, need=%q, ghost=%q", gotProt.Want, gotProt.Need, gotProt.Ghost)
+	}
+
+	// 3. Update (upsert) roundtrip
+	entry.Want = "退隐山林守护残存门人"
+	entry.Need = "放下愧疚立地重生"
+	entry.Ghost = "心魔反噬已破"
+	entry.UpdatedAt = time.Now()
+	if err := s.SaveCodexEntry(ctx, entry); err != nil {
+		t.Fatalf("SaveCodexEntry update failed: %v", err)
+	}
+
+	gotUpdated, err := s.GetCodexEntry(ctx, proj.ID, entry.ID)
+	if err != nil {
+		t.Fatalf("GetCodexEntry after update failed: %v", err)
+	}
+	if gotUpdated.Want != entry.Want {
+		t.Errorf("updated Want mismatch: expected %q, got %q", entry.Want, gotUpdated.Want)
+	}
+	if gotUpdated.Need != entry.Need {
+		t.Errorf("updated Need mismatch: expected %q, got %q", entry.Need, gotUpdated.Need)
+	}
+	if gotUpdated.Ghost != entry.Ghost {
+		t.Errorf("updated Ghost mismatch: expected %q, got %q", entry.Ghost, gotUpdated.Ghost)
 	}
 }

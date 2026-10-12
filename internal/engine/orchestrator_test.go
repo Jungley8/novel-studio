@@ -97,10 +97,12 @@ func TestOrchestrator_SuggestChapterConflict(t *testing.T) {
 		Project:       p,
 		TargetChapter: 1,
 		ProtagonistEntry: &domain.CodexEntry{
-			Name:           "叶枫",
-			Realm:          "练气三层",
-			CoreMotivation: "查明家族血洗真相",
-			Archetype:      "PROTAGONIST",
+			Name:      "叶枫",
+			Realm:     "练气三层",
+			Want:      "查明家族血洗真相",
+			Need:      "放下仇恨",
+			Ghost:     "宗门血夜",
+			Archetype: "PROTAGONIST",
 		},
 	}
 
@@ -335,7 +337,9 @@ func TestOrchestrator_GenerateCodexEntry(t *testing.T) {
 		"tracking_mode": "AUTO_MENTION",
 		"archetype": "MENTOR",
 		"voice_tone": "沙哑阴冷，暗藏杀机",
-		"core_motivation": "寻找完美肉身延寿",
+		"want": "寻找完美肉身延寿",
+		"need": "坦然面对道消身陨",
+		"ghost": "天劫反噬之痛",
 		"current_disposition": "WARY"
 	}`
 

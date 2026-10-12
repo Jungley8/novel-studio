@@ -2512,3 +2512,59 @@ func TestCanonChronicle_Retrieval_DedupAndCap(t *testing.T) {
 		t.Errorf("expected chapter:1 to appear exactly once after dedup, got count %d", ch1Count)
 	}
 }
+
+func TestCanonChronicle_AssembleHorizon_CharacterInnerPsy(t *testing.T) {
+	mockStore := &mockChronicleStore{
+		project: &domain.Project{
+			ID:         "p_innerpsy",
+			Title:      "问剑大道",
+			WorldRules: "天道无情",
+		},
+		chapters: []*domain.Chapter{
+			{
+				ID:           "ch_innerpsy_1",
+				ProjectID:    "p_innerpsy",
+				ChapterIndex: 1,
+				Title:        "试剑石前",
+				Content:      "叶冷站在试剑石前，冷冷地看着远处走来的慕容仇。",
+			},
+		},
+		codexEntries: []*domain.CodexEntry{
+			{
+				ID:           "e_prot",
+				Name:         "叶冷",
+				Category:     domain.CategoryCharacter,
+				Archetype:    "PROTAGONIST",
+				TrackingMode: domain.TrackingModeAlwaysInject,
+			},
+			{
+				ID:           "e_antag",
+				Name:         "慕容仇",
+				Category:     domain.CategoryCharacter,
+				Archetype:    "ANTAGONIST",
+				VoiceTone:    "字字诛心，盛气凌人",
+				Want:         "夺取宗门秘传剑典，以报当年受辱之仇",
+				Need:         "放下执念，承认宗门未曾薄待自身",
+				Ghost:        "昔年被判定根骨低下逐出山门的耻辱",
+				TrackingMode: domain.TrackingModeAutoMention,
+			},
+		},
+	}
+
+	chronicle := NewCanonChronicle(mockStore)
+	horizon, err := chronicle.AssembleHorizon(context.Background(), "p_innerpsy", 2)
+	if err != nil {
+		t.Fatalf("AssembleHorizon failed: %v", err)
+	}
+
+	codexText := horizon.CodexContextText
+	if !strings.Contains(codexText, "外在欲望：夺取宗门秘传剑典，以报当年受辱之仇") {
+		t.Errorf("expected codexText to contain 外在欲望 line, got:\n%s", codexText)
+	}
+	if !strings.Contains(codexText, "真实需求：放下执念，承认宗门未曾薄待自身") {
+		t.Errorf("expected codexText to contain 真实需求 line, got:\n%s", codexText)
+	}
+	if !strings.Contains(codexText, "核心创伤：昔年被判定根骨低下逐出山门的耻辱") {
+		t.Errorf("expected codexText to contain 核心创伤 line, got:\n%s", codexText)
+	}
+}

@@ -161,10 +161,25 @@
                 class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-emerald-400 font-mono focus:outline-none focus:border-brand-amber/60">
             </div>
             <div>
-              <label class="text-ink-400 text-[11px] font-medium">当前主线目标与核心动机：</label>
+              <label class="text-ink-400 text-[11px] font-medium">外在欲望 (Want)：</label>
               <input 
-                v-model="computedState.protagonistCharacter.value.core_motivation" 
-                class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60">
+                v-model="computedState.protagonistCharacter.value.want" 
+                class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60"
+                placeholder="内在欲望：自以为追求的外在目标">
+            </div>
+            <div>
+              <label class="text-ink-400 text-[11px] font-medium">真实需求 (Need)：</label>
+              <input 
+                v-model="computedState.protagonistCharacter.value.need" 
+                class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60"
+                placeholder="真实需求：真正需要面对的内心成长课题">
+            </div>
+            <div>
+              <label class="text-ink-400 text-[11px] font-medium">核心创伤 (Ghost)：</label>
+              <input 
+                v-model="computedState.protagonistCharacter.value.ghost" 
+                class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-md px-2.5 py-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60"
+                placeholder="核心鬼魂：过去的创伤执念与恐惧弱点">
             </div>
             <div class="sm:col-span-2">
               <label class="text-ink-400 text-[11px] font-medium">随身携带道具 (Inventory)：</label>

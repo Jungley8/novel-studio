@@ -376,10 +376,10 @@ func (c *CanonChronicle) AssembleHorizonTracedWithExtras(ctx context.Context, pr
 
 	// protagText covers the union of accounting-side fields (NameAndLevel, Archetype,
 	// Summary) and prompt-render-side fields (protNameLevel=NameAndLevel,
-	// protInventory=Inventory, protGoal=CoreMotivation else Summary). Inventory has no
+	// protInventory=Inventory, protGoal=Want else Summary). Inventory has no
 	// upper bound, so omitting it would let unbounded bytes slip past the budget gate.
 	// Superset estimation (safe direction): counted bytes always cover rendered bytes.
-	protagText := protagonist.NameAndLevel() + " " + protagonist.Archetype + " " + protagonist.Summary + " " + protagonist.Inventory + " " + protagonist.CoreMotivation
+	protagText := protagonist.NameAndLevel() + " " + protagonist.Archetype + " " + protagonist.Summary + " " + protagonist.Inventory + " " + protagonist.Want + " " + protagonist.Need + " " + protagonist.Ghost
 	protagTokens := domain.EstimateTokens(protagText)
 	protectedList = append(protectedList, protectedItem{id: "global/protagonist", tokens: protagTokens})
 
@@ -597,8 +597,14 @@ func (c *CanonChronicle) AssembleHorizonTracedWithExtras(ctx context.Context, pr
 				if ent.VoiceTone != "" {
 					codexSb.WriteString(fmt.Sprintf("  - 台词声口与语言风格：%s\n", ent.VoiceTone))
 				}
-				if ent.CoreMotivation != "" {
-					codexSb.WriteString(fmt.Sprintf("  - 核心动机与底层执念：%s\n", ent.CoreMotivation))
+				if ent.Want != "" {
+					codexSb.WriteString(fmt.Sprintf("  - 外在欲望：%s\n", ent.Want))
+				}
+				if ent.Need != "" {
+					codexSb.WriteString(fmt.Sprintf("  - 真实需求：%s\n", ent.Need))
+				}
+				if ent.Ghost != "" {
+					codexSb.WriteString(fmt.Sprintf("  - 核心创伤：%s\n", ent.Ghost))
 				}
 			}
 

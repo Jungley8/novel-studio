@@ -44,7 +44,9 @@ func (o *Orchestrator) GenerateCodexEntry(
   "tracking_mode": "AUTO_MENTION",
   "archetype": "PROTAGONIST | ANTAGONIST | DEUTERAGONIST | MENTOR | SUPPORTING（仅人物有效，其他留空）",
   "voice_tone": "台词声口与语言特征（如：冷峻寡言，习惯以反问施压）",
-  "core_motivation": "核心底层动机与死穴弱点",
+  "want": "内在欲望：角色自以为追求的外在目标（可能被执念扭曲；反派必须由自我正义逻辑支撑其 want）",
+  "need": "真实需求：角色真正需要面对与成长的内心课题（常与 Want 冲突）",
+  "ghost": "核心鬼魂：过去创伤/执念，驱动其恐惧与扭曲行为",
   "current_disposition": "HOSTILE | WARY | NEUTRAL | FRIENDLY | DEVOTED（当前对主角立场）"
 }`
 
@@ -239,8 +241,8 @@ func protGoal(e *domain.CodexEntry) string {
 	if e == nil {
 		return "暂无"
 	}
-	if strings.TrimSpace(e.CoreMotivation) != "" {
-		return e.CoreMotivation
+	if strings.TrimSpace(e.Want) != "" {
+		return e.Want
 	}
 	if strings.TrimSpace(e.Summary) != "" {
 		return e.Summary

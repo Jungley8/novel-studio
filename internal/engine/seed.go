@@ -57,10 +57,12 @@ func SeedGenesisArtifacts(ctx context.Context, store GenesisSeedStore, proj *dom
 	}
 
 	protagonistName := strings.TrimSpace(proto.Name)
-	protagonistGoal := strings.TrimSpace(proto.Goal)
-	if protagonistGoal == "" {
-		protagonistGoal = fw.ThemePremise
+	protagonistWant := strings.TrimSpace(proto.Want)
+	if protagonistWant == "" {
+		protagonistWant = fw.ThemePremise
 	}
+	protagonistNeed := strings.TrimSpace(proto.Need)
+	protagonistGhost := strings.TrimSpace(proto.Ghost)
 
 	var inventoryItems []string
 	for _, it := range proto.Inventory {
@@ -84,6 +86,16 @@ func SeedGenesisArtifacts(ctx context.Context, store GenesisSeedStore, proj *dom
 
 	projectID := proj.ID
 
+	protDetailsSb := strings.Builder{}
+	protDetailsSb.WriteString(fmt.Sprintf("### %s (全书核心主角)\n- **身份**: %s\n- **初始境界/实力**: %s\n- **外在欲望**: %s\n", protagonistName, identityText, initialRealm, protagonistWant))
+	if protagonistNeed != "" {
+		protDetailsSb.WriteString(fmt.Sprintf("- **真实需求**: %s\n", protagonistNeed))
+	}
+	if protagonistGhost != "" {
+		protDetailsSb.WriteString(fmt.Sprintf("- **核心创伤**: %s\n", protagonistGhost))
+	}
+	protDetailsSb.WriteString(fmt.Sprintf("- **随身物品**: %s\n- **初始状态**: 良好\n", inventoryText))
+
 	// 0. Seed Protagonist into The Codex
 	protEntry := &domain.CodexEntry{
 		ID:                 fmt.Sprintf("codex_%s_pro", projectID),
@@ -91,11 +103,13 @@ func SeedGenesisArtifacts(ctx context.Context, store GenesisSeedStore, proj *dom
 		Category:           domain.CategoryCharacter,
 		Name:               protagonistName,
 		ColorTag:           "#f59e0b",
-		Summary:            fmt.Sprintf("全书核心主角 | 身份: %s | 境界: %s | 动机: %s", identityText, initialRealm, protagonistGoal),
-		DetailsMarkdown:    fmt.Sprintf("### %s (全书核心主角)\n- **身份**: %s\n- **初始境界/实力**: %s\n- **核心动机**: %s\n- **随身物品**: %s\n- **初始状态**: 良好\n", protagonistName, identityText, initialRealm, protagonistGoal, inventoryText),
+		Summary:            fmt.Sprintf("全书核心主角 | 身份: %s | 境界: %s | 欲望: %s", identityText, initialRealm, protagonistWant),
+		DetailsMarkdown:    protDetailsSb.String(),
 		Archetype:          "PROTAGONIST",
 		VoiceTone:          strings.TrimSpace(proto.VoiceTone),
-		CoreMotivation:     protagonistGoal,
+		Want:               protagonistWant,
+		Need:               protagonistNeed,
+		Ghost:              protagonistGhost,
 		CurrentDisposition: "FRIENDLY",
 		TrackingMode:       domain.TrackingModeAlwaysInject,
 		Aliases:            []string{"主角", protagonistName, fmt.Sprintf("%s (%s)", protagonistName, initialRealm)},
@@ -162,6 +176,23 @@ func SeedGenesisArtifacts(ctx context.Context, store GenesisSeedStore, proj *dom
 			colorTag = "#3b82f6"
 		}
 
+		kcWant := strings.TrimSpace(kc.Want)
+		kcNeed := strings.TrimSpace(kc.Need)
+		kcGhost := strings.TrimSpace(kc.Ghost)
+
+		kcDetailsSb := strings.Builder{}
+		kcDetailsSb.WriteString(fmt.Sprintf("### %s\n- **戏剧定位**: %s\n- **修为境界**: %s\n", kc.Name, kc.Role, kc.Realm))
+		if kcWant != "" {
+			kcDetailsSb.WriteString(fmt.Sprintf("- **外在欲望**: %s\n", kcWant))
+		}
+		if kcNeed != "" {
+			kcDetailsSb.WriteString(fmt.Sprintf("- **真实需求**: %s\n", kcNeed))
+		}
+		if kcGhost != "" {
+			kcDetailsSb.WriteString(fmt.Sprintf("- **核心创伤**: %s\n", kcGhost))
+		}
+		kcDetailsSb.WriteString(fmt.Sprintf("- **宿命轨迹**: %s\n", kc.FateArc))
+
 		entry := &domain.CodexEntry{
 			ID:                 fmt.Sprintf("codex_%s_char_%d", projectID, i+1),
 			ProjectID:          projectID,
@@ -169,10 +200,12 @@ func SeedGenesisArtifacts(ctx context.Context, store GenesisSeedStore, proj *dom
 			Name:               kc.Name,
 			ColorTag:           colorTag,
 			Summary:            fmt.Sprintf("%s (%s), 境界: %s", kc.Role, kc.FateArc, kc.Realm),
-			DetailsMarkdown:    fmt.Sprintf("### %s\n- **戏剧定位**: %s\n- **修为境界**: %s\n- **核心动机**: %s\n- **宿命轨迹**: %s\n", kc.Name, kc.Role, kc.Realm, kc.Goal, kc.FateArc),
+			DetailsMarkdown:    kcDetailsSb.String(),
 			Archetype:          archetype,
 			VoiceTone:          voiceTone,
-			CoreMotivation:     kc.Goal,
+			Want:               kcWant,
+			Need:               kcNeed,
+			Ghost:              kcGhost,
 			CurrentDisposition: disposition,
 			TrackingMode:       domain.TrackingModeAutoMention,
 			CreatedAt:          time.Now(),

@@ -69,11 +69,27 @@
           </div>
 
           <div>
-            <label class="text-ink-400 font-medium">当前目标与核心动机 (Core Motivation)：</label>
+            <label class="text-ink-400 font-medium">外在欲望 (Want)：</label>
             <input 
-              v-model="computedState.protagonistCharacter.value.core_motivation" 
+              v-model="computedState.protagonistCharacter.value.want" 
               class="w-full mt-1.5 bg-atelier-950 border border-atelier-750 rounded-md px-3 py-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60"
               placeholder="例如：在宗门小比中战胜外门大师兄">
+          </div>
+
+          <div>
+            <label class="text-ink-400 font-medium">真实需求 (Need)：</label>
+            <input 
+              v-model="computedState.protagonistCharacter.value.need" 
+              class="w-full mt-1.5 bg-atelier-950 border border-atelier-750 rounded-md px-3 py-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60"
+              placeholder="例如：直面内心恐惧，放下输赢执念">
+          </div>
+
+          <div>
+            <label class="text-ink-400 font-medium">核心创伤 (Ghost)：</label>
+            <input 
+              v-model="computedState.protagonistCharacter.value.ghost" 
+              class="w-full mt-1.5 bg-atelier-950 border border-atelier-750 rounded-md px-3 py-1.5 text-xs text-ink-200 focus:outline-none focus:border-brand-amber/60"
+              placeholder="例如：幼时被逐出家族的屈辱阴影">
           </div>
         </div>
 
@@ -211,7 +227,7 @@
               <div class="flex items-start gap-1.5 text-ink-300">
                 <span class="text-brand-crimson shrink-0">🎯 动机：</span>
                 <span class="text-ink-200">
-                  {{ char.core_motivation || '求生存与利益自保' }}
+                  {{ char.want || char.need || char.ghost || '—' }}
                 </span>
               </div>
             </div>

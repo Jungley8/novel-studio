@@ -114,11 +114,27 @@
           </div>
 
           <div>
-            <label class="text-[10px] text-ink-400">核心底层动机与软肋 (Core Motivation)：</label>
+            <label class="text-[10px] text-ink-400">外在欲望 (Want)：</label>
             <input 
-              v-model="form.core_motivation" 
+              v-model="form.want" 
               class="w-full mt-0.5 bg-atelier-900 border border-atelier-750 rounded-md p-1.5 text-xs text-ink-100 focus:outline-none focus:border-brand-amber/60" 
-              placeholder="例如：搜罗凡人精血向魔尊邀功；极度自负，经不起激将法">
+              placeholder="内在欲望：角色自以为追求的外在目标（可能被执念扭曲）">
+          </div>
+
+          <div>
+            <label class="text-[10px] text-ink-400">真实需求 (Need)：</label>
+            <input 
+              v-model="form.need" 
+              class="w-full mt-0.5 bg-atelier-900 border border-atelier-750 rounded-md p-1.5 text-xs text-ink-100 focus:outline-none focus:border-brand-amber/60" 
+              placeholder="真实需求：角色真正需要面对与成长的内心课题（常与 Want 冲突）">
+          </div>
+
+          <div>
+            <label class="text-[10px] text-ink-400">核心创伤 (Ghost)：</label>
+            <input 
+              v-model="form.ghost" 
+              class="w-full mt-0.5 bg-atelier-900 border border-atelier-750 rounded-md p-1.5 text-xs text-ink-100 focus:outline-none focus:border-brand-amber/60" 
+              placeholder="核心鬼魂：过去创伤/执念，驱动其恐惧与扭曲行为">
           </div>
         </div>
 
@@ -195,7 +211,9 @@ const form = reactive({
   tracking_mode: 'AUTO_MENTION',
   archetype: 'SUPPORTING',
   voice_tone: '',
-  core_motivation: '',
+  want: '',
+  need: '',
+  ghost: '',
   current_disposition: 'WARY',
   aliases_text: '',
   summary: '',
@@ -215,7 +233,9 @@ watch(() => state.showCodexModal, (open) => {
         tracking_mode: e.tracking_mode || 'AUTO_MENTION',
         archetype: e.archetype || 'SUPPORTING',
         voice_tone: e.voice_tone || '',
-        core_motivation: e.core_motivation || '',
+        want: e.want || '',
+        need: e.need || '',
+        ghost: e.ghost || '',
         current_disposition: e.current_disposition || 'WARY',
         alignment: e.alignment || '',
         threat_level: e.threat_level || '',
@@ -231,7 +251,9 @@ watch(() => state.showCodexModal, (open) => {
         tracking_mode: 'AUTO_MENTION',
         archetype: 'SUPPORTING',
         voice_tone: '',
-        core_motivation: '',
+        want: '',
+        need: '',
+        ghost: '',
         current_disposition: 'WARY',
         alignment: '',
         threat_level: '',
@@ -257,7 +279,9 @@ async function saveCodexEntry() {
     tracking_mode: form.tracking_mode,
     archetype: form.archetype,
     voice_tone: form.voice_tone,
-    core_motivation: form.core_motivation,
+    want: form.want,
+    need: form.need,
+    ghost: form.ghost,
     current_disposition: form.current_disposition,
     alignment: form.alignment,
     threat_level: form.threat_level,

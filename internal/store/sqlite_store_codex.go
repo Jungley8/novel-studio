@@ -62,11 +62,11 @@ func (s *SQLiteStore) SaveCodexEntry(ctx context.Context, entry *domain.CodexEnt
 	query := `
 	INSERT INTO codex_entries (
 		id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
-		archetype, voice_tone, core_motivation, current_disposition,
+		archetype, voice_tone, want, need, ghost, current_disposition,
 		realm, inventory, health_status, structured_level_json, structured_items_json,
 		alignment, threat_level,
 		created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		category = excluded.category,
 		name = excluded.name,
@@ -76,7 +76,9 @@ func (s *SQLiteStore) SaveCodexEntry(ctx context.Context, entry *domain.CodexEnt
 		tracking_mode = excluded.tracking_mode,
 		archetype = excluded.archetype,
 		voice_tone = excluded.voice_tone,
-		core_motivation = excluded.core_motivation,
+		want = excluded.want,
+		need = excluded.need,
+		ghost = excluded.ghost,
 		current_disposition = excluded.current_disposition,
 		realm = excluded.realm,
 		inventory = excluded.inventory,
@@ -90,7 +92,7 @@ func (s *SQLiteStore) SaveCodexEntry(ctx context.Context, entry *domain.CodexEnt
 	_, err = tx.ExecContext(ctx, query,
 		entry.ID, entry.ProjectID, string(entry.Category), entry.Name,
 		entry.ColorTag, entry.Summary, entry.DetailsMarkdown, string(entry.TrackingMode),
-		entry.Archetype, entry.VoiceTone, entry.CoreMotivation, entry.CurrentDisposition,
+		entry.Archetype, entry.VoiceTone, entry.Want, entry.Need, entry.Ghost, entry.CurrentDisposition,
 		entry.Realm, entry.Inventory, entry.HealthStatus, levelJSON, itemsJSON,
 		entry.Alignment, entry.ThreatLevel,
 		entry.CreatedAt, entry.UpdatedAt,
@@ -184,7 +186,7 @@ func codexExcerptOf(entryJSON string) string {
 func (s *SQLiteStore) GetCodexEntry(ctx context.Context, projectID, id string) (*domain.CodexEntry, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
-		       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(core_motivation, ''), COALESCE(current_disposition, ''),
+		       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(want, ''), COALESCE(need, ''), COALESCE(ghost, ''), COALESCE(current_disposition, ''),
 		       COALESCE(realm, ''), COALESCE(inventory, ''), COALESCE(health_status, ''),
 		       COALESCE(structured_level_json, ''), COALESCE(structured_items_json, ''),
 		       COALESCE(alignment, ''), COALESCE(threat_level, ''),
@@ -194,11 +196,11 @@ func (s *SQLiteStore) GetCodexEntry(ctx context.Context, projectID, id string) (
 	`, projectID, id)
 
 	var e domain.CodexEntry
-	var cat, tm, colorTag, summary, details, arch, vt, motiv, disp sql.NullString
+	var cat, tm, colorTag, summary, details, arch, vt, want, need, ghost, disp sql.NullString
 	var realm, inv, health, levelJSON, itemsJSON, align, threat sql.NullString
 	if err := row.Scan(
 		&e.ID, &e.ProjectID, &cat, &e.Name, &colorTag, &summary, &details, &tm,
-		&arch, &vt, &motiv, &disp,
+		&arch, &vt, &want, &need, &ghost, &disp,
 		&realm, &inv, &health, &levelJSON, &itemsJSON,
 		&align, &threat,
 		&e.CreatedAt, &e.UpdatedAt,
@@ -215,7 +217,9 @@ func (s *SQLiteStore) GetCodexEntry(ctx context.Context, projectID, id string) (
 	e.DetailsMarkdown = details.String
 	e.Archetype = arch.String
 	e.VoiceTone = vt.String
-	e.CoreMotivation = motiv.String
+	e.Want = want.String
+	e.Need = need.String
+	e.Ghost = ghost.String
 	e.CurrentDisposition = disp.String
 	e.Realm = realm.String
 	e.Inventory = inv.String
@@ -279,7 +283,7 @@ func (s *SQLiteStore) CodexEntryProjectID(ctx context.Context, id string) (strin
 func (s *SQLiteStore) GetProtagonistEntry(ctx context.Context, projectID string) (*domain.CodexEntry, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
-		       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(core_motivation, ''), COALESCE(current_disposition, ''),
+		       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(want, ''), COALESCE(need, ''), COALESCE(ghost, ''), COALESCE(current_disposition, ''),
 		       COALESCE(realm, ''), COALESCE(inventory, ''), COALESCE(health_status, ''),
 		       COALESCE(structured_level_json, ''), COALESCE(structured_items_json, ''),
 		       COALESCE(alignment, ''), COALESCE(threat_level, ''),
@@ -291,11 +295,11 @@ func (s *SQLiteStore) GetProtagonistEntry(ctx context.Context, projectID string)
 	`, projectID)
 
 	var e domain.CodexEntry
-	var cat, tm, colorTag, summary, details, arch, vt, motiv, disp sql.NullString
+	var cat, tm, colorTag, summary, details, arch, vt, want, need, ghost, disp sql.NullString
 	var realm, inv, health, levelJSON, itemsJSON, align, threat sql.NullString
 	if err := row.Scan(
 		&e.ID, &e.ProjectID, &cat, &e.Name, &colorTag, &summary, &details, &tm,
-		&arch, &vt, &motiv, &disp,
+		&arch, &vt, &want, &need, &ghost, &disp,
 		&realm, &inv, &health, &levelJSON, &itemsJSON,
 		&align, &threat,
 		&e.CreatedAt, &e.UpdatedAt,
@@ -312,7 +316,9 @@ func (s *SQLiteStore) GetProtagonistEntry(ctx context.Context, projectID string)
 	e.DetailsMarkdown = details.String
 	e.Archetype = arch.String
 	e.VoiceTone = vt.String
-	e.CoreMotivation = motiv.String
+	e.Want = want.String
+	e.Need = need.String
+	e.Ghost = ghost.String
 	e.CurrentDisposition = disp.String
 	e.Realm = realm.String
 	e.Inventory = inv.String
@@ -362,7 +368,7 @@ func (s *SQLiteStore) GetProtagonistEntry(ctx context.Context, projectID string)
 func (s *SQLiteStore) getProtagonistTx(ctx context.Context, tx *sql.Tx, projectID string) (*domain.CodexEntry, error) {
 	row := tx.QueryRowContext(ctx, `
 		SELECT id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
-		       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(core_motivation, ''), COALESCE(current_disposition, ''),
+		       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(want, ''), COALESCE(need, ''), COALESCE(ghost, ''), COALESCE(current_disposition, ''),
 		       COALESCE(realm, ''), COALESCE(inventory, ''), COALESCE(health_status, ''),
 		       COALESCE(structured_level_json, ''), COALESCE(structured_items_json, ''),
 		       COALESCE(alignment, ''), COALESCE(threat_level, ''),
@@ -374,11 +380,11 @@ func (s *SQLiteStore) getProtagonistTx(ctx context.Context, tx *sql.Tx, projectI
 	`, projectID)
 
 	var e domain.CodexEntry
-	var cat, tm, colorTag, summary, details, arch, vt, motiv, disp sql.NullString
+	var cat, tm, colorTag, summary, details, arch, vt, want, need, ghost, disp sql.NullString
 	var realm, inv, health, levelJSON, itemsJSON, align, threat sql.NullString
 	if err := row.Scan(
 		&e.ID, &e.ProjectID, &cat, &e.Name, &colorTag, &summary, &details, &tm,
-		&arch, &vt, &motiv, &disp,
+		&arch, &vt, &want, &need, &ghost, &disp,
 		&realm, &inv, &health, &levelJSON, &itemsJSON,
 		&align, &threat,
 		&e.CreatedAt, &e.UpdatedAt,
@@ -395,7 +401,9 @@ func (s *SQLiteStore) getProtagonistTx(ctx context.Context, tx *sql.Tx, projectI
 	e.DetailsMarkdown = details.String
 	e.Archetype = arch.String
 	e.VoiceTone = vt.String
-	e.CoreMotivation = motiv.String
+	e.Want = want.String
+	e.Need = need.String
+	e.Ghost = ghost.String
 	e.CurrentDisposition = disp.String
 	e.Realm = realm.String
 	e.Inventory = inv.String
@@ -423,7 +431,7 @@ func (s *SQLiteStore) ListCodexEntries(ctx context.Context, projectID string, ca
 	if category != "" {
 		query = `
 			SELECT id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
-			       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(core_motivation, ''), COALESCE(current_disposition, ''),
+			       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(want, ''), COALESCE(need, ''), COALESCE(ghost, ''), COALESCE(current_disposition, ''),
 			       COALESCE(realm, ''), COALESCE(inventory, ''), COALESCE(health_status, ''),
 			       COALESCE(structured_level_json, ''), COALESCE(structured_items_json, ''),
 			       COALESCE(alignment, ''), COALESCE(threat_level, ''),
@@ -436,7 +444,7 @@ func (s *SQLiteStore) ListCodexEntries(ctx context.Context, projectID string, ca
 	} else {
 		query = `
 			SELECT id, project_id, category, name, color_tag, summary, details_markdown, tracking_mode,
-			       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(core_motivation, ''), COALESCE(current_disposition, ''),
+			       COALESCE(archetype, ''), COALESCE(voice_tone, ''), COALESCE(want, ''), COALESCE(need, ''), COALESCE(ghost, ''), COALESCE(current_disposition, ''),
 			       COALESCE(realm, ''), COALESCE(inventory, ''), COALESCE(health_status, ''),
 			       COALESCE(structured_level_json, ''), COALESCE(structured_items_json, ''),
 			       COALESCE(alignment, ''), COALESCE(threat_level, ''),
@@ -458,11 +466,11 @@ func (s *SQLiteStore) ListCodexEntries(ctx context.Context, projectID string, ca
 	entryMap := make(map[string]*domain.CodexEntry)
 	for rows.Next() {
 		var e domain.CodexEntry
-		var cat, tm, colorTag, summary, details, arch, vt, motiv, disp sql.NullString
+		var cat, tm, colorTag, summary, details, arch, vt, want, need, ghost, disp sql.NullString
 		var realm, inv, health, levelJSON, itemsJSON, align, threat sql.NullString
 		if err := rows.Scan(
 			&e.ID, &e.ProjectID, &cat, &e.Name, &colorTag, &summary, &details, &tm,
-			&arch, &vt, &motiv, &disp,
+			&arch, &vt, &want, &need, &ghost, &disp,
 			&realm, &inv, &health, &levelJSON, &itemsJSON,
 			&align, &threat,
 			&e.CreatedAt, &e.UpdatedAt,
@@ -476,7 +484,9 @@ func (s *SQLiteStore) ListCodexEntries(ctx context.Context, projectID string, ca
 		e.DetailsMarkdown = details.String
 		e.Archetype = arch.String
 		e.VoiceTone = vt.String
-		e.CoreMotivation = motiv.String
+		e.Want = want.String
+		e.Need = need.String
+		e.Ghost = ghost.String
 		e.CurrentDisposition = disp.String
 		e.Realm = realm.String
 		e.Inventory = inv.String
