@@ -36,6 +36,89 @@ func estimateTokens(text string) int {
 	return domain.EstimateTokens(text)
 }
 
+// previewMotifBlock 预览用母题展示块：只读 p.Framework.Motifs 做展示拼接，
+// 不调 engine、不改生产注入逻辑、不动 store。
+// 生产注入见 internal/engine/orchestrator_render.go:168（调用点）与 :225
+// buildMotifConceptPrompt（表头【有意母题与符号（RC 精修锚点）】与规则行见该文件 :238-239）。
+// 写入时母题先经 domain/motif.go:13 SanitizeMotifs 清洗（trim/去重/上限8，
+// 调用点 internal/server/handlers_matrix.go:249）。
+// 无有效母题 → ""（整块省略，不输出占位）。
+func previewMotifBlock(p *domain.Project) string {
+	if p == nil || p.Framework == nil {
+		return ""
+	}
+	var lines []string
+	for _, m := range p.Framework.Motifs {
+		if trimmed := strings.TrimSpace(m); trimmed != "" {
+			lines = append(lines, "- "+trimmed)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "【核心母题（生产提示词经清洗门注入）】\n" + strings.Join(lines, "\n") +
+		"\n注：生产侧以 orchestrator_render.go:225 buildMotifConceptPrompt 清洗后版本为准（行文与本块同源）。"
+}
+
+// previewMilestoneBlock 预览用节拍定位块：只读 p.Framework.StoryMilestones /
+// TotalPlannedChapters 做展示拼接，不调 engine、不改生产注入逻辑、不动 store。
+// 生产块见 internal/engine/orchestrator_beats.go:354 buildMilestoneContextBlock
+// （调用点 :221，表头【全书宏观节拍定位】见该文件 :386）。
+// 定位行（计划/本章/越过/下一）与生产块逐行同文，另逐条列出全部里程碑
+// （第{TargetChapter}章·{Key}·{Name}；StoryMilestone 无 Type/Summary 字段，
+// 以 Key/Name 对应），便于与生产提示词肉眼对齐。
+// 无里程碑 → ""（整块省略，不输出占位）。
+func previewMilestoneBlock(p *domain.Project, chapterIndex int) string {
+	if p == nil || p.Framework == nil || len(p.Framework.StoryMilestones) == 0 {
+		return ""
+	}
+	var curr, overdue, next *domain.StoryMilestone
+	for i := range p.Framework.StoryMilestones {
+		m := &p.Framework.StoryMilestones[i]
+		if m.TargetChapter == chapterIndex && curr == nil {
+			curr = m
+		}
+		if m.TargetChapter < chapterIndex && (m.Status == domain.MilestoneStatusPending || strings.TrimSpace(m.Status) == "") {
+			if overdue == nil || m.TargetChapter > overdue.TargetChapter {
+				overdue = m
+			}
+		}
+		if m.TargetChapter > chapterIndex {
+			if next == nil || m.TargetChapter < next.TargetChapter {
+				next = m
+			}
+		}
+	}
+	milestoneName := func(m domain.StoryMilestone) string {
+		if strings.TrimSpace(m.Name) != "" {
+			return strings.TrimSpace(m.Name)
+		}
+		return strings.TrimSpace(m.Key)
+	}
+	var b strings.Builder
+	b.WriteString("【全书节拍定位】")
+	if total := p.Framework.TotalPlannedChapters; total > 0 {
+		fmt.Fprintf(&b, "\n- 全书计划：%d 章（本章为第 %d 章，约 %d%%）", total, chapterIndex, int(float64(chapterIndex)/float64(total)*100))
+	} else {
+		fmt.Fprintf(&b, "\n- 全书计划：未定（本章为第 %d 章）", chapterIndex)
+	}
+	if curr != nil {
+		fmt.Fprintf(&b, "\n- 本章里程碑：『%s』@第 %d 章 —— 正文必须在本章兑现该里程碑事件与情绪高潮", milestoneName(*curr), chapterIndex)
+	} else {
+		b.WriteString("\n- 本章无里程碑锚点")
+	}
+	if overdue != nil {
+		fmt.Fprintf(&b, "\n- 最近未兑现里程碑：『%s』@第 %d 章（PENDING，已越过）", milestoneName(*overdue), overdue.TargetChapter)
+	}
+	if next != nil {
+		fmt.Fprintf(&b, "\n- 下一里程碑：『%s』@第 %d 章（间隔 %d 章）", milestoneName(*next), next.TargetChapter, next.TargetChapter-chapterIndex)
+	}
+	for _, m := range p.Framework.StoryMilestones {
+		fmt.Fprintf(&b, "\n- 第%d章·%s·%s", m.TargetChapter, strings.TrimSpace(m.Key), milestoneName(m))
+	}
+	return b.String()
+}
+
 func (s *Server) handlePromptPreview(w http.ResponseWriter, r *http.Request, projectID string) {
 	if r.Method != http.MethodPost {
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -73,6 +156,12 @@ func (s *Server) handlePromptPreview(w http.ResponseWriter, r *http.Request, pro
 		}
 		if strings.TrimSpace(p.Framework.AtmosphereAnchor) != "" {
 			frameworkContent += fmt.Sprintf("\n\n【视觉与氛围锚点】\n%s", strings.TrimSpace(p.Framework.AtmosphereAnchor))
+		}
+		if motifBlock := previewMotifBlock(p); motifBlock != "" {
+			frameworkContent += "\n\n" + motifBlock
+		}
+		if milestoneBlock := previewMilestoneBlock(p, req.ChapterIndex); milestoneBlock != "" {
+			frameworkContent += "\n\n" + milestoneBlock
 		}
 	}
 
