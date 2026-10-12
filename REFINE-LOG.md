@@ -513,6 +513,19 @@ web 侧 `pnpm test` 4/4 通过，`pnpm run build:dev` 可产出非压缩构建�
 验证：新增 `json_array_test.go` 7 个边界用例（裸数组/推荐键/任意键/优先键裁决/
 数字键排序/空数组/不可定位报错）全绿；全量 `go test ./... -race` 全绿；`gofmt` 完成。
 
+### 第八轮：审校分庭超时加固（2026-10-12 夜 · 全自动成书实战第二障碍）
+
+实战：第 1 章正文渲染成功（3404 字）后，QualityGate 三庭会审炸线——
+`logic division LLM review failed: 流式接收中断 (连接超时): context deadline exceeded`。
+根因：`ReviewCourt` 三庭（逻辑/文风/连续性）并行会审，每庭硬编码 **45s** 超时；
+推理型审校模型对整章草稿 + 启发式指标 + 正史视界的会审耗时远超 45s，
+流被 ctx 掐断且无重试 → 章节生产失败 → 卷停线（ERROR）。
+
+修复：分庭超时默认 45s → **180s**（`SetDivisionTimeout` 仍可覆盖；
+分庭级重试本次未引入，保持 fail-closed 语义，后续可评估）。
+
+验证：`go test ./internal/engine/ -race` 全绿；自跑实战重验（见书稿档案）。
+
 ### 后续待办
 
 - （无）——已知互斥缺口全部闭环。
