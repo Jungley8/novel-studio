@@ -431,9 +431,36 @@ CLI 无头生产（`novel-studio produce`）是独立进程，仍是互斥盲区
 （编辑租约/生产锁在场 → 退出码 1 + 文案 + 无残留锁）；全量
 `go test ./... -race` 全绿。
 
-### 后续待办（已识别，未在本轮处理）
+### 第五轮加固：开书窗口闭环 —— 创世即登记生产锁（2026-10-12 再续）
 
-- 排程器 `RunBook`（开书）在项目创建前无 ID，未登记生产锁；开书中的
-  新项目窗口极窄，后续可在 pipeline 事件携带 ProjectID 后补齐。
+遗留缺口：`RunBook` 开书（及 UI/CLI 开书）的 ProjectID 在流水线中途才生成，
+项目创世入库到批产结束之间没有生产锁——新作品已出现在作品列表，
+人工可此刻点入编辑，与在途开书批产并发写同一作品。
+
+本轮以“创世回调”补齐（单一机制、全部开书入口统一）：
+
+1. **`PipelineRequest.OnProjectCreated`**（`internal/engine/pipeline.go`）：
+   `SaveProject` 提交后、任何项目内写入（种子注入/意图/批产）之前
+   同步回调携带 ProjectID；返回错误中止流水线（Fail-Closed，
+   文档化的半状态：项目已入库、种子未注入）。
+2. **`coord.Production` + `coord.BindProduction`**（`internal/coord/production.go`）：
+   生产锁的公共持有器（获取 + 心跳续期 + SetChapter + 幂等 Release），
+   并提供“hook / trackChapter / release”绑定的统一实现；
+   此前三处手工心跳循环（handleWorkshopProduce / RunContinuation / CLI produce）
+   全部收敛到该实现。
+3. **全部开书入口接入**：排程 RunBook（`排程开书`）、UI 开书端点
+   SSE+非 SSE（`浏览器开书`）、CLI pipeline（`CLI 开书`）、
+   CLI genesis 创世（`CLI 创世`，种子注入期间持锁）。
+   锁在位期间：调度器续产跳过、正史写入口 409、CLI produce 拒绝，
+   与第四轮的跨进程语义完全一致。
+
+验证：coord 持有器单测 5 例（忙碌透传/参数校验/心跳跟随章节并随 Release
+停止/hook 绑定/忙碌 Fail-Closed）；engine 钩子单测 3 例（时点早于任何批产、
+失败中止且不进入生产、真实 SQLite 端到端——批产期间锁对其它进程可见、
+Run 结束后归调用方释放）；全量 `go test ./... -race` 全绿。
+
+### 后续待办
+
+- （无）——已知互斥缺口全部闭环。
 
 

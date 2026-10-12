@@ -73,6 +73,7 @@
 | 14 | **并发互斥回归测试**（coord 单测 5 例；调度器跳过且不记 last_run；白盒接线：4 个正史写入口 409 + 租约端点往返 + 生产结束后恢复写入）| `coord_test.go` + `scheduler_test.go` + `coord_wiring_test.go` | P0 | 🟢 已完成 |
 | 15 | **跨进程协调升级**（内存租约 → SQLite `coordination_leases` 单一事实源：edit/production 双租约 + holder token + TTL 心跳；CLI `produce` 接入排斥门禁；调度器/SSE/CLI 三方互斥）| `domain/coordination.go` + `store` 租约方法 + `cmd/novel-studio/produce.go` | P0 | 🟢 已完成 |
 | 16 | **跨进程回归测试**（双 store 实例模拟守护/CLI：租约可见性、双向排斥、holder 隔离、过期接管与清理；CLI 忙碌路径退出码 1 + 忙碌文案 + 无残留锁）| `sqlite_store_locks_test.go` + `cmd/.../produce_test.go` | P0 | 🟢 已完成 |
+| 17 | **开书窗口闭环**（`OnProjectCreated` 创世回调 + `coord.Production`/`BindProduction` 公共持有器；RunBook/UI 开书/CLI pipeline/CLI genesis 全部“创世即登记生产锁”）| `pipeline.go` + `coord/production.go` + 4 个开书入口 | P0 | 🟢 已完成 |
 
 验证：`pnpm test`（3/3 通过）；`pnpm build` 通过；`go build ./... && go test ./... -race -count=1` 全绿（含新增 `TestCodexUpdate_RejectsForeignProjectEntry`）；`gofmt -w` 完成。
 
