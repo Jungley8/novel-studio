@@ -38,7 +38,7 @@ NovelStudio 采用现代工业化标准重新设计：
       │
       ▼
 本地后台自动加载 SQLite 数据库 (~/.novel-studio/novel.db)
-自动唤起系统默认浏览器访问 http://127.0.0.1:28980
+自动打开 NovelStudio 原生桌面窗口 (Wails v3 WebView)
       │
       ▼
 【六步工业化创作闭环】
@@ -137,12 +137,12 @@ wails3 task package:dmg
 # 指定自定义端口
 ./novel-studio -port 30000
 
-# 以开发模式运行 (独立服务端口 28981，与生产常驻守护 28980 彻底隔离，不默认唤起浏览器)
+# 以开发模式运行 (独立服务端口 28981，与生产常驻守护 28980 彻底隔离)
 ./novel-studio -dev
 
 # 开发模式本地协同启动：
 # • 桌面开发工作台 (Wails v3): task dev
-# • 前端独立 HMR 开发 (Vite 端口 5173): cd web && pnpm dev
+# • 前端独立 HMR 开发 (Vite 端口 5183): cd web && pnpm dev
 # • 后端独立开发服务 (端口 28981): task run:server
 
 # 指定数据存储目录 (默认为 ~/.novel-studio)

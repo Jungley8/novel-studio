@@ -459,6 +459,39 @@ CLI 无头生产（`novel-studio produce`）是独立进程，仍是互斥盲区
 失败中止且不进入生产、真实 SQLite 端到端——批产期间锁对其它进程可见、
 Run 结束后归调用方释放）；全量 `go test ./... -race` 全绿。
 
+### 开发环境清理：移除死配置字段、修复开发服务器构建与端口隔离（2026-10-12）
+
+排查背景：上报"开发环境仍会自动打开浏览器"。彻查结论——浏览器自动唤起
+的历史来源是 `577ad07`（Wails 原生窗口重构）之前的
+`!noBrowserFlag && cfg.AutoOpenBrowser` 启动逻辑（默认 true，且用户
+`config.json` 中持久为 true）；该逻辑已于 577ad07 整体移除，与
+`ba74e8a`/`f5cc39a` 的 `--no-open` 属不同层面、互不相干（Vite 默认即不
+自动开浏览器）。实测 `pnpm dev` 与完整 `wails3 dev` 流程（PATH shim 拦截
+`open`/`osascript`/`xdg-open`）均为零浏览器调用；当前 HEAD 无任何自动唤起路径。
+
+本轮清理（消除误导源，非功能修复）：
+
+1. **移除死字段**：`AutoOpenBrowser`（`internal/config/config.go`）自 Wails
+   重构后无任何读取方，连同默认值一并删除；`~/.novel-studio/config.json`
+   残留键同步清除（`json.Unmarshal` 忽略未知键，删除安全）。
+2. **文档纠偏**：README 交互流程图不再宣称"自动唤起系统默认浏览器"
+   （现状为原生桌面窗口）；`-no-browser` 帮助文案改为
+   "无头模式运行 (不启动原生桌面窗口，仅监听本地 HTTP 服务)"——
+   该标志的实际语义是无头服务模式，与浏览器无关。
+3. **修复开发服务器构建**：`task run:server`（DEV=true）依赖的前端脚本
+   `build:dev` 缺失（此前 `task build:server DEV=true` 必然
+   `ERR_PNPM_NO_SCRIPT`），补上
+   `vite build --minify false --mode development`（对齐 Wails v3 官方模板）。
+4. **开发 Web 端口隔离**：默认 5173 与工作区内常驻的 octarq 系 Vite
+   （`--host` 占 `*:5173`）冲突，novel-studio 开发前端端口改为 **5183**
+   （`vite.config.js` / `Taskfile.yml` / `build/config.yml` 就绪探测 /
+   启动横幅 / README 全量对齐；仍支持 `VITE_PORT` / `WAILS_VITE_PORT` 覆盖）。
+
+验证：`go build ./...`、`go build -tags server`、全量 `go test ./... -race`
+全绿，`gofmt -l` 无输出；`wails3 task dev --dry` 解析为 `-port 5183`；
+`wails3 task build:server --dry DEV=true` 解析出 `pnpm run build:dev`；
+web 侧 `pnpm test` 4/4 通过，`pnpm run build:dev` 可产出非压缩构建。
+
 ### 后续待办
 
 - （无）——已知互斥缺口全部闭环。
