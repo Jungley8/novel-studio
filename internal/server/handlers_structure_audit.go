@@ -20,6 +20,7 @@ type structureFindingStore interface {
 	ListStructureFindings(ctx context.Context, projectID string) ([]*domain.StructureFinding, error)
 	UpdateStructureFindingStatus(ctx context.Context, id, status string) error
 	DeleteStructureFindingsByProject(ctx context.Context, projectID string) error
+	StructureFindingProjectID(ctx context.Context, id string) (string, error)
 }
 
 func (s *Server) getStructureFindingStore() structureFindingStore {
@@ -240,6 +241,17 @@ func (s *Server) handleUpdateStructureFindingStatus(w http.ResponseWriter, r *ht
 
 	if req.FindingID == "" {
 		errorResponse(w, http.StatusBadRequest, "finding_id cannot be empty")
+		return
+	}
+
+	// 租户作用域：finding 必须归属本 project（对齐伏笔 PlotHookProjectID 定式），否则 404。
+	owner, err := fStore.StructureFindingProjectID(ctx, req.FindingID)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, "resolve finding owner failed: "+err.Error())
+		return
+	}
+	if owner == "" || owner != projectID {
+		errorResponse(w, http.StatusNotFound, "structure finding not found")
 		return
 	}
 

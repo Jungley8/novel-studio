@@ -150,4 +150,46 @@ func TestStructureAudit_UpdateStatus(t *testing.T) {
 			t.Fatalf("expected 400 for empty finding_id, got %d: %s", w.Code, w.Body.String())
 		}
 	})
+
+	t.Run("cross-project finding rejected with 404", func(t *testing.T) {
+		otherProj := &domain.Project{ID: "proj-audit-other", Title: "他作", TargetPlatform: "起点"}
+		if err := s.SaveProject(ctx, otherProj); err != nil {
+			t.Fatalf("SaveProject other failed: %v", err)
+		}
+		other := &domain.StructureFinding{
+			ID:           "find_status_other",
+			ProjectID:    "proj-audit-other",
+			Type:         domain.StructureFindingTypePacing,
+			Severity:     domain.StructureFindingSeverityLow,
+			ChapterStart: 3,
+			ChapterEnd:   3,
+			Summary:      "他作问题",
+			Evidence:     "证据引用",
+			Suggestion:   "修复建议",
+			Status:       domain.StructureFindingStatusOpen,
+			CreatedAt:    time.Now(),
+		}
+		if err := saver.SaveStructureFinding(ctx, other); err != nil {
+			t.Fatalf("save other-project finding failed: %v", err)
+		}
+		body := `{"finding_id": "find_status_other", "status": "RESOLVED"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/projects/proj-audit-status/structure-audit/status", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 for cross-project finding, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("missing finding rejected with 404", func(t *testing.T) {
+		body := `{"finding_id": "find_status_missing", "status": "RESOLVED"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/projects/proj-audit-status/structure-audit/status", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 for missing finding, got %d: %s", w.Code, w.Body.String())
+		}
+	})
 }

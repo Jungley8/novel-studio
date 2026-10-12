@@ -191,6 +191,20 @@ func (s *SQLiteStore) UpdateStructureFindingStatus(ctx context.Context, id, stat
 	return nil
 }
 
+// StructureFindingProjectID returns the owning project of a finding,
+// or "" when the finding does not exist (mirrors PlotHookProjectID).
+func (s *SQLiteStore) StructureFindingProjectID(ctx context.Context, id string) (string, error) {
+	var projectID string
+	err := s.db.QueryRowContext(ctx, `SELECT project_id FROM structure_findings WHERE id = ?`, id).Scan(&projectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("query structure finding project: %w", err)
+	}
+	return projectID, nil
+}
+
 // DeleteStructureFindingsByProject removes all structure findings for a project.
 func (s *SQLiteStore) DeleteStructureFindingsByProject(ctx context.Context, projectID string) error {
 	if strings.TrimSpace(projectID) == "" {
