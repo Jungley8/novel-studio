@@ -218,7 +218,7 @@ func (o *Orchestrator) DeriveBeatsForChapterType(
 	var milestoneBlock string
 	if horizon != nil && horizon.Project != nil {
 		premiseBlock = buildStoryPremiseBlock(horizon.Project)
-		milestoneBlock = buildMilestoneContextBlock(horizon.Project, targetChapter)
+		milestoneBlock = BuildMilestoneContextBlock(horizon.Project, targetChapter)
 	}
 
 	userPrompt := fmt.Sprintf(`【作品信息】
@@ -344,14 +344,15 @@ func buildStoryPremiseBlock(project *domain.Project) string {
 	return strings.Join(lines, "\n")
 }
 
-// buildMilestoneContextBlock 书级节拍定位块。无里程碑 → ""。
+// BuildMilestoneContextBlock 书级节拍定位块。无里程碑 → ""。
+// 导出供提示词预览直接嵌入：预览与生产提示词逐字同源，禁止在预览侧手写第二份实现。
 // 输出（多行）：
 // 【全书宏观节拍定位】
 // - 全书计划：M 章（本章为第 N 章，约 P%）
 // - 本章里程碑：『名称』@第 N 章 —— 正文必须在本章兑现该里程碑事件与情绪高潮（仅 TargetChapter==N 时输出该行，否则输出：- 本章无里程碑锚点）
 // - 最近未兑现里程碑：『名称』@第 T 章（PENDING，已越过）（target<N 且 PENDING 的最大者）
 // - 下一里程碑：『名称』@第 T 章（间隔 K 章）（target>N 的最小者）
-func buildMilestoneContextBlock(project *domain.Project, chapterIndex int) string {
+func BuildMilestoneContextBlock(project *domain.Project, chapterIndex int) string {
 	if project == nil || project.Framework == nil || len(project.Framework.StoryMilestones) == 0 {
 		return ""
 	}

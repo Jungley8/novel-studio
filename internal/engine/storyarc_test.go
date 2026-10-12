@@ -67,11 +67,11 @@ func TestBackfillStoryMilestones(t *testing.T) {
 
 func TestBuildMilestoneContextBlock(t *testing.T) {
 	t.Run("无里程碑或无工程返回空串", func(t *testing.T) {
-		if out := buildMilestoneContextBlock(nil, 1); out != "" {
+		if out := BuildMilestoneContextBlock(nil, 1); out != "" {
 			t.Errorf("expected empty string for nil project, got %q", out)
 		}
 		pNoFw := &domain.Project{ID: "p1"}
-		if out := buildMilestoneContextBlock(pNoFw, 1); out != "" {
+		if out := BuildMilestoneContextBlock(pNoFw, 1); out != "" {
 			t.Errorf("expected empty string for nil framework, got %q", out)
 		}
 		pEmptyMs := &domain.Project{
@@ -80,7 +80,7 @@ func TestBuildMilestoneContextBlock(t *testing.T) {
 				StoryMilestones: []domain.StoryMilestone{},
 			},
 		}
-		if out := buildMilestoneContextBlock(pEmptyMs, 1); out != "" {
+		if out := BuildMilestoneContextBlock(pEmptyMs, 1); out != "" {
 			t.Errorf("expected empty string for empty milestones, got %q", out)
 		}
 	})
@@ -100,7 +100,7 @@ func TestBuildMilestoneContextBlock(t *testing.T) {
 				StoryMilestones:      milestones,
 			},
 		}
-		out := buildMilestoneContextBlock(p, 50)
+		out := BuildMilestoneContextBlock(p, 50)
 		if !strings.Contains(out, "【全书宏观节拍定位】") {
 			t.Errorf("expected header, got:\n%s", out)
 		}
@@ -126,7 +126,7 @@ func TestBuildMilestoneContextBlock(t *testing.T) {
 				StoryMilestones:      milestones,
 			},
 		}
-		out := buildMilestoneContextBlock(p, 25)
+		out := BuildMilestoneContextBlock(p, 25)
 		if !strings.Contains(out, "- 本章无里程碑锚点") {
 			t.Errorf("expected '- 本章无里程碑锚点', got:\n%s", out)
 		}
@@ -146,7 +146,7 @@ func TestBuildMilestoneContextBlock(t *testing.T) {
 				StoryMilestones:      milestones,
 			},
 		}
-		out := buildMilestoneContextBlock(p, 10)
+		out := BuildMilestoneContextBlock(p, 10)
 		if strings.Contains(out, "%") {
 			t.Errorf("expected percentage omitted when total=0, got:\n%s", out)
 		}

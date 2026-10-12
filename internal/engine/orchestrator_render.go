@@ -165,7 +165,7 @@ func (o *Orchestrator) RenderSceneStream(
 	} else if horizon.TailAnchor != "" {
 		anchorSection = fmt.Sprintf("\n【上章收尾文风锚定 (最后200字，请严格承接此腔调与视角)】\n%s\n", horizon.TailAnchor)
 	}
-	if motifSection := buildMotifConceptPrompt(project); motifSection != "" {
+	if motifSection := BuildMotifConceptPrompt(project); motifSection != "" {
 		anchorSection += "\n" + motifSection + "\n"
 	}
 
@@ -220,9 +220,10 @@ func (o *Orchestrator) RenderSceneStream(
 	return SafeChatCompletionWithStreamFallback(ctxRole, o.client, writerModel, systemPrompt, userPrompt, 0.75, onDelta)
 }
 
-// buildMotifConceptPrompt 有意母题与符号清单注入块（RC 精修锚点）。
+// BuildMotifConceptPrompt 有意母题与符号清单注入块（RC 精修锚点）。
 // project/framework 为空或无有效母题 → 返回 ""（纯函数）。
-func buildMotifConceptPrompt(project *domain.Project) string {
+// 导出供提示词预览直接嵌入：预览与生产提示词逐字同源，禁止在预览侧手写第二份实现。
+func BuildMotifConceptPrompt(project *domain.Project) string {
 	if project == nil || project.Framework == nil {
 		return ""
 	}
