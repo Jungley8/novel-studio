@@ -168,8 +168,8 @@ BELONGS_TO(宗门从属), POSSESSES(本命持有), LOCATED_IN(驻扎身处), OPP
 		Description  string `json:"description"`
 	}
 
-	var rawList []rawRel
-	if err := json.Unmarshal([]byte(cleanJSON), &rawList); err != nil {
+	rawList, err := UnmarshalJSONArray[rawRel](cleanJSON)
+	if err != nil {
 		return nil, usage, fmt.Errorf("unmarshal relations json failed: %w", err)
 	}
 

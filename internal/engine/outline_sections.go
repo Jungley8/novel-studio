@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -161,13 +160,10 @@ func GenerateVolumeSections(
 		return nil, usage, fmt.Errorf("clean volume sections json failed: %w", err)
 	}
 
-	var wrapper struct {
-		Sections []domain.VolumeSection `json:"sections"`
-	}
-	if err := json.Unmarshal([]byte(cleanJSON), &wrapper); err != nil {
+	sections, err := UnmarshalJSONArray[domain.VolumeSection](cleanJSON)
+	if err != nil {
 		return nil, usage, fmt.Errorf("unmarshal volume sections json failed: %w", err)
 	}
-	sections := wrapper.Sections
 
 	if err := validateVolumeSections(arc, sections); err != nil {
 		return nil, usage, fmt.Errorf("validate volume sections failed: %w", err)

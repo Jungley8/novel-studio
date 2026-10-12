@@ -73,8 +73,8 @@ func (o *Orchestrator) GenerateMatrixScenes(
 		return nil, usage, fmt.Errorf("clean matrix scenes json failed: %w", err)
 	}
 
-	var scenes []domain.Scene
-	if err := json.Unmarshal([]byte(cleanJSON), &scenes); err != nil {
+	scenes, err := UnmarshalJSONArray[domain.Scene](cleanJSON)
+	if err != nil {
 		return nil, usage, fmt.Errorf("unmarshal matrix scenes failed: %w", err)
 	}
 
@@ -310,8 +310,8 @@ func (o *Orchestrator) ExtractPlotHooks(
 		TargetChapter  int    `json:"target_chapter"`
 	}
 
-	var rawHooks []rawHook
-	if err := json.Unmarshal([]byte(cleanJSON), &rawHooks); err != nil {
+	rawHooks, err := UnmarshalJSONArray[rawHook](cleanJSON)
+	if err != nil {
 		return nil, usage, fmt.Errorf("unmarshal hooks failed: %w", err)
 	}
 

@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -97,8 +96,8 @@ func ExtractPlantedHooks(
 		return nil, usage, fmt.Errorf("clean hooks json failed: %w", err)
 	}
 
-	var candidates []domain.PlantedHookCandidate
-	if err := json.Unmarshal([]byte(cleanJSON), &candidates); err != nil {
+	candidates, err := UnmarshalJSONArray[domain.PlantedHookCandidate](cleanJSON)
+	if err != nil {
 		return nil, usage, fmt.Errorf("unmarshal planted hooks failed: %w", err)
 	}
 

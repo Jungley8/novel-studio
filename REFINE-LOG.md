@@ -492,6 +492,27 @@ Run 结束后归调用方释放）；全量 `go test ./... -race` 全绿。
 `wails3 task build:server --dry DEV=true` 解析出 `pnpm run build:dev`；
 web 侧 `pnpm test` 4/4 通过，`pnpm run build:dev` 可产出非压缩构建。
 
+### 第七轮：LLM 数组输出解析健壮性统一（2026-10-12 夜 · 全自动成书实战暴露）
+
+背景：以「全自动跑出一本 3 万字短篇」为端到端验收时，`pipeline` 在第 2 步
+（卷意图卡生成）炸线：推理模型偶发把「要求裸数组」的意图卡输出包成对象
+（或用不同包装键），而解析器只接受裸数组 + 固定 `{"intents": …}` 包装，
+于是 `json: cannot unmarshal object into []engine.rawIntentCard` 直接失败。
+
+修复：新增 `internal/engine/json_array.go` 泛型助手 `UnmarshalJSONArray[T]`：
+- 裸数组直通；
+- 对象包装：推荐键（intents/cards/scenes/hooks/sections…）优先、任意键回退；
+- 数字键映射按数字序还原为有序切片；
+- 空数组视为合法「无条目」结果（如伏笔「无则输出 []」）；
+- 完全找不到数组时报出可诊断错误。
+
+统一替换 6 个「期望数组」的 LLM 输出解析点：卷意图卡（`intent_planner.go`）、
+关系图谱（`orchestrator_codex.go`）、矩阵拆场与伏笔（`orchestrator_matrix.go`）、
+埋点伏笔注册（`hook_registrar.go`）、分卷分节（`outline_sections.go`）。
+
+验证：新增 `json_array_test.go` 7 个边界用例（裸数组/推荐键/任意键/优先键裁决/
+数字键排序/空数组/不可定位报错）全绿；全量 `go test ./... -race` 全绿；`gofmt` 完成。
+
 ### 后续待办
 
 - （无）——已知互斥缺口全部闭环。

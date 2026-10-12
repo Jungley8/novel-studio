@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -121,16 +120,9 @@ func (o *Orchestrator) GenerateVolumeIntents(
 		return nil, usage, fmt.Errorf("clean volume intents json failed: %w", err)
 	}
 
-	var rawCards []rawIntentCard
-	if err := json.Unmarshal([]byte(cleanJSON), &rawCards); err != nil {
-		var wrapper struct {
-			Intents []rawIntentCard `json:"intents"`
-		}
-		if err2 := json.Unmarshal([]byte(cleanJSON), &wrapper); err2 == nil && len(wrapper.Intents) > 0 {
-			rawCards = wrapper.Intents
-		} else {
-			return nil, usage, fmt.Errorf("unmarshal volume intents json failed: %w", err)
-		}
+	rawCards, err := UnmarshalJSONArray[rawIntentCard](cleanJSON)
+	if err != nil {
+		return nil, usage, fmt.Errorf("unmarshal volume intents json failed: %w", err)
 	}
 
 	if len(rawCards) == 0 {
