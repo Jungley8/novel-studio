@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
@@ -203,5 +204,71 @@ func TestSettler_UnownedItemRemovalRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "pre-check rejected") {
 		t.Errorf("expected error to mention invariant pre-check rejection, got: %v", err)
+	}
+}
+
+type scriptedSettlerLLMClient struct {
+	mu        sync.Mutex
+	responses []string
+	calls     int
+}
+
+func (f *scriptedSettlerLLMClient) next() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.calls <= len(f.responses) {
+		return f.responses[f.calls-1]
+	}
+	return ""
+}
+
+func (f *scriptedSettlerLLMClient) ChatCompletion(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, error) {
+	txt, _, err := f.ChatCompletionWithUsage(ctx, model, systemPrompt, userPrompt, temperature)
+	return txt, err
+}
+
+func (f *scriptedSettlerLLMClient) ChatCompletionWithUsage(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (string, TokenUsage, error) {
+	return f.next(), TokenUsage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30}, nil
+}
+
+func (f *scriptedSettlerLLMClient) ChatCompletionStream(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64) (<-chan StreamChunk, error) {
+	txt := f.next()
+	ch := make(chan StreamChunk, 2)
+	ch <- StreamChunk{Delta: txt}
+	ch <- StreamChunk{Done: true, Usage: &TokenUsage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30}}
+	close(ch)
+	return ch, nil
+}
+
+func TestSettler_RetriesBadSampleThenSucceeds(t *testing.T) {
+	draft := "林凡深吸一口气，仰头服下一枚清灵丹，顿感通体舒泰。"
+	baseline := &domain.CodexEntry{Name: "林凡", Realm: "练气六层", Inventory: "清灵丹x3"}
+	valid := `{"inventory_delta": "-清灵丹", "power_delta": "", "character_mutations": [], "evidence": [{"field": "inventory", "quote": "仰头服下一枚清灵丹，顿感通体舒泰", "chapter_index": 1}]}`
+
+	client := &scriptedSettlerLLMClient{responses: []string{"这根本不是 JSON", valid}}
+	mutation, _, _, err := SettleFromDraft(context.Background(), client, "mock-model", nil, baseline, draft, 1)
+	if err != nil {
+		t.Fatalf("expected recovery via regeneration, got %v", err)
+	}
+	if mutation.InventoryDelta != "-清灵丹" {
+		t.Fatalf("unexpected mutation: %+v", mutation)
+	}
+	if client.calls != 2 {
+		t.Fatalf("expected exactly 2 attempts, got %d", client.calls)
+	}
+}
+
+func TestSettler_FailsClosedAfterExhaustingAttempts(t *testing.T) {
+	draft := "林凡深吸一口气，仰头服下一枚清灵丹。"
+	baseline := &domain.CodexEntry{Name: "林凡", Realm: "练气六层", Inventory: "清灵丹x3"}
+
+	client := &scriptedSettlerLLMClient{responses: []string{"不是 JSON", "还不是", "依然不是"}}
+	_, _, _, err := SettleFromDraft(context.Background(), client, "mock-model", nil, baseline, draft, 1)
+	if err == nil {
+		t.Fatalf("expected fail-closed error after retry budget is spent")
+	}
+	if client.calls != settleGenerationAttempts {
+		t.Fatalf("expected %d attempts, got %d", settleGenerationAttempts, client.calls)
 	}
 }

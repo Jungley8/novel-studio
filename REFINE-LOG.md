@@ -698,6 +698,21 @@ beats 等最大 JSON 载荷并留余量）；chat 协议行为不变。
 
 验证：`go test ./internal/engine/ -race` 全绿。
 
+
+### 第十六轮：状态结算有界重采样（2026-10-13 凌晨 · 实战：终结算坏样本停线）
+
+实战：第 1 章三轮返工后终结算时，muse 返回不可提取 JSON（`settle clean json
+failed`），单次坏样本直接技术阻断整章；结算路径为单次尝试、无重试、无兜底。
+
+修复：`SettleFromDraftWithFeedback` 增加有界重采样（最多 3 次尝试）：
+LLM 调用失败（仅可重试错误向外冒泡即停）、提取失败、解析失败、证据校验失败
+均触发 2s/4s 退避后重新生成；持久失败仍 Fail-Closed；token 用量跨尝试累加。
+不变量预检保持单次（确定性检查，重试无意义）。
+
+验证：新增 `TestSettler_RetriesBadSampleThenSucceeds` /
+`TestSettler_FailsClosedAfterExhaustingAttempts`；既有 5 个结算用例（含 3 个
+拒绝语义断言，错误文本经 `%w` 透传保持匹配）全绿；全量 `go test ./... -race` 全绿。
+
 ### 后续待办
 
 - （无）——已知互斥缺口全部闭环。

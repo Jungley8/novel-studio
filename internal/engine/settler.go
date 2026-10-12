@@ -25,6 +25,12 @@ func SettleFromDraft(
 	return SettleFromDraftWithFeedback(ctx, client, model, project, baseline, draftText, chapterIndex, "")
 }
 
+// settleGenerationAttempts bounds content-level regeneration for state
+// settlement: a single bad sample (unrepairable JSON, evidence failure) is
+// re-asked instead of killing the chapter, while persistent failure still
+// fails closed.
+const settleGenerationAttempts = 3
+
 // SettleFromDraftWithFeedback audits draft text strictly according to literal facts, deriving post-chapter
 // StateMutation along with textual evidence citations, incorporating feedback from validation if provided.
 func SettleFromDraftWithFeedback(
@@ -101,39 +107,55 @@ func SettleFromDraftWithFeedback(
 	)
 
 	ctxRole := ContextWithRole(ctx, RoleReasoner)
-	resp, usage, err := SafeChatCompletionWithStreamFallback(ctxRole, client, model, systemPrompt, userPrompt, 0.2, nil)
-	if err != nil {
-		return domain.StateMutation{}, nil, usage, fmt.Errorf("settle LLM call failed: %w", err)
-	}
 
-	cleanJSON, err := ExtractAndCleanJSON(resp)
-	if err != nil {
-		return domain.StateMutation{}, nil, usage, fmt.Errorf("settle clean json failed: %w", err)
-	}
+	var (
+		totalUsage TokenUsage
+		delta      domain.SettlementDelta
+		lastErr    error
+	)
+	settled := false
+	for attempt := 1; attempt <= settleGenerationAttempts; attempt++ {
+		resp, usage, err := SafeChatCompletionWithStreamFallback(ctxRole, client, model, systemPrompt, userPrompt, 0.2, nil)
+		addTokenUsage(&totalUsage, usage)
+		if err != nil {
+			lastErr = fmt.Errorf("settle LLM call failed: %w", err)
+			if !isRetryableLLMError(err) {
+				return domain.StateMutation{}, nil, totalUsage, lastErr
+			}
+		} else if cleanJSON, err := ExtractAndCleanJSON(resp); err != nil {
+			lastErr = fmt.Errorf("settle clean json failed: %w", err)
+		} else if err := json.Unmarshal([]byte(cleanJSON), &delta); err != nil {
+			lastErr = fmt.Errorf("settle unmarshal json failed: %w", err)
+		} else {
+			for i := range delta.Evidence {
+				if delta.Evidence[i].ChapterIndex <= 0 {
+					delta.Evidence[i].ChapterIndex = chapterIndex
+				}
+			}
 
-	var delta domain.SettlementDelta
-	if err := json.Unmarshal([]byte(cleanJSON), &delta); err != nil {
-		return domain.StateMutation{}, nil, usage, fmt.Errorf("settle unmarshal json failed: %w", err)
-	}
-
-	for i := range delta.Evidence {
-		if delta.Evidence[i].ChapterIndex <= 0 {
-			delta.Evidence[i].ChapterIndex = chapterIndex
+			// 1. Evidence validation: all non-empty deltas must be backed by quotes from draft
+			if err := delta.Validate(draftText); err != nil {
+				lastErr = fmt.Errorf("settle evidence validation failed: %w", err)
+			} else {
+				settled = true
+				break
+			}
+		}
+		if attempt < settleGenerationAttempts && !sleepRetryBackoff(ctx, attempt) {
+			break
 		}
 	}
-
-	// 1. Evidence validation: all non-empty deltas must be backed by quotes from draft
-	if err := delta.Validate(draftText); err != nil {
-		return domain.StateMutation{}, nil, usage, fmt.Errorf("settle evidence validation failed: %w", err)
+	if !settled {
+		return domain.StateMutation{}, nil, totalUsage, lastErr
 	}
 
 	// 2. State mutation invariant pre-check on baseline
 	mutation := delta.ToStateMutation()
 	if err := ValidateStateMutationInvariants(baseline, mutation); err != nil {
-		return domain.StateMutation{}, nil, usage, fmt.Errorf("settle state mutation pre-check rejected: %w", err)
+		return domain.StateMutation{}, nil, totalUsage, fmt.Errorf("settle state mutation pre-check rejected: %w", err)
 	}
 
-	return mutation, delta.Evidence, usage, nil
+	return mutation, delta.Evidence, totalUsage, nil
 }
 
 // ValidateStateMutationInvariants performs a dry-run execution of ApplyStateMutation on a copy
