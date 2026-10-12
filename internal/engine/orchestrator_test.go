@@ -768,3 +768,70 @@ func TestOrchestrator_DeriveBeats_ChapterIntent(t *testing.T) {
 		t.Errorf("expected prompt NOT to contain intent header when ConsumedIntent is DRAFT, got: %s", mockDraft.capturedUserPrompt)
 	}
 }
+
+func TestOrchestrator_DeriveBeats_StructureFindings(t *testing.T) {
+	mockJSON := `{
+		"beats": [
+			{"phase": "蓄力压迫", "tension": 5, "action": "反派拦路叫嚣", "expectation_broken": "主角面色平静", "reader_emotion": "紧张压抑", "info_gap": "反派不知主角已突破"}
+		],
+		"state_mutation": {}
+	}`
+
+	// 1. Non-empty StructureFindings: prompt should contain header and formatted finding line
+	mock := &mockLLMClient{response: mockJSON}
+	orch := engine.NewOrchestrator(mock)
+	horizon := &engine.CanonHorizon{
+		TargetChapter: 21,
+		StructureFindings: []domain.StructureFinding{
+			{
+				ChapterStart: 3,
+				ChapterEnd:   20,
+				Type:         domain.StructureFindingTypeDroppedHook,
+				Severity:     domain.StructureFindingSeverityHigh,
+				Status:       domain.StructureFindingStatusOpen,
+				Summary:      "第3章玉佩伏笔未回收",
+				Suggestion:   "在第21章安排掌门辨认玉佩闭环",
+			},
+		},
+	}
+	out, err := orch.DeriveBeatsForChapterType(context.Background(), "mock-model", horizon, "暗流涌动", domain.ChapterTypeEscalation)
+	if err != nil {
+		t.Fatalf("DeriveBeatsForChapterType failed: %v", err)
+	}
+	if len(out.Beats) != 1 {
+		t.Errorf("expected 1 beat, got %d", len(out.Beats))
+	}
+	if !strings.Contains(mock.capturedUserPrompt, "【全书结构审读·待处理高优问题】") {
+		t.Errorf("expected prompt to contain structure findings header, got: %s", mock.capturedUserPrompt)
+	}
+	expectedLine := "第3-20章·DROPPED_HOOK·第3章玉佩伏笔未回收·建议：在第21章安排掌门辨认玉佩闭环"
+	if !strings.Contains(mock.capturedUserPrompt, expectedLine) {
+		t.Errorf("expected prompt to contain finding line %q, got: %s", expectedLine, mock.capturedUserPrompt)
+	}
+
+	// 2. Empty StructureFindings: prompt should NOT contain header
+	mockEmpty := &mockLLMClient{response: mockJSON}
+	orchEmpty := engine.NewOrchestrator(mockEmpty)
+	horizonEmpty := &engine.CanonHorizon{
+		TargetChapter:     21,
+		StructureFindings: []domain.StructureFinding{},
+	}
+	_, err = orchEmpty.DeriveBeatsForChapterType(context.Background(), "mock-model", horizonEmpty, "暗流涌动", domain.ChapterTypeEscalation)
+	if err != nil {
+		t.Fatalf("DeriveBeatsForChapterType failed: %v", err)
+	}
+	if strings.Contains(mockEmpty.capturedUserPrompt, "【全书结构审读·待处理高优问题】") {
+		t.Errorf("expected prompt NOT to contain structure findings header when findings slice is empty, got: %s", mockEmpty.capturedUserPrompt)
+	}
+
+	// 3. Nil horizon: should not panic and prompt should NOT contain header
+	mockNil := &mockLLMClient{response: mockJSON}
+	orchNil := engine.NewOrchestrator(mockNil)
+	_, err = orchNil.DeriveBeatsForChapterType(context.Background(), "mock-model", nil, "常规冲突", domain.ChapterTypeEscalation)
+	if err != nil {
+		t.Fatalf("DeriveBeatsForChapterType with nil horizon failed: %v", err)
+	}
+	if strings.Contains(mockNil.capturedUserPrompt, "【全书结构审读·待处理高优问题】") {
+		t.Errorf("expected prompt NOT to contain structure findings header when horizon is nil, got: %s", mockNil.capturedUserPrompt)
+	}
+}

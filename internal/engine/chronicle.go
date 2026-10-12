@@ -35,26 +35,27 @@ func WithContextBudget(ctx context.Context, budgetTokens int) context.Context {
 // Layer 2: Rolling 3-chapter high-fidelity sealed canon
 // Layer 3: Cross-volume callbacks & active/urgent plot hooks
 type CanonHorizon struct {
-	Project             *domain.Project         `json:"project"`
-	TargetChapter       int                     `json:"target_chapter"`
-	GlobalSummary       string                  `json:"global_summary"`
-	CurrentVolume       *domain.VolumeArc       `json:"current_volume,omitempty"`
-	ActivePowerTier     *domain.PowerLadderTier `json:"active_power_tier,omitempty"`
-	RollingCanonText    string                  `json:"rolling_canon_text"`
-	TailAnchor          string                  `json:"tail_anchor,omitempty"`
-	HistoricalCallbacks string                  `json:"historical_callbacks,omitempty"`
-	RecentChapters      []*domain.Chapter       `json:"recent_chapters"`
-	UrgentHooks         []*domain.PlotHook      `json:"urgent_hooks"`
-	AllActiveHooks      []*domain.PlotHook      `json:"all_active_hooks"`
-	ProtagonistEntry    *domain.CodexEntry      `json:"protagonist_entry,omitempty"`
-	WorldRules          string                  `json:"world_rules"`
-	ActiveCodexEntries  []*domain.CodexEntry    `json:"active_codex_entries,omitempty"`
-	CodexRelations      []domain.EntityRelation `json:"codex_relations,omitempty"`
-	CodexContextText    string                  `json:"codex_context_text,omitempty"`
-	NarrativeTone       string                  `json:"narrative_tone,omitempty"`
-	StyleVaultAnchor    string                  `json:"style_vault_anchor,omitempty"`
-	SelectedPlanText    string                  `json:"selected_plan_text,omitempty"`
-	ConsumedIntent      *domain.ChapterIntent   `json:"consumed_intent,omitempty"`
+	Project             *domain.Project           `json:"project"`
+	TargetChapter       int                       `json:"target_chapter"`
+	GlobalSummary       string                    `json:"global_summary"`
+	CurrentVolume       *domain.VolumeArc         `json:"current_volume,omitempty"`
+	ActivePowerTier     *domain.PowerLadderTier   `json:"active_power_tier,omitempty"`
+	RollingCanonText    string                    `json:"rolling_canon_text"`
+	TailAnchor          string                    `json:"tail_anchor,omitempty"`
+	HistoricalCallbacks string                    `json:"historical_callbacks,omitempty"`
+	RecentChapters      []*domain.Chapter         `json:"recent_chapters"`
+	UrgentHooks         []*domain.PlotHook        `json:"urgent_hooks"`
+	AllActiveHooks      []*domain.PlotHook        `json:"all_active_hooks"`
+	ProtagonistEntry    *domain.CodexEntry        `json:"protagonist_entry,omitempty"`
+	WorldRules          string                    `json:"world_rules"`
+	ActiveCodexEntries  []*domain.CodexEntry      `json:"active_codex_entries,omitempty"`
+	CodexRelations      []domain.EntityRelation   `json:"codex_relations,omitempty"`
+	CodexContextText    string                    `json:"codex_context_text,omitempty"`
+	NarrativeTone       string                    `json:"narrative_tone,omitempty"`
+	StyleVaultAnchor    string                    `json:"style_vault_anchor,omitempty"`
+	SelectedPlanText    string                    `json:"selected_plan_text,omitempty"`
+	ConsumedIntent      *domain.ChapterIntent     `json:"consumed_intent,omitempty"`
+	StructureFindings   []domain.StructureFinding `json:"structure_findings,omitempty"`
 }
 
 // VolumeRetrospectiveStore defines the query interface for volume retrospectives.

@@ -3580,3 +3580,373 @@ func TestChapterWorkshop_CompactionFailureWarnsInIssues(t *testing.T) {
 		t.Errorf("expected workshop event with '【记忆压缩警告】' to be emitted")
 	}
 }
+
+func TestFilterHighPriorityOpenFindings(t *testing.T) {
+	// 1. Nil or empty returns nil
+	if res := FilterHighPriorityOpenFindings(nil); res != nil {
+		t.Errorf("expected nil for nil input, got: %v", res)
+	}
+	if res := FilterHighPriorityOpenFindings([]*domain.StructureFinding{}); res != nil {
+		t.Errorf("expected nil for empty input, got: %v", res)
+	}
+
+	// 2. Filters non-OPEN and non-HIGH, sorts by chapter_start, caps 6+ items to 5
+	inputs := []*domain.StructureFinding{
+		{
+			ID:           "f1",
+			ChapterStart: 10,
+			ChapterEnd:   12,
+			Status:       domain.StructureFindingStatusOpen,
+			Severity:     domain.StructureFindingSeverityHigh,
+			Summary:      "f1-open-high-10",
+		},
+		{
+			ID:           "f2-res",
+			ChapterStart: 2,
+			ChapterEnd:   4,
+			Status:       domain.StructureFindingStatusResolved,
+			Severity:     domain.StructureFindingSeverityHigh,
+			Summary:      "f2-resolved",
+		},
+		{
+			ID:           "f3-low",
+			ChapterStart: 3,
+			ChapterEnd:   5,
+			Status:       domain.StructureFindingStatusOpen,
+			Severity:     domain.StructureFindingSeverityLow,
+			Summary:      "f3-low",
+		},
+		{
+			ID:           "f4-med",
+			ChapterStart: 4,
+			ChapterEnd:   6,
+			Status:       domain.StructureFindingStatusOpen,
+			Severity:     domain.StructureFindingSeverityMedium,
+			Summary:      "f4-med",
+		},
+		{
+			ID:           "f5",
+			ChapterStart: 1,
+			ChapterEnd:   2,
+			Status:       domain.StructureFindingStatusOpen,
+			Severity:     domain.StructureFindingSeverityHigh,
+			Summary:      "f5-open-high-1",
+		},
+		{
+			ID:           "f6",
+			ChapterStart: 5,
+			ChapterEnd:   7,
+			Status:       domain.StructureFindingStatusOpen,
+			Severity:     domain.StructureFindingSeverityHigh,
+			Summary:      "f6-open-high-5",
+		},
+		{
+			ID:           "f7",
+			ChapterStart: 7,
+			ChapterEnd:   8,
+			Status:       domain.StructureFindingStatusOpen,
+			Severity:     domain.StructureFindingSeverityHigh,
+			Summary:      "f7-open-high-7",
+		},
+		{
+			ID:           "f8",
+			ChapterStart: 8,
+			ChapterEnd:   9,
+			Status:       domain.StructureFindingStatusOpen,
+			Severity:     domain.StructureFindingSeverityHigh,
+			Summary:      "f8-open-high-8",
+		},
+		{
+			ID:           "f9",
+			ChapterStart: 15,
+			ChapterEnd:   16,
+			Status:       domain.StructureFindingStatusOpen,
+			Severity:     domain.StructureFindingSeverityHigh,
+			Summary:      "f9-open-high-15",
+		},
+	}
+
+	res := FilterHighPriorityOpenFindings(inputs)
+	if len(res) != 5 {
+		t.Fatalf("expected exactly 5 findings capped, got %d", len(res))
+	}
+	expectedIDs := []string{"f5-open-high-1", "f6-open-high-5", "f7-open-high-7", "f8-open-high-8", "f1-open-high-10"}
+	for i, exp := range expectedIDs {
+		if res[i].Summary != exp {
+			t.Errorf("expected res[%d] summary to be %s, got %s", i, exp, res[i].Summary)
+		}
+	}
+}
+
+type mockFindingsWorkshopStore struct {
+	*mockChronicleStore
+	findings    []*domain.StructureFinding
+	findingsErr error
+}
+
+func (m *mockFindingsWorkshopStore) ListStructureFindings(ctx context.Context, projectID string) ([]*domain.StructureFinding, error) {
+	if m.findingsErr != nil {
+		return nil, m.findingsErr
+	}
+	return m.findings, nil
+}
+
+func TestChapterWorkshop_ProduceChapter_StructureFindingsLoop(t *testing.T) {
+	beatsResp := `{
+		"beats": [
+			{"phase": "蓄力压迫", "tension": 5, "action": "三名黑衣修士逼近", "expectation_broken": "主角面色平静", "reader_emotion": "紧张压抑", "info_gap": "反派不知主角已突破"}
+		],
+		"state_mutation": {}
+	}`
+	reviewResp := `{
+		"score": 90,
+		"issues": [],
+		"suggestions": "节奏明快，表现良好"
+	}`
+
+	setupWorkshop := func(store *mockFindingsWorkshopStore) (*ChapterWorkshop, *mockWorkshopLLMClient) {
+		client := &mockWorkshopLLMClient{
+			beatsJSON:   beatsResp,
+			renderDraft: "夜幕低垂。三名黑衣修士逼近洞府门前。林凡指尖轻扣石壁。阵纹骤亮，雷光咆哮如龙！",
+			reviewJSON:  reviewResp,
+		}
+		orch := NewOrchestrator(client)
+		qGate := NewQualityGate(client, nil)
+		chronicle := NewCanonChronicle(store)
+		ws := NewChapterWorkshop(orch, chronicle, qGate, store)
+		return ws, client
+	}
+
+	newBaseStore := func() *mockChronicleStore {
+		return &mockChronicleStore{
+			project: &domain.Project{
+				ID:             "p-findings",
+				Title:          "万域封神",
+				TargetPlatform: "番茄脑洞",
+				WorldRules:     "杀生夺灵，因果必报",
+			},
+			codexEntries: []*domain.CodexEntry{
+				{
+					ID:        "codex_p-findings_pro",
+					ProjectID: "p-findings",
+					Category:  domain.CategoryCharacter,
+					Archetype: "PROTAGONIST",
+					Name:      "林凡",
+					Realm:     "练气圆满",
+					Inventory: "青玉短剑",
+				},
+			},
+			chapters: []*domain.Chapter{},
+			hooks:    []*domain.PlotHook{},
+		}
+	}
+
+	req := WorkshopProduceRequest{
+		ProjectID:      "p-findings",
+		ChapterIndex:   21,
+		CoreConflict:   "突破围剿",
+		ReasoningModel: "mock-reasoner",
+		WriterModel:    "mock-writer",
+		ReviewerModel:  "mock-reviewer",
+	}
+
+	t.Run("case1_open_high_findings_injected_and_capped_to_5", func(t *testing.T) {
+		store := &mockFindingsWorkshopStore{
+			mockChronicleStore: newBaseStore(),
+			findings: []*domain.StructureFinding{
+				{
+					ChapterStart: 3,
+					ChapterEnd:   20,
+					Type:         domain.StructureFindingTypeDroppedHook,
+					Severity:     domain.StructureFindingSeverityHigh,
+					Status:       domain.StructureFindingStatusOpen,
+					Summary:      "玉佩伏笔未回收",
+					Suggestion:   "安排掌门辨认玉佩",
+				},
+				{
+					ChapterStart: 2,
+					ChapterEnd:   4,
+					Type:         domain.StructureFindingTypePacing,
+					Severity:     domain.StructureFindingSeverityHigh,
+					Status:       domain.StructureFindingStatusResolved,
+					Summary:      "已解决问题",
+					Suggestion:   "不应注入",
+				},
+				{
+					ChapterStart: 1,
+					ChapterEnd:   2,
+					Type:         domain.StructureFindingTypePlotHole,
+					Severity:     domain.StructureFindingSeverityLow,
+					Status:       domain.StructureFindingStatusOpen,
+					Summary:      "低优问题",
+					Suggestion:   "不应注入",
+				},
+				{
+					ChapterStart: 1,
+					ChapterEnd:   2,
+					Type:         domain.StructureFindingTypeArcDrift,
+					Severity:     domain.StructureFindingSeverityHigh,
+					Status:       domain.StructureFindingStatusOpen,
+					Summary:      "主线偏离1",
+					Suggestion:   "收束主线",
+				},
+				{
+					ChapterStart: 5,
+					ChapterEnd:   6,
+					Type:         domain.StructureFindingTypeRedundant,
+					Severity:     domain.StructureFindingSeverityHigh,
+					Status:       domain.StructureFindingStatusOpen,
+					Summary:      "冗余支线5",
+					Suggestion:   "剪裁冗余",
+				},
+				{
+					ChapterStart: 7,
+					ChapterEnd:   8,
+					Type:         domain.StructureFindingTypePlotHole,
+					Severity:     domain.StructureFindingSeverityHigh,
+					Status:       domain.StructureFindingStatusOpen,
+					Summary:      "逻辑漏洞7",
+					Suggestion:   "补全逻辑",
+				},
+				{
+					ChapterStart: 9,
+					ChapterEnd:   10,
+					Type:         domain.StructureFindingTypeDroppedHook,
+					Severity:     domain.StructureFindingSeverityHigh,
+					Status:       domain.StructureFindingStatusOpen,
+					Summary:      "暗线未收9",
+					Suggestion:   "推进暗线",
+				},
+				{
+					ChapterStart: 15,
+					ChapterEnd:   16,
+					Type:         domain.StructureFindingTypePacing,
+					Severity:     domain.StructureFindingSeverityHigh,
+					Status:       domain.StructureFindingStatusOpen,
+					Summary:      "第6条高优问题15",
+					Suggestion:   "超上限应截断",
+				},
+			},
+		}
+
+		ws, client := setupWorkshop(store)
+		res, err := ws.ProduceChapter(context.Background(), req)
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+		if res == nil {
+			t.Fatalf("expected non-nil result")
+		}
+
+		// Prompt must contain findings block
+		if !strings.Contains(client.capturedBeatsPrompt, "【全书结构审读·待处理高优问题】") {
+			t.Errorf("expected beats prompt to contain findings header, got:\n%s", client.capturedBeatsPrompt)
+		}
+
+		// First 5 OPEN+HIGH findings must be present
+		if !strings.Contains(client.capturedBeatsPrompt, "第1-2章·ARC_DRIFT·主线偏离1·建议：收束主线") {
+			t.Errorf("expected prompt to contain finding ch 1-2, got:\n%s", client.capturedBeatsPrompt)
+		}
+		if !strings.Contains(client.capturedBeatsPrompt, "第3-20章·DROPPED_HOOK·玉佩伏笔未回收·建议：安排掌门辨认玉佩") {
+			t.Errorf("expected prompt to contain finding ch 3-20, got:\n%s", client.capturedBeatsPrompt)
+		}
+		if !strings.Contains(client.capturedBeatsPrompt, "第5-6章·REDUNDANT·冗余支线5·建议：剪裁冗余") {
+			t.Errorf("expected prompt to contain finding ch 5-6, got:\n%s", client.capturedBeatsPrompt)
+		}
+		if !strings.Contains(client.capturedBeatsPrompt, "第7-8章·PLOT_HOLE·逻辑漏洞7·建议：补全逻辑") {
+			t.Errorf("expected prompt to contain finding ch 7-8, got:\n%s", client.capturedBeatsPrompt)
+		}
+		if !strings.Contains(client.capturedBeatsPrompt, "第9-10章·DROPPED_HOOK·暗线未收9·建议：推进暗线") {
+			t.Errorf("expected prompt to contain finding ch 9-10, got:\n%s", client.capturedBeatsPrompt)
+		}
+
+		// 6th finding must NOT be present (capped to 5)
+		if strings.Contains(client.capturedBeatsPrompt, "第6条高优问题15") {
+			t.Errorf("expected prompt NOT to contain 6th finding, got:\n%s", client.capturedBeatsPrompt)
+		}
+
+		// RESOLVED and LOW findings must NOT be present
+		if strings.Contains(client.capturedBeatsPrompt, "已解决问题") {
+			t.Errorf("expected prompt NOT to contain RESOLVED finding, got:\n%s", client.capturedBeatsPrompt)
+		}
+		if strings.Contains(client.capturedBeatsPrompt, "低优问题") {
+			t.Errorf("expected prompt NOT to contain LOW finding, got:\n%s", client.capturedBeatsPrompt)
+		}
+	})
+
+	t.Run("case2_only_resolved_and_low_findings_omits_section", func(t *testing.T) {
+		store := &mockFindingsWorkshopStore{
+			mockChronicleStore: newBaseStore(),
+			findings: []*domain.StructureFinding{
+				{
+					ChapterStart: 2,
+					ChapterEnd:   4,
+					Type:         domain.StructureFindingTypePacing,
+					Severity:     domain.StructureFindingSeverityHigh,
+					Status:       domain.StructureFindingStatusResolved,
+					Summary:      "已解决问题",
+					Suggestion:   "不应注入",
+				},
+				{
+					ChapterStart: 1,
+					ChapterEnd:   2,
+					Type:         domain.StructureFindingTypePlotHole,
+					Severity:     domain.StructureFindingSeverityLow,
+					Status:       domain.StructureFindingStatusOpen,
+					Summary:      "低优问题",
+					Suggestion:   "不应注入",
+				},
+			},
+		}
+
+		ws, client := setupWorkshop(store)
+		res, err := ws.ProduceChapter(context.Background(), req)
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+		if res == nil {
+			t.Fatalf("expected non-nil result")
+		}
+		if strings.Contains(client.capturedBeatsPrompt, "【全书结构审读·待处理高优问题】") {
+			t.Errorf("expected prompt NOT to contain findings header for resolved/low only, got:\n%s", client.capturedBeatsPrompt)
+		}
+	})
+
+	t.Run("case3_empty_findings_omits_section", func(t *testing.T) {
+		store := &mockFindingsWorkshopStore{
+			mockChronicleStore: newBaseStore(),
+			findings:           []*domain.StructureFinding{},
+		}
+
+		ws, client := setupWorkshop(store)
+		res, err := ws.ProduceChapter(context.Background(), req)
+		if err != nil {
+			t.Fatalf("ProduceChapter failed: %v", err)
+		}
+		if res == nil {
+			t.Fatalf("expected non-nil result")
+		}
+		if strings.Contains(client.capturedBeatsPrompt, "【全书结构审读·待处理高优问题】") {
+			t.Errorf("expected prompt NOT to contain findings header for empty findings, got:\n%s", client.capturedBeatsPrompt)
+		}
+	})
+
+	t.Run("case4_store_error_degrades_gracefully_fail_open", func(t *testing.T) {
+		store := &mockFindingsWorkshopStore{
+			mockChronicleStore: newBaseStore(),
+			findingsErr:        errors.New("simulated sqlite error"),
+		}
+
+		ws, client := setupWorkshop(store)
+		res, err := ws.ProduceChapter(context.Background(), req)
+		if err != nil {
+			t.Fatalf("ProduceChapter must succeed when findings store errors (Fail-Open), got: %v", err)
+		}
+		if res == nil {
+			t.Fatalf("expected non-nil result")
+		}
+		if strings.Contains(client.capturedBeatsPrompt, "【全书结构审读·待处理高优问题】") {
+			t.Errorf("expected prompt NOT to contain findings header on store error, got:\n%s", client.capturedBeatsPrompt)
+		}
+	})
+}

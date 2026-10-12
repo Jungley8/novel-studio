@@ -221,10 +221,16 @@ func (o *Orchestrator) DeriveBeatsForChapterType(
 		milestoneBlock = BuildMilestoneContextBlock(horizon.Project, targetChapter)
 	}
 
+	var findingsBlock string
+	if horizon != nil && len(horizon.StructureFindings) > 0 {
+		findingsBlock = BuildStructureFindingsPromptBlock(horizon.StructureFindings)
+	}
+
 	userPrompt := fmt.Sprintf(`【作品信息】
 书名：《%s》
 目标平台：%s
 当前章节序号：第 %d 章
+%s
 %s
 %s
 %s
@@ -252,6 +258,7 @@ func (o *Orchestrator) DeriveBeatsForChapterType(
 		typeGuidance,
 		rhythmForesight,
 		milestoneBlock,
+		findingsBlock,
 		worldRules, volumeContext, powerContext,
 		protNameLevel(protEntry), protInventory(protEntry), protGoal(protEntry), codexContext,
 		rollingCanon, callbacksText,
@@ -482,4 +489,26 @@ func buildChapterIntentPromptBlock(intent *domain.ChapterIntent) string {
 	lines = append(lines, "铁律：冲突不得偏离此意图；与正史、状态机、世界公理冲突时以正史为准，并在节拍中体现调整与过渡。")
 
 	return strings.Join(lines, "\n") + "\n\n"
+}
+
+// BuildStructureFindingsPromptBlock 渲染待处理高优结构审读问题块；空切片返回 ""。
+// 导出供提示词预览及外部测试使用。
+func BuildStructureFindingsPromptBlock(findings []domain.StructureFinding) string {
+	if len(findings) == 0 {
+		return ""
+	}
+	var lines []string
+	lines = append(lines, "【全书结构审读·待处理高优问题】")
+	for _, f := range findings {
+		lines = append(lines, fmt.Sprintf("第%d-%d章·%s·%s·建议：%s", f.ChapterStart, f.ChapterEnd, f.Type, strings.TrimSpace(f.Summary), strings.TrimSpace(f.Suggestion)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func buildStructureFindingsPromptBlock(findings []domain.StructureFinding) string {
+	return BuildStructureFindingsPromptBlock(findings)
+}
+
+func buildStructureFindingsBlock(findings []domain.StructureFinding) string {
+	return BuildStructureFindingsPromptBlock(findings)
 }

@@ -356,6 +356,17 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		horizon.ConsumedIntent = consumedIntent
 	}
 
+	// 1.4 Best-effort load high-priority open structure findings for beats planning
+	// 规划增强不得阻断生产：若读库失败或 store 未实现该接口，降级为空继续执行（Fail-Open for non-critical enhancement）。
+	if fs, ok := w.store.(interface {
+		ListStructureFindings(ctx context.Context, projectID string) ([]*domain.StructureFinding, error)
+	}); ok {
+		findings, fErr := fs.ListStructureFindings(ctx, req.ProjectID)
+		if fErr == nil {
+			horizon.StructureFindings = FilterHighPriorityOpenFindings(findings)
+		}
+	}
+
 	for _, ev := range planEmits {
 		emit(ev)
 	}
@@ -1471,4 +1482,31 @@ func (w *ChapterWorkshop) settleStateWithValidation(
 	}
 
 	return sMut, sEvs, nil, totalUsage, nil
+}
+
+// FilterHighPriorityOpenFindings 过滤出 OPEN+HIGH 状态的结构审读问题，按 chapter_start 升序排列，硬上限 5 条。
+func FilterHighPriorityOpenFindings(findings []*domain.StructureFinding) []domain.StructureFinding {
+	if len(findings) == 0 {
+		return nil
+	}
+	var filtered []*domain.StructureFinding
+	for _, f := range findings {
+		if f != nil && f.Status == domain.StructureFindingStatusOpen && f.Severity == domain.StructureFindingSeverityHigh {
+			filtered = append(filtered, f)
+		}
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		if filtered[i].ChapterStart != filtered[j].ChapterStart {
+			return filtered[i].ChapterStart < filtered[j].ChapterStart
+		}
+		return filtered[i].ChapterEnd < filtered[j].ChapterEnd
+	})
+	if len(filtered) > 5 {
+		filtered = filtered[:5]
+	}
+	res := make([]domain.StructureFinding, 0, len(filtered))
+	for _, f := range filtered {
+		res = append(res, *f)
+	}
+	return res
 }
