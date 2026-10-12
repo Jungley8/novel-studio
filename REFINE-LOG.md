@@ -688,4 +688,40 @@ beats 等最大 JSON 载荷并留余量）；chat 协议行为不变。
 
 - （无）——已知互斥缺口全部闭环。
 
+### 第十六轮：Wave 2 剩余缺口补齐（2026-10-13 · 并行批次：2×agy + 1×opencode + 集成方）
+
+首轮五包之后的第二波（B2/C1/C3），各自独立 worktree，集成方统一复验、亲手变异重放、
+rebase 线性合并：
+
+1. **B2 角色一致性审校**（`f7e76a1`→main `786b534`）：NEW
+   `engine.BuildCharacterMotivationContext`（MentionScanner 筛出场角色，渲染
+   Want/Need/Ghost 卡，cap 6 条/2000 rune）；`ChiefJudgeOptions.CharacterContext`
+   透传至 `ContinuityDivision`（签名+1 参）；连续性庭 prompt 加第 4 项「角色动机一致性」
+   （反派自我正当逻辑、逐判定引用正文 ≥8 字证据），引文规范顺延第 5 项；
+   `AuditWithHooks` 加 variadic opts；工作坊首审/复审 + review-draft 三处接线
+   （读库失败降级空串，生产零新增阻断；同时激活了此前从未被传入的 TailAnchor）。
+2. **C1 全书结构审读器**（`a7a6a94`→main `f73a0d0`）：NEW `domain.StructureFinding`
+   （5 类/3 级/3 态 + Validate）→ `engine.RunStructureAudit`（章摘要 300/12000 rune
+   上限、伏笔/里程碑/bench 组装、宽容 JSON 解析、非法项丢弃、cap 20）→
+   `store.structure_findings` 表（窄接口断言，不动 Store 大接口）→
+   `POST/GET structure-audit` + `POST status`（run 成功才删旧存新，LLM 失败旧结果保留；
+   无摘要返回空列表 + note 不报错）→ AnalyticsView 第 4 子 tab「结构审读」
+   （运行/列表/解决·忽略·重开，作品切换清空，覆盖语义文案）。
+   集成方追加 `2072be5`：status 端点按 `StructureFindingProjectID` 做租户作用域
+   （跨作品/不存在一律 404，对齐伏笔 PlotHookProjectID 定式）。
+3. **C3 提示词预览同源**（`465befe`→main，经集成方重构 `8b3a37b`）：预览加母题/
+   里程碑块。执行器原手写第二份里程碑定位逻辑，复验发现边界分歧（空白 status、
+   未 trim 人名）且"逐字一致"回执不成立；集成方改为导出
+   `engine.BuildMotifConceptPrompt` / `engine.BuildMilestoneContextBlock` 由预览直接嵌入，
+   同源从自称变结构保证，并加固守测试（预览改回手写即红）。
+
+验证（集成方独立执行）：三包各自 build/full -race/gofmt/web test+build 全绿；
+main 最终 `go test ./... -race` 全绿 + `pnpm test` 4/4；变异亲手重放
+（structure_audit severity 门→domain 非法 severity case 红；
+ character_motivation ScanText 短路→排除未出场/空输入两 case 红；
+ preview 引擎调用短路→生产表头断言红），均还原确认绿。
+教训：`herdr agent prompt --wait` 会在 pane 短暂 settle 时提前返回 done——
+"done" 以 pane 真 Idle + 树里有提交 + DONE token 三者为准，等待改用被动
+`herdr agent wait`，不再向工作中 pane 注消息。
+
 
