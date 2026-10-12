@@ -22,23 +22,16 @@ func decideVerdict(llmVerdict domain.ReviewVerdict, score int, draftText string,
 }
 
 // DivisionName represents one of the three specialized judicial review chambers.
-type DivisionName string
+type DivisionName = domain.DivisionName
 
 const (
-	DivisionLogic      DivisionName = "LogicDivision"
-	DivisionStyle      DivisionName = "StyleDivision"
-	DivisionContinuity DivisionName = "ContinuityDivision"
+	DivisionLogic      = domain.DivisionLogic
+	DivisionStyle      = domain.DivisionStyle
+	DivisionContinuity = domain.DivisionContinuity
 )
 
 // DivisionResult stores the auditing outcome from a single judicial division.
-type DivisionResult struct {
-	DivisionName  DivisionName                 `json:"division_name"`
-	Verdict       domain.ReviewVerdict         `json:"verdict"`
-	Score         int                          `json:"score"`
-	Issues        []string                     `json:"issues"`
-	Suggestions   string                       `json:"suggestions"`
-	ResolvedHooks []domain.HookResolutionClaim `json:"resolved_hooks,omitempty"`
-}
+type DivisionResult = domain.DivisionResult
 
 // CourtAuditReport encapsulates the synthesized outcome of the three-division review court,
 // extending domain.AuditReport with multi-agent debate and minority dissent trails.
@@ -591,6 +584,12 @@ func (c *ReviewCourt) ChiefJudge(
 		}
 	}
 
+	divisionsMap := map[string]DivisionResult{
+		string(DivisionLogic):      *logicRes,
+		string(DivisionStyle):      *styleRes,
+		string(DivisionContinuity): *continuityRes,
+	}
+
 	report := &domain.AuditReport{
 		Verdict:            finalVerdict,
 		Score:              finalScore,
@@ -604,13 +603,9 @@ func (c *ReviewCourt) ChiefJudge(
 		Suggestions:        strings.Join(suggestionParts, "\n"),
 		ResolvedHookIDs:    resolvedHookIDs,
 		ResolvedHookClaims: logicRes.ResolvedHooks,
+		Dissent:            dissent,
+		Divisions:          divisionsMap,
 		ReviewedAt:         time.Now(),
-	}
-
-	divisionsMap := map[string]DivisionResult{
-		string(DivisionLogic):      *logicRes,
-		string(DivisionStyle):      *styleRes,
-		string(DivisionContinuity): *continuityRes,
 	}
 
 	courtReport := &CourtAuditReport{

@@ -397,6 +397,61 @@
                 {{ state.reviewResult.score }} 分
               </span>
             </div>
+
+            <!-- 分庭判决回放 (无 division 数据时整段隐藏，不输出占位) -->
+            <div v-if="state.reviewResult.divisions && Object.keys(state.reviewResult.divisions).length > 0" class="p-2.5 bg-atelier-900/90 rounded-lg border border-atelier-800 space-y-2">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-ink-200 font-bold flex items-center gap-1.5">
+                  <Scale class="w-3.5 h-3.5 text-brand-amber" />
+                  <span>分庭判决回放</span>
+                </span>
+                <span class="text-[10px] font-mono text-ink-400">三庭合议</span>
+              </div>
+
+              <!-- 三分庭各自 verdict 卡片 -->
+              <div class="grid grid-cols-3 gap-1.5">
+                <div 
+                  v-for="(div, key) in state.reviewResult.divisions" 
+                  :key="key"
+                  class="p-2 rounded bg-atelier-950/80 border text-center flex flex-col justify-between"
+                  :class="div.verdict === 'ACCEPTED' ? 'border-brand-emerald/35' : 'border-brand-rose/35'">
+                  <div class="text-[10px] text-ink-300 font-semibold truncate">{{ formatDivisionName(div.division_name || key) }}</div>
+                  <div class="mt-1 flex items-center justify-center gap-1">
+                    <span class="text-[9px] px-1 py-0.5 rounded font-mono font-bold"
+                      :class="div.verdict === 'ACCEPTED' ? 'bg-brand-emerald/15 text-brand-emerald border border-brand-emerald/30' : 'bg-brand-rose/15 text-brand-rose border border-brand-rose/30'">
+                      {{ div.verdict === 'ACCEPTED' ? '放行' : '需修改' }}
+                    </span>
+                    <span class="text-[9px] font-mono text-ink-400">{{ div.score }}分</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 少数派 dissent 展开 -->
+              <div v-if="state.reviewResult.dissent && state.reviewResult.dissent.length > 0" class="space-y-1.5 pt-1 border-t border-atelier-800">
+                <button 
+                  type="button"
+                  @click="showCourtDissent = !showCourtDissent"
+                  class="w-full flex items-center justify-between text-[10px] text-ink-400 hover:text-brand-amber transition cursor-pointer select-none py-0.5">
+                  <span class="flex items-center gap-1 text-brand-amber font-medium">
+                    <span>少数派异见 ({{ state.reviewResult.dissent.length }} 庭)</span>
+                  </span>
+                  <div class="flex items-center gap-0.5 text-ink-500">
+                    <span>{{ showCourtDissent ? '收起' : '展开' }}</span>
+                    <ChevronUp v-if="showCourtDissent" class="w-3 h-3" />
+                    <ChevronDown v-else class="w-3 h-3" />
+                  </div>
+                </button>
+                <div v-show="showCourtDissent" class="space-y-1 text-[11px] text-ink-300">
+                  <div 
+                    v-for="(d, i) in state.reviewResult.dissent" 
+                    :key="i"
+                    class="p-1.5 bg-atelier-950/90 rounded border border-atelier-800 leading-relaxed font-sans text-[10px] text-ink-300">
+                    {{ d }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div v-if="state.reviewResult.issues?.length" class="space-y-1">
               <div class="text-[10px] text-ink-400 font-semibold">修改建议 ({{ state.reviewResult.issues.length }}条)：</div>
               <ul class="text-[11px] text-brand-rose/90 space-y-0.5 list-disc list-inside bg-atelier-900 p-2 rounded">
@@ -593,7 +648,8 @@ import {
   BookOpen,
   HeartHandshake,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Scale
 } from 'lucide-vue-next';
 
 const props = defineProps({
@@ -618,6 +674,16 @@ const handleRewriteDraft = () => props.onRewriteDraft?.();
 const openHumanTouchesModal = () => props.onHumanTouches?.();
 
 const showReferenceDock = ref(false);
+const showCourtDissent = ref(true);
+
+function formatDivisionName(name) {
+  const map = {
+    LogicDivision: '逻辑庭',
+    StyleDivision: '风格庭',
+    ContinuityDivision: '连续性庭'
+  };
+  return map[name] || name;
+}
 
 const workflowSteps = [
   { id: 1, shortLabel: '构思', desc: '确定核心冲突与关键事件' },

@@ -207,3 +207,144 @@ func TestHandleReviewDraft_HookEvidenceGate(t *testing.T) {
 		t.Errorf("expected empty checkpoint ResolvedHookIDs when hook is resolved, got %v", cp2.AuditReport.ResolvedHookIDs)
 	}
 }
+
+func TestHandleReviewDraft_CourtDivisionsAndDissentSerialization(t *testing.T) {
+	mockLLM := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+
+		var systemPrompt string
+		for _, m := range req.Messages {
+			if m.Role == "system" {
+				systemPrompt = m.Content
+			}
+		}
+
+		content := `{"verdict":"ACCEPTED","score":88,"issues":[],"suggestions":"放行通过"}`
+		if strings.Contains(systemPrompt, "风格与声口分庭") {
+			content = `{"verdict":"REVISION_NEEDED","score":65,"issues":["句式平缓"],"suggestions":"需增加长短句变化"}`
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]string{
+						"role":    "assistant",
+						"content": content,
+					},
+				},
+			},
+			"usage": map[string]int{
+				"prompt_tokens":     80,
+				"completion_tokens": 160,
+				"total_tokens":      240,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockLLM.Close()
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "court_test.db")
+	cfgPath := filepath.Join(tmpDir, "cfg.json")
+
+	s, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.APIBase = mockLLM.URL
+	cfg.APIKey = "sk-mock-key"
+
+	llmClient := engine.NewHTTPLLMClient(mockLLM.URL, "sk-mock-key")
+	orch := engine.NewOrchestrator(llmClient)
+	linter := engine.NewLinter(nil)
+
+	srv, err := server.New(cfg, cfgPath, s, llmClient, orch, linter)
+	if err != nil {
+		t.Fatalf("server.New failed: %v", err)
+	}
+
+	ctx := context.Background()
+	proj := &domain.Project{
+		ID:    "p-court",
+		Title: "审庭测试",
+	}
+	if err := s.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	reqBody := `{"chapter_index":1,"draft_text":"长夜漫漫，孤灯如豆。沈渊推开木窗，冷风扑面而来。","beats":[]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/p-court/review-draft", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Verdict   string                           `json:"verdict"`
+		Score     int                              `json:"score"`
+		Issues    []string                         `json:"issues"`
+		Divisions map[string]domain.DivisionResult `json:"divisions"`
+		Dissent   []string                         `json:"dissent"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response JSON: %v", err)
+	}
+
+	// 1. Overall verdict must be REVISION_NEEDED due to StyleDivision veto
+	if resp.Verdict != string(domain.ReviewVerdictRevision) {
+		t.Errorf("expected overall verdict REVISION_NEEDED, got %s", resp.Verdict)
+	}
+
+	// 2. Divisions map must contain all three divisions in response JSON
+	if len(resp.Divisions) != 3 {
+		t.Fatalf("expected 3 divisions in response JSON, got %d: %+v", len(resp.Divisions), resp.Divisions)
+	}
+	for _, divName := range []string{string(domain.DivisionLogic), string(domain.DivisionStyle), string(domain.DivisionContinuity)} {
+		div, ok := resp.Divisions[divName]
+		if !ok {
+			t.Errorf("expected division %s in response JSON", divName)
+			continue
+		}
+		if div.DivisionName != domain.DivisionName(divName) {
+			t.Errorf("expected division_name %s, got %s", divName, div.DivisionName)
+		}
+	}
+	if resp.Divisions[string(domain.DivisionStyle)].Verdict != domain.ReviewVerdictRevision {
+		t.Errorf("expected StyleDivision verdict REVISION_NEEDED, got %s", resp.Divisions[string(domain.DivisionStyle)].Verdict)
+	}
+	if resp.Divisions[string(domain.DivisionLogic)].Verdict != domain.ReviewVerdictAccepted {
+		t.Errorf("expected LogicDivision verdict ACCEPTED, got %s", resp.Divisions[string(domain.DivisionLogic)].Verdict)
+	}
+
+	// 3. Minority dissent must be present in response JSON (Logic & Continuity voted ACCEPTED)
+	if len(resp.Dissent) == 0 {
+		t.Errorf("expected minority dissent in response JSON, got none")
+	}
+
+	// 4. Verify checkpoint persistence in SQLiteStore
+	cp, err := s.GetCheckpoint(ctx, "p-court", 1)
+	if err != nil {
+		t.Fatalf("GetCheckpoint failed: %v", err)
+	}
+	if cp == nil || cp.AuditReport == nil {
+		t.Fatalf("expected checkpoint with AuditReport, got %v", cp)
+	}
+	if len(cp.AuditReport.Divisions) != 3 {
+		t.Errorf("expected 3 divisions in checkpoint AuditReport, got %d", len(cp.AuditReport.Divisions))
+	}
+	if len(cp.AuditReport.Dissent) == 0 {
+		t.Errorf("expected dissent in checkpoint AuditReport, got none")
+	}
+}
