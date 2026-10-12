@@ -646,6 +646,33 @@ beats 等最大 JSON 载荷并留余量）；chat 协议行为不变。
 验证：新增 `TestGenerateVolumeSections_RetriesBadSamples`（坏样本恢复 / 覆盖违规恢复 /
 耗尽预算 Fail-Closed）全绿；全量 `go test ./... -race` 全绿。
 
+### 第十五轮：五阶段创作框架缺口补齐（2026-10-13 凌晨 · 并行批次：2×agy + 2×opencode + 集成方）
+
+对照工业级五阶段创作框架（概念/角色/结构/场景/重写）的评审结论，一波并行补齐五个工作包
+（各自独立 worktree，集成方统一复验、rebase 与合并）：
+
+1. **角色内在引擎**（`59091f`→main `0219d9a`）：`core_motivation` 彻底切换为
+   `want/need/ghost` 三轴（Pre-v1.0 纯净切换，无兼容垫片）——CodexEntry/
+   ProtagonistProfile/CharacterProfile 三结构、存储列（一次性搬运旧值后 DROP 旧列）、
+   创世/Codex 提示词、chronicle 注入块、三处前端编辑面板；连续性审校可据此判定角色抉择。
+2. **书级结构契约**（`08d418e`→main `a0f1336`）：`story_milestones`（7 类枚举 + 状态/逾期探针）、
+   `logline`、`atmosphere_anchor`、`total_planned_chapters`；创世提示词与离线 mock 全量输出；
+   节拍提示词注入「全书宏观看位」（命中章强指令）、渲染注入氛围锚点、framework PUT 校验
+   （fail-closed）、FrameworkView 编辑区 + AnalyticsView 全书节拍看板。
+3. **场景结果闭环**（`a9f9670`→main `e61950a`）：`Scene.dramatic_outcome`（目标→阻碍→结果
+   因果链规则进拆场提示词）；逻辑庭新增 reader_emotion/info_gap 逐拍核对；工作台节拍编辑器
+   补双输入；矩阵卡与场景弹窗展示结果字段。
+4. **章节版本历史**（`2d3887b`→main `100d7cc`）：`GetChapterVersion` 租户化签名
+   （id+project_id，跨作品 ID 视为不存在）；versions 列表/详情 GET 端点（窄接口断言，
+   不动 store.Store 大接口）；行级 LCS diff 弹窗（无新依赖）+「载入到工作台」重修入口。
+5. **母题锚点**（`dcb9e91`→main `d272366`）：`ProjectFramework.motifs`（清洗/去重/上限 8
+   fail-closed）、渲染注入「有意母题（RC 精修锚点）」块、FrameworkView 每行一条编辑器。
+
+验证（集成方独立执行，非执行器自述）：五分支各自 build/vet/gofmt/full -race/web test+build
+全绿；集成后 main 全量 `-race` 全绿 + `pnpm test && pnpm build` 通过；变异均亲手重放
+（sqlite want 列、bench 逾期判定、dramatic_outcome tag、project_id 过滤各自按预期变红后还原）；
+`core_motivation` 全库仅剩 migrate 一次性搬运/删除语句。
+
 ### 后续待办
 
 - （无）——已知互斥缺口全部闭环。
