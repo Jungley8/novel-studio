@@ -613,6 +613,24 @@ web 侧 `pnpm test` 4/4 通过，`pnpm run build:dev` 可产出非压缩构建�
 验证：`seed_test` 重写（档案驱动断言 + 无地点/道具自动种入 + 缺档案 Fail-Closed
 用例）；mock/fake 夹具同步注入 protagonist；全量 `go test ./... -race` 全绿。
 
+
+### 第十三轮：/responses 输出配额修复（2026-10-13 凌晨 · 全自动成书实战第七障碍）
+
+实战：第六轮在创世第一击被 muse 端点 503 打回；探针复现为
+`429 Output token rate limit exceeded — Set max_output_tokens to avoid being
+charged the model maximum`。
+
+根因：responses 协议（reasoner 专用）请求体从未携带 `max_output_tokens`，
+网关按模型最大输出预算预留配额，连续高频调用即触发输出 token 限流；
+表现为 503/429 或长推演挂起（此前 glm-5.3 系列 300s 无输出的现象亦可能与此同源）。
+
+修复：`chatRequest` 增加 `max_output_tokens`；responses 协议的同步与流式两条
+构造路径统一注入 `responsesMaxOutputTokens = 8192`（覆盖 framework/intents/
+beats 等最大 JSON 载荷并留余量）；chat 协议行为不变。
+
+验证：新增 `TestResponsesRequestIncludesMaxOutputTokens`（断言请求体携带配额）；
+全量 `go test ./... -race` 全绿。
+
 ### 后续待办
 
 - （无）——已知互斥缺口全部闭环。

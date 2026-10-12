@@ -152,14 +152,22 @@ type chatMessage struct {
 }
 
 type chatRequest struct {
-	Model         string                 `json:"model"`
-	Messages      []chatMessage          `json:"messages,omitempty"`
-	Input         interface{}            `json:"input,omitempty"`
-	Instructions  string                 `json:"instructions,omitempty"`
-	Temperature   float64                `json:"temperature"`
-	Stream        bool                   `json:"stream,omitempty"`
-	StreamOptions map[string]interface{} `json:"stream_options,omitempty"`
+	Model           string                 `json:"model"`
+	Messages        []chatMessage          `json:"messages,omitempty"`
+	Input           interface{}            `json:"input,omitempty"`
+	Instructions    string                 `json:"instructions,omitempty"`
+	Temperature     float64                `json:"temperature"`
+	Stream          bool                   `json:"stream,omitempty"`
+	StreamOptions   map[string]interface{} `json:"stream_options,omitempty"`
+	MaxOutputTokens int                    `json:"max_output_tokens,omitempty"`
 }
+
+// responsesMaxOutputTokens caps /responses completions. Without an explicit
+// cap the gateway reserves the model's maximum output budget against the
+// account rate limit and starts rejecting calls with 429 ("Output token rate
+// limit exceeded"). 8192 covers the largest JSON payloads this engine
+// requests (framework / intents / beats) with comfortable headroom.
+const responsesMaxOutputTokens = 8192
 
 type chatResponse struct {
 	Choices []struct {
@@ -458,17 +466,19 @@ func (c *HTTPLLMClient) chatCompletionOnce(ctx context.Context, model string, me
 		}
 		if len(nonSystemMsgs) == 1 && nonSystemMsgs[0].Role == "user" {
 			reqBody = chatRequest{
-				Model:        model,
-				Instructions: instructions,
-				Input:        nonSystemMsgs[0].Content,
-				Temperature:  temperature,
+				Model:           model,
+				Instructions:    instructions,
+				Input:           nonSystemMsgs[0].Content,
+				Temperature:     temperature,
+				MaxOutputTokens: responsesMaxOutputTokens,
 			}
 		} else {
 			reqBody = chatRequest{
-				Model:        model,
-				Instructions: instructions,
-				Input:        nonSystemMsgs,
-				Temperature:  temperature,
+				Model:           model,
+				Instructions:    instructions,
+				Input:           nonSystemMsgs,
+				Temperature:     temperature,
+				MaxOutputTokens: responsesMaxOutputTokens,
 			}
 		}
 	} else {
@@ -677,19 +687,21 @@ func (c *HTTPLLMClient) ChatCompletionStreamMessages(ctx context.Context, model 
 		}
 		if len(nonSystemMsgs) == 1 && nonSystemMsgs[0].Role == "user" {
 			reqBody = chatRequest{
-				Model:        model,
-				Instructions: instructions,
-				Input:        nonSystemMsgs[0].Content,
-				Temperature:  temperature,
-				Stream:       true,
+				Model:           model,
+				Instructions:    instructions,
+				Input:           nonSystemMsgs[0].Content,
+				Temperature:     temperature,
+				Stream:          true,
+				MaxOutputTokens: responsesMaxOutputTokens,
 			}
 		} else {
 			reqBody = chatRequest{
-				Model:        model,
-				Instructions: instructions,
-				Input:        nonSystemMsgs,
-				Temperature:  temperature,
-				Stream:       true,
+				Model:           model,
+				Instructions:    instructions,
+				Input:           nonSystemMsgs,
+				Temperature:     temperature,
+				Stream:          true,
+				MaxOutputTokens: responsesMaxOutputTokens,
 			}
 		}
 	} else {

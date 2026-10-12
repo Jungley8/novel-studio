@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -103,6 +104,32 @@ func TestChatCompletionDoesNotRetryBusinessError(t *testing.T) {
 	}
 	if atomic.LoadInt32(&count) != 1 {
 		t.Fatalf("401 must not be retried, got %d attempts", atomic.LoadInt32(&count))
+	}
+}
+
+func TestResponsesRequestIncludesMaxOutputTokens(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"output_text":"好","usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}`)
+	}))
+	defer srv.Close()
+
+	c := NewHTTPLLMClient(srv.URL+"/responses", "test-key")
+	content, _, err := c.ChatCompletionWithUsage(context.Background(), "muse-like", "sys", "user", 0.5)
+	if err != nil {
+		t.Fatalf("/responses call failed: %v", err)
+	}
+	if content != "好" {
+		t.Fatalf("unexpected content %q", content)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(gotBody, &body); err != nil {
+		t.Fatalf("decode captured body: %v (body=%s)", err, gotBody)
+	}
+	if body["max_output_tokens"] != float64(responsesMaxOutputTokens) {
+		t.Fatalf("expected max_output_tokens=%d in /responses body, got %v (body=%s)", responsesMaxOutputTokens, body["max_output_tokens"], gotBody)
 	}
 }
 
