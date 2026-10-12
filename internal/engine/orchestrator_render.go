@@ -161,6 +161,9 @@ func (o *Orchestrator) RenderSceneStream(
 	} else if horizon.TailAnchor != "" {
 		anchorSection = fmt.Sprintf("\n【上章收尾文风锚定 (最后200字，请严格承接此腔调与视角)】\n%s\n", horizon.TailAnchor)
 	}
+	if motifSection := buildMotifConceptPrompt(project); motifSection != "" {
+		anchorSection += "\n" + motifSection + "\n"
+	}
 
 	var codexSection string
 	if strings.TrimSpace(horizon.CodexContextText) != "" {
@@ -211,6 +214,25 @@ func (o *Orchestrator) RenderSceneStream(
 
 	ctxRole := ContextWithRole(ctx, RoleWriter)
 	return SafeChatCompletionWithStreamFallback(ctxRole, o.client, writerModel, systemPrompt, userPrompt, 0.75, onDelta)
+}
+
+// buildMotifConceptPrompt 有意母题与符号清单注入块（RC 精修锚点）。
+// project/framework 为空或无有效母题 → 返回 ""（纯函数）。
+func buildMotifConceptPrompt(project *domain.Project) string {
+	if project == nil || project.Framework == nil {
+		return ""
+	}
+	var lines []string
+	for _, m := range project.Framework.Motifs {
+		if trimmed := strings.TrimSpace(m); trimmed != "" {
+			lines = append(lines, "- "+trimmed)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "【有意母题与符号（RC 精修锚点）】\n" + strings.Join(lines, "\n") +
+		"\n规则：在恰当时机自然复现以上母题，强化主题回响；严禁机械复读、标签化重复，严禁为复现母题破坏场景因果。"
 }
 
 // buildNarrativeTonePrompt returns tailored tone instructions for 5 common web novel narrative voices.

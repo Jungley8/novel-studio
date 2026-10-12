@@ -177,6 +177,23 @@
         </div>
       </div>
 
+      <!-- 有意母题与符号 -->
+      <div class="p-4 bg-atelier-900 border border-atelier-750 rounded-xl space-y-2 shadow-atelier-sm">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2 text-xs font-serif font-bold text-brand-amber">
+            <Sparkles class="w-3.5 h-3.5" />
+            <span>母题与符号</span>
+          </div>
+          <span class="text-[10px] font-mono text-ink-500">{{ (state.currentProject.framework.motifs || []).length }} / 8</span>
+        </div>
+        <p class="text-[10px] text-ink-400">每行一条有意反复的意象或符号；渲染时会鼓励自然复现以强化主题回响，但严禁机械复读。</p>
+        <textarea
+          v-model="motifsText"
+          rows="3"
+          class="w-full bg-atelier-950 border border-atelier-750 rounded-lg p-2.5 text-xs text-ink-100 font-serif focus:outline-none focus:border-brand-amber/60 leading-relaxed resize-none"
+          placeholder="例：冰冷蓝色数据光效&#10;例：机械蜂鸣与心跳同频"></textarea>
+      </div>
+
       <!-- 世界规则 -->
       <div class="p-4 bg-atelier-900 border border-atelier-750 rounded-xl space-y-3 shadow-atelier-sm">
         <div class="flex items-center justify-between">
@@ -544,6 +561,18 @@ function setProjectNarrativeStyle(style) {
   state.currentProject.default_narrative_style = style;
   state.narrativeStyle = style;
 }
+
+// 母题清单 ⇄ 多行文本（每行一条；保存时由后端 SanitizeMotifs 清洗并校验上限）
+const motifsText = computed({
+  get: () => (state.currentProject?.framework?.motifs || []).join('\n'),
+  set: (value) => {
+    if (!state.currentProject?.framework) return;
+    state.currentProject.framework.motifs = String(value || '')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  },
+});
 
 function addFrameworkAxiom() {
   if (!state.currentProject?.framework) return;

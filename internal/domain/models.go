@@ -129,6 +129,7 @@ type ProjectFramework struct {
 	KeyCharacters []CharacterProfile  `json:"key_characters"`
 	VolumeArcs    []VolumeArc         `json:"volume_arcs"`
 	SeedHooks     []PlotHook          `json:"seed_hooks,omitempty"`
+	Motifs        []string            `json:"motifs,omitempty"` // 有意母题与符号清单（RC 精修锚点；写入前经 domain.SanitizeMotifs 清洗）
 }
 
 // Project represents a novel book project.

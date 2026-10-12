@@ -236,6 +236,14 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 
+		// 母题清洗与上限校验（fail-closed：非法条目拒绝保存，不做静默截断）。
+		sanitizedMotifs, motifErr := domain.SanitizeMotifs(fw.Motifs)
+		if motifErr != nil {
+			errorResponse(w, http.StatusBadRequest, "invalid motifs: "+motifErr.Error())
+			return
+		}
+		fw.Motifs = sanitizedMotifs
+
 		// 保存前快照旧卷定义与框架级前提
 		var (
 			oldArcs    []domain.VolumeArc
