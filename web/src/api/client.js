@@ -191,6 +191,10 @@ export const api = {
   releaseEditLease: (projectId) => apiFetch(`/api/projects/${projectId}/edit-lease`, { method: 'DELETE' }),
   produceAutonomous: (projectId, data) => apiFetch(`/api/projects/${projectId}/workshop/produce`, { method: 'POST', body: JSON.stringify(data) }),
   inlineAction: (data) => apiFetch('/api/workshop/inline-action', { method: 'POST', body: JSON.stringify(data) }),
+  // 双路提示词预览（P2 预览拆分）：后端返回 render/beats 两路装配镜像
+  // { render: {audience, system_prompt, user_prompt, components[], total_tokens_estimate},
+  //   beats: {...}, diagnostics: {review_gate, heuristic_summary, last_audit_summary} }。
+  // 请求透传工作台输入 {chapter_index, core_conflict, beats, words_target}（老字段亦兼容）。
   promptPreview: (projectId, data) => apiFetch(`/api/projects/${projectId}/prompt-preview`, { method: 'POST', body: JSON.stringify(data) }),
   workshopChat: (projectId, data) => apiFetch(`/api/projects/${projectId}/chat`, { method: 'POST', body: JSON.stringify(data) }),
 

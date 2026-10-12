@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,44 @@ import (
 	"github.com/Jungley8/novel-studio/internal/engine"
 )
 
+// 生产段清单（施工前以读到的代码为准，本注释只记录结论，行号是路标不是真相）：
+//
+// 渲染提示词 assembly（internal/engine/orchestrator_render.go RenderSceneStream）：
+//   - system：叙事口吻 buildNarrativeTonePrompt ← horizon.NarrativeTone；氛围
+//     buildAtmosphereAnchorPrompt ← project.Framework；声口/五感/视角硬编码；
+//     节奏 buildTensionCurvePrompt ← beats；平台 buildPlatformStylePrompt；
+//     对话比 buildDialogueRatioPrompt ← beats；去AI味铁律硬编码。
+//     LOCKED 意图卡可改写 POV 行。
+//   - user：书名/章节/字数 + 世界法则 WorldRules + 主角 protNameLevel/protInventory
+//     + anchorSection（StyleVaultAnchor 主锚 + TailAnchor 辅锚 +
+//     BuildMotifConceptPrompt 母题）+ CodexContextText + wordBudget
+//     buildBeatWordBudgetPrompt ← beats + beatsJSON；LOCKED 意图追加
+//     buildRenderIntentDirective。
+//   - 有母题块，无里程碑块，无 RollingCanon/HistoricalCallbacks/hooks，
+//     无立意梗概/分卷/战力块。
+//
+// 节拍提示词 assembly（internal/engine/orchestrator_beats.go DeriveBeatsForChapterType）：
+//   - system：章型定位 typeGuidance（5 章型之一）+ phaseGuidance + hookRule。
+//   - user：作品信息 + premise buildStoryPremiseBlock + typeGuidance +
+//     rhythmForesight（domain.PlanVolumeRhythm）+ milestone
+//     BuildMilestoneContextBlock + 世界公理（WorldRules + buildVolumeContextBlock
+//     + ActivePowerTier 内联）+ 主角机 protNameLevel/protInventory/protGoal +
+//     codex + RollingCanon + HistoricalCallbacks + hooksSummary +
+//     coreConflict + plan buildPlanPromptBlock ← SelectedPlanText + intent
+//     buildChapterIntentPromptBlock ← LOCKED ConsumedIntent。
+//   - 有里程碑块，无母题块/氛围块/文风锚。
+//
+// 预览复用原则：只嵌入生产侧已导出的块构造器（BuildMotifConceptPrompt、
+// BuildMilestoneContextBlock）或做只读展示拼接（raw 字段原文展示，不含任何
+// 定位/清洗/匹配逻辑）；调不到生产块的只做原文展示并标注来源，绝不手写第
+// 三份定位逻辑。为空则整块省略，不输出占位。
+
+// 预览双路受众标识。
+const (
+	PreviewAudienceRender = "render"
+	PreviewAudienceBeats  = "beats"
+)
+
 type PromptPreviewRequest struct {
 	ChapterIndex int      `json:"chapter_index"`
 	SceneTitle   string   `json:"scene_title,omitempty"`
@@ -17,6 +56,11 @@ type PromptPreviewRequest struct {
 	DramaticGoal string   `json:"dramatic_goal,omitempty"`
 	Conflict     string   `json:"conflict,omitempty"`
 	CoreEvents   []string `json:"core_events,omitempty"`
+	// 新调用方（PromptInspectorModal）透传的工作台输入：渲染路的节拍输入与
+	// 篇幅、节拍路的核心冲突。老字段保留做向后兼容。
+	CoreConflict string             `json:"core_conflict,omitempty"`
+	Beats        []domain.SceneBeat `json:"beats,omitempty"`
+	WordsTarget  int                `json:"words_target,omitempty"`
 }
 
 type PromptComponentPreview struct {
@@ -24,13 +68,30 @@ type PromptComponentPreview struct {
 	Description   string `json:"description"`
 	Content       string `json:"content"`
 	TokenEstimate int    `json:"token_estimate"`
+	Audience      string `json:"audience"`
 }
 
-type PromptPreviewResponse struct {
+// PromptAssemblyPreview 单路提示词装配镜像：render 或 beats 之一。
+type PromptAssemblyPreview struct {
+	Audience            string                   `json:"audience"`
 	SystemPrompt        string                   `json:"system_prompt"`
 	UserPrompt          string                   `json:"user_prompt"`
 	Components          []PromptComponentPreview `json:"components"`
 	TotalTokensEstimate int                      `json:"total_tokens_estimate"`
+}
+
+// PromptPreviewDiagnostics 预览诊断（非提示词）：启发式预检与评审记录。
+// 评审门禁不属于任一路生产提示词，故独立于 render/beats 之外，避免误导排障。
+type PromptPreviewDiagnostics struct {
+	ReviewGate       PromptComponentPreview `json:"review_gate"`
+	HeuristicSummary string                 `json:"heuristic_summary"`
+	LastAuditSummary string                 `json:"last_audit_summary"`
+}
+
+type PromptPreviewResponse struct {
+	Render      PromptAssemblyPreview    `json:"render"`
+	Beats       PromptAssemblyPreview    `json:"beats"`
+	Diagnostics PromptPreviewDiagnostics `json:"diagnostics"`
 }
 
 func estimateTokens(text string) int {
@@ -67,119 +128,422 @@ func previewMilestoneBlock(p *domain.Project, chapterIndex int) string {
 	return b.String()
 }
 
-func (s *Server) handlePromptPreview(w http.ResponseWriter, r *http.Request, projectID string) {
-	if r.Method != http.MethodPost {
-		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req PromptPreviewRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errorResponse(w, http.StatusBadRequest, "invalid json: "+err.Error())
-		return
-	}
-	if req.ChapterIndex <= 0 {
-		req.ChapterIndex = 1
-	}
+// previewAssemblyPart 装配段：content 为空则整块省略（不输出占位）。
+type previewAssemblyPart struct {
+	name    string
+	desc    string
+	content string
+}
 
-	ctx := r.Context()
-	p, err := s.store.GetProject(ctx, projectID)
-	if err != nil || p == nil {
-		errorResponse(w, http.StatusNotFound, "project not found")
-		return
-	}
-
-	horizon, err := s.chronicle.AssembleHorizon(ctx, projectID, req.ChapterIndex)
-	if err != nil {
-		errorResponse(w, http.StatusInternalServerError, "assemble horizon: "+err.Error())
-		return
-	}
-
-	frameworkContent := fmt.Sprintf("【世界观与公理】\n%s\n\n【目标平台调性】\n%s", p.WorldRules, p.TargetPlatform)
-	if p.Framework != nil {
-		if strings.TrimSpace(p.Framework.ThemePremise) != "" {
-			frameworkContent += fmt.Sprintf("\n\n【核心立意与主线】\n%s", strings.TrimSpace(p.Framework.ThemePremise))
+func newPromptAssembly(audience, systemPrompt string, parts []previewAssemblyPart) PromptAssemblyPreview {
+	components := make([]PromptComponentPreview, 0, len(parts))
+	var userParts []string
+	total := 0
+	for _, pt := range parts {
+		if strings.TrimSpace(pt.content) == "" {
+			continue
 		}
-		if strings.TrimSpace(p.Framework.Logline) != "" {
-			frameworkContent += fmt.Sprintf("\n\n【一句话梗概】\n%s", strings.TrimSpace(p.Framework.Logline))
+		c := PromptComponentPreview{
+			Name:          pt.name,
+			Description:   pt.desc,
+			Content:       pt.content,
+			TokenEstimate: estimateTokens(pt.content),
+			Audience:      audience,
 		}
-		if strings.TrimSpace(p.Framework.AtmosphereAnchor) != "" {
-			frameworkContent += fmt.Sprintf("\n\n【视觉与氛围锚点】\n%s", strings.TrimSpace(p.Framework.AtmosphereAnchor))
-		}
-		if motifBlock := previewMotifBlock(p); motifBlock != "" {
-			frameworkContent += "\n\n" + motifBlock
-		}
-		if milestoneBlock := previewMilestoneBlock(p, req.ChapterIndex); milestoneBlock != "" {
-			frameworkContent += "\n\n" + milestoneBlock
-		}
+		components = append(components, c)
+		userParts = append(userParts, pt.content)
+		total += c.TokenEstimate
 	}
-
-	canonContent := fmt.Sprintf("【前序章节剧情记忆】\n%s", horizon.RollingCanonText)
-	if horizon.TailAnchor != "" {
-		canonContent += fmt.Sprintf("\n\n【上章末尾腔调锚定】\n%s", horizon.TailAnchor)
+	if components == nil {
+		components = []PromptComponentPreview{}
 	}
-
-	codexContent := horizon.CodexContextText
-	if codexContent == "" {
-		codexContent = "(当前章节未匹配到需强制注入的百科实体)"
+	return PromptAssemblyPreview{
+		Audience:            audience,
+		SystemPrompt:        systemPrompt,
+		UserPrompt:          strings.Join(userParts, "\n\n---\n\n"),
+		Components:          components,
+		TotalTokensEstimate: total,
 	}
+}
 
+// ---- 两路共有块（同一字符串两路复用，保证共有块一致） ----
+
+// previewSharedWorldRulesBlock 世界法则原文展示。
+// 渲染生产 user 段标题为【世界法则与公理】，节拍生产 user 段标题为
+// 【世界公理与不可违背法则】，内容同源（horizon.WorldRules）。预览取渲染侧
+// 标题，两路字符串完全一致，便于排障对齐。
+func previewSharedWorldRulesBlock(worldRules string) string {
+	if strings.TrimSpace(worldRules) == "" {
+		return ""
+	}
+	return fmt.Sprintf("【世界法则与公理】\n%s", strings.TrimSpace(worldRules))
+}
+
+// previewSharedProtagonistBlock 主角状态原文展示（domain 只读方法，无引擎逻辑）。
+// 渲染生产用姓名/物品两项，节拍生产另加隐秘目标；预览取三项并集，两路一致。
+func previewSharedProtagonistBlock(entry *domain.CodexEntry) string {
+	if entry == nil {
+		return ""
+	}
+	nameLevel := strings.TrimSpace(entry.NameAndLevel())
+	inventory := strings.TrimSpace(entry.Inventory)
+	goal := strings.TrimSpace(entry.Want)
+	if goal == "" {
+		goal = strings.TrimSpace(entry.Summary)
+	}
+	if nameLevel == "" && inventory == "" && goal == "" {
+		return ""
+	}
+	if nameLevel == "" {
+		nameLevel = "未知"
+	}
+	if inventory == "" {
+		inventory = "无"
+	}
+	if goal == "" {
+		goal = "暂无"
+	}
+	return fmt.Sprintf("【主角状态参考】\n%s | 携带物品：%s\n当前隐秘目标：%s", nameLevel, inventory, goal)
+}
+
+// previewSharedCodexBlock 全域百科原文展示（horizon.CodexContextText 自带
+// 【出场世界观实体与时空状态】表头，预览不另加包装）。为空则整块省略。
+func previewSharedCodexBlock(codexText string) string {
+	if strings.TrimSpace(codexText) == "" {
+		return ""
+	}
+	return strings.TrimSpace(codexText)
+}
+
+// ---- 渲染路独有块（只读展示；生产包装句见 orchestrator_render.go，不复写） ----
+
+func previewRenderAtmosphereBlock(p *domain.Project) string {
+	if p == nil || p.Framework == nil {
+		return ""
+	}
+	anchor := strings.TrimSpace(p.Framework.AtmosphereAnchor)
+	if anchor == "" {
+		return ""
+	}
+	return "【视觉与氛围锚点】\n" + anchor +
+		"\n注：生产渲染 system 另有固定包装句（见 orchestrator_render.go buildAtmosphereAnchorPrompt），预览仅展示锚点原文。"
+}
+
+// previewRenderStyleAnchors 文风锚定原文展示，顺序与生产 anchorSection 一致：
+// 主锚 StyleVaultAnchor 在前，辅锚 TailAnchor 在后。为展示拼接，无定位逻辑。
+func previewRenderStyleAnchors(styleVaultAnchor, tailAnchor string) string {
+	var b strings.Builder
+	if strings.TrimSpace(styleVaultAnchor) != "" {
+		fmt.Fprintf(&b, "【主文风锚定】\n%s\n", strings.TrimSpace(styleVaultAnchor))
+	}
+	if strings.TrimSpace(tailAnchor) == "" {
+		return strings.TrimSpace(b.String())
+	}
+	if b.Len() > 0 {
+		b.WriteString("\n【辅·上章收尾文风锚定（最后200字，请严格承接此腔调与视角）】\n")
+	} else {
+		b.WriteString("【上章收尾文风锚定（最后200字，请严格承接此腔调与视角）】\n")
+	}
+	b.WriteString(strings.TrimSpace(tailAnchor))
+	return b.String()
+}
+
+func previewRenderPlatformBlock(platform string) string {
+	if strings.TrimSpace(platform) == "" {
+		return ""
+	}
+	return fmt.Sprintf("【目标平台调性】\n%s", strings.TrimSpace(platform))
+}
+
+// previewRenderSceneSpec 老请求字段的场景规格展示（SceneTitle/POV/DramaticGoal/
+// Conflict/CoreEvents）。全空则省略。
+func previewRenderSceneSpec(req PromptPreviewRequest) string {
 	var sceneSpec strings.Builder
 	sceneSpec.WriteString(fmt.Sprintf("【目标章节】第 %d 章\n", req.ChapterIndex))
+	hasExtra := false
 	if req.SceneTitle != "" {
-		sceneSpec.WriteString(fmt.Sprintf("【场景标题】%s\n", req.SceneTitle))
+		fmt.Fprintf(&sceneSpec, "【场景标题】%s\n", req.SceneTitle)
+		hasExtra = true
 	}
 	if req.POV != "" {
-		sceneSpec.WriteString(fmt.Sprintf("【视角人物(POV)】%s\n", req.POV))
+		fmt.Fprintf(&sceneSpec, "【视角人物(POV)】%s\n", req.POV)
+		hasExtra = true
 	}
 	if req.DramaticGoal != "" {
-		sceneSpec.WriteString(fmt.Sprintf("【戏剧目标】%s\n", req.DramaticGoal))
+		fmt.Fprintf(&sceneSpec, "【戏剧目标】%s\n", req.DramaticGoal)
+		hasExtra = true
 	}
 	if req.Conflict != "" {
-		sceneSpec.WriteString(fmt.Sprintf("【阻碍与冲突】%s\n", req.Conflict))
+		fmt.Fprintf(&sceneSpec, "【阻碍与冲突】%s\n", req.Conflict)
+		hasExtra = true
 	}
 	if len(req.CoreEvents) > 0 {
 		sceneSpec.WriteString("【核心事件节拍】\n")
 		for i, ev := range req.CoreEvents {
-			sceneSpec.WriteString(fmt.Sprintf("  %d. %s\n", i+1, ev))
+			fmt.Fprintf(&sceneSpec, "  %d. %s\n", i+1, ev)
+		}
+		hasExtra = true
+	}
+	if !hasExtra {
+		return ""
+	}
+	return strings.TrimRight(sceneSpec.String(), "\n")
+}
+
+// previewRenderBeatsInput 节拍输入原文展示（生产渲染消费 beats 推导节奏/对话比/
+// 篇幅预算；预算推导为生产逻辑，预览仅展示输入原文与目标字数）。
+func previewRenderBeatsInput(beats []domain.SceneBeat, wordsTarget int) string {
+	if len(beats) == 0 && wordsTarget <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	if wordsTarget > 0 {
+		fmt.Fprintf(&b, "【目标字数】%d 字左右\n", wordsTarget)
+	}
+	if len(beats) == 0 {
+		return strings.TrimRight(b.String(), "\n")
+	}
+	b.WriteString("【必须执行的场景节拍（输入原文，生产按此顺序与因果展开）】\n")
+	beatsJSON, _ := json.MarshalIndent(beats, "", "  ")
+	b.WriteString(string(beatsJSON))
+	return b.String()
+}
+
+// ---- 节拍路独有块（只读展示；生产包装见 orchestrator_beats.go，不复写） ----
+
+func previewBeatsWorkInfoBlock(title, platform string, chapterIndex int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "【作品信息】\n书名：《%s》\n目标平台：%s\n当前章节序号：第 %d 章",
+		strings.TrimSpace(title), strings.TrimSpace(platform), chapterIndex)
+	return b.String()
+}
+
+// previewBeatsPremiseBlock 立意梗概原文展示，行文格式与生产
+// buildStoryPremiseBlock 一致（【全书立意与梗概】/立意：/梗概：），内容为字段
+// 原文，无清洗逻辑。两项皆空则整块省略。
+func previewBeatsPremiseBlock(p *domain.Project) string {
+	if p == nil || p.Framework == nil {
+		return ""
+	}
+	premise := strings.TrimSpace(p.Framework.ThemePremise)
+	logline := strings.TrimSpace(p.Framework.Logline)
+	if premise == "" && logline == "" {
+		return ""
+	}
+	var lines []string
+	lines = append(lines, "【全书立意与梗概】")
+	if premise != "" {
+		lines = append(lines, "立意："+premise)
+	}
+	if logline != "" {
+		lines = append(lines, "梗概："+logline)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// previewBeatsVolumeBlock 分卷原文展示。所在节判定为生产逻辑
+// （buildVolumeContextBlock），预览仅罗列分卷与全部分节原文，不做匹配判定。
+func previewBeatsVolumeBlock(volume *domain.VolumeArc) string {
+	if volume == nil {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "【当前分卷主线任务】\n第 %d 卷：《%s》\n- 卷核心主线目标：%s\n- 卷终极大高潮：%s",
+		volume.VolumeIndex, strings.TrimSpace(volume.Title),
+		strings.TrimSpace(volume.CoreGoal), strings.TrimSpace(volume.Climax))
+	if len(volume.Sections) > 0 {
+		b.WriteString("\n【本卷分节一览（预览罗列原文，本章所在节判定见生产）】")
+		for _, sec := range volume.Sections {
+			fmt.Fprintf(&b, "\n- 第 %d-%d 章·%s·节目标：%s",
+				sec.FromChapter, sec.ToChapter, strings.TrimSpace(sec.Title), strings.TrimSpace(sec.Goal))
+			if len(sec.KeyEvents) > 0 {
+				fmt.Fprintf(&b, "\n  关键事件：%s", strings.Join(sec.KeyEvents, "；"))
+			}
 		}
 	}
+	return b.String()
+}
 
-	components := []PromptComponentPreview{
-		{
-			Name:          "世界观与风格公理 (Global Framework)",
-			Description:   "包含世界设定、平台调性约束与核心爽点规则",
-			Content:       frameworkContent,
-			TokenEstimate: estimateTokens(frameworkContent),
-		},
-		{
-			Name:          "因果故事线记忆 (Canon Horizon)",
-			Description:   "包含前序章节滚雪球摘要与上章尾部文风锚点",
-			Content:       canonContent,
-			TokenEstimate: estimateTokens(canonContent),
-		},
-		{
-			Name:          "全域百科与关联 (The Codex Injected)",
-			Description:   "动态扫描注入的角色阶段属性、别名、物品状态及两两关系",
-			Content:       codexContent,
-			TokenEstimate: estimateTokens(codexContent),
-		},
-		{
-			Name:          "场景戏剧规格 (Scene Dramaturgy)",
-			Description:   "当前场次的 POV、戏剧目标、冲突阻碍与核心节拍事实",
-			Content:       sceneSpec.String(),
-			TokenEstimate: estimateTokens(sceneSpec.String()),
-		},
+func previewBeatsPowerBlock(tier *domain.PowerLadderTier) string {
+	if tier == nil {
+		return ""
 	}
+	return fmt.Sprintf("【当前战力境界法则】\n- 境界：%s (%s)\n- 升级瓶颈：%s\n- 天道代价：%s",
+		strings.TrimSpace(tier.Realm), strings.TrimSpace(tier.Description),
+		strings.TrimSpace(tier.Bottleneck), strings.TrimSpace(tier.Drawback))
+}
 
-	horizonContext := horizon.RollingCanonText
-	if horizon.TailAnchor != "" {
-		if horizonContext != "" {
-			horizonContext += "\n" + horizon.TailAnchor
-		} else {
-			horizonContext = horizon.TailAnchor
+// previewBeatsCanonBlock 前序正史原文展示。渲染生产不消费 RollingCanon 与
+// HistoricalCallbacks，故该块只属于节拍路。
+func previewBeatsCanonBlock(rollingCanon, historicalCallbacks string) string {
+	var b strings.Builder
+	if strings.TrimSpace(rollingCanon) != "" {
+		fmt.Fprintf(&b, "【前序正史视界】\n%s", strings.TrimSpace(rollingCanon))
+	}
+	if strings.TrimSpace(historicalCallbacks) != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		fmt.Fprintf(&b, "%s", strings.TrimSpace(historicalCallbacks))
+	}
+	return b.String()
+}
+
+// previewBeatsHooksBlock 开放伏笔原文罗列。临期（🔥）判定为生产推演逻辑，
+// 预览不做标记，仅罗列状态与目标章节原文。
+func previewBeatsHooksBlock(hooks []*domain.PlotHook) string {
+	var lines []string
+	for _, h := range hooks {
+		if h == nil {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- [%s] %s（目标回收：第 %d 章）",
+			strings.TrimSpace(string(h.Status)), strings.TrimSpace(h.Title), h.TargetChapter))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "【当前开放状态的伏笔】\n" + strings.Join(lines, "\n")
+}
+
+// previewBeatsConflictBlock 核心冲突输入原文展示。生产在空冲突时有
+// SuggestChapterConflict 回退（LLM 推演），预览绝不复写该回退，仅展示输入。
+func previewBeatsConflictBlock(coreConflict, legacyConflict string) string {
+	conflict := strings.TrimSpace(coreConflict)
+	if conflict == "" {
+		conflict = strings.TrimSpace(legacyConflict)
+	}
+	if conflict == "" {
+		return ""
+	}
+	return "【本章必须打破的核心冲突】\n" + conflict
+}
+
+// previewBeatsPlanIntentBlock 作者路线与意图卡原文展示（store 只读）。
+// 生产包装（buildPlanPromptBlock / buildChapterIntentPromptBlock 的固定行文）
+// 为生产常量，预览仅展示原文。两项皆空则整块省略。
+func previewBeatsPlanIntentBlock(planText string, intent *domain.ChapterIntent) string {
+	var b strings.Builder
+	if strings.TrimSpace(planText) != "" {
+		fmt.Fprintf(&b, "【作者选定的发展路线（剧情树候选计划原文）】\n%s", strings.TrimSpace(planText))
+	}
+	if intent != nil && intent.Status == domain.IntentStatusLocked {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("【本章意图卡（作者已锁定，原文）】")
+		if strings.TrimSpace(intent.Conflict) != "" {
+			fmt.Fprintf(&b, "\n核心冲突：%s", strings.TrimSpace(intent.Conflict))
+		}
+		if strings.TrimSpace(intent.POV) != "" {
+			fmt.Fprintf(&b, "\nPOV 视角：%s", strings.TrimSpace(intent.POV))
+		}
+		var curves []string
+		for _, c := range intent.EmotionCurve {
+			if s := strings.TrimSpace(c); s != "" {
+				curves = append(curves, s)
+			}
+		}
+		if len(curves) > 0 {
+			fmt.Fprintf(&b, "\n情绪曲线：%s", strings.Join(curves, " → "))
+		}
+		if intent.TensionTarget > 0 {
+			fmt.Fprintf(&b, "\n张力目标：%d/10", intent.TensionTarget)
 		}
 	}
+	return b.String()
+}
 
+const renderSystemPrompt = `你是一名专业成熟、文笔深厚扎实的小说名家。
+
+（生产渲染 system 全文另含声口约束、五感权重、节奏曲线、平台调性、对话比例与去AI味铁律等生产常量段，均为生产硬编码，预览不复写；叙事口吻与氛围锚点见 render 组件原文。详见 orchestrator_render.go RenderSceneStream）`
+
+const beatsSystemPrompt = `你是一名网络小说架构与读者心理学总设计师。你严禁输出抒情散文。
+
+（生产节拍 system 另含本章节奏定位 typeGuidance 与节拍 JSON schema；章型判定为生产运行时逻辑，预览不预判。详见 orchestrator_beats.go DeriveBeatsForChapterType）`
+
+func buildRenderAssembly(p *domain.Project, horizon *engine.CanonHorizon, req PromptPreviewRequest) PromptAssemblyPreview {
+	var worldRules, styleVault, tailAnchor, codexText string
+	var protEntry *domain.CodexEntry
+	if horizon != nil {
+		worldRules = horizon.WorldRules
+		styleVault = horizon.StyleVaultAnchor
+		tailAnchor = horizon.TailAnchor
+		codexText = horizon.CodexContextText
+		protEntry = horizon.ProtagonistEntry
+	}
+	if strings.TrimSpace(worldRules) == "" && p != nil {
+		worldRules = p.WorldRules
+	}
+	var platform string
+	if p != nil {
+		platform = p.TargetPlatform
+	}
+	parts := []previewAssemblyPart{
+		{"世界法则与公理 (Render)", "渲染提示词 user 段：世界法则原文（与节拍路共有块一致）", previewSharedWorldRulesBlock(worldRules)},
+		{"目标平台调性 (Render)", "渲染提示词 system 段来源：平台原文（生产包装见 buildPlatformStylePrompt）", previewRenderPlatformBlock(platform)},
+		{"视觉与氛围锚点 (Render)", "渲染提示词 system 段来源：氛围锚点原文，渲染路独有", previewRenderAtmosphereBlock(p)},
+		{"有意母题与符号 (Render)", "渲染提示词注入块：生产块逐字同源，渲染路独有", previewMotifBlock(p)},
+		{"文风锚定 (Render)", "渲染提示词 user 段：主文风锚 + 上章收尾腔调锚原文，渲染路独有", previewRenderStyleAnchors(styleVault, tailAnchor)},
+		{"主角状态参考 (Render)", "渲染提示词 user 段：主角状态原文（与节拍路共有块一致）", previewSharedProtagonistBlock(protEntry)},
+		{"全域百科与关联 (Render)", "渲染提示词 user 段：Codex 原文（与节拍路共有块一致），为空整块省略", previewSharedCodexBlock(codexText)},
+		{"场景戏剧规格 (Render)", "渲染场景输入：老请求字段展示，全空则省略", previewRenderSceneSpec(req)},
+		{"节拍输入与篇幅 (Render)", "渲染提示词 user 段输入：节拍 JSON 原文与目标字数", previewRenderBeatsInput(req.Beats, req.WordsTarget)},
+	}
+	return newPromptAssembly(PreviewAudienceRender, renderSystemPrompt, parts)
+}
+
+func buildBeatsAssembly(p *domain.Project, horizon *engine.CanonHorizon, req PromptPreviewRequest, planText string, intent *domain.ChapterIntent) PromptAssemblyPreview {
+	var title, platform, worldRules, rollingCanon, callbacks, codexText string
+	var volume *domain.VolumeArc
+	var powerTier *domain.PowerLadderTier
+	var hooks []*domain.PlotHook
+	var protEntry *domain.CodexEntry
+	if p != nil {
+		title = p.Title
+		platform = p.TargetPlatform
+		worldRules = p.WorldRules
+	}
+	if horizon != nil {
+		if strings.TrimSpace(horizon.WorldRules) != "" {
+			worldRules = horizon.WorldRules
+		}
+		volume = horizon.CurrentVolume
+		powerTier = horizon.ActivePowerTier
+		rollingCanon = horizon.RollingCanonText
+		callbacks = horizon.HistoricalCallbacks
+		hooks = horizon.AllActiveHooks
+		codexText = horizon.CodexContextText
+		protEntry = horizon.ProtagonistEntry
+		if horizon.Project != nil {
+			if strings.TrimSpace(title) == "" {
+				title = horizon.Project.Title
+			}
+			if strings.TrimSpace(platform) == "" {
+				platform = horizon.Project.TargetPlatform
+			}
+		}
+	}
+	parts := []previewAssemblyPart{
+		{"作品信息 (Beats)", "节拍提示词 user 段：书名/平台/章节原文", previewBeatsWorkInfoBlock(title, platform, req.ChapterIndex)},
+		{"全书立意与梗概 (Beats)", "节拍提示词 user 段：立意梗概原文，节拍路独有", previewBeatsPremiseBlock(p)},
+		{"全书宏观节拍定位 (Beats)", "节拍提示词 user 段：生产定位块逐字同源 + 里程碑一览补充，节拍路独有", previewMilestoneBlock(p, req.ChapterIndex)},
+		{"分卷主线任务 (Beats)", "节拍提示词 user 段：分卷原文罗列，节拍路独有", previewBeatsVolumeBlock(volume)},
+		{"战力境界法则 (Beats)", "节拍提示词 user 段：当前境界原文，节拍路独有", previewBeatsPowerBlock(powerTier)},
+		{"世界公理 (Beats)", "节拍提示词 user 段：世界法则原文（与渲染路共有块一致）", previewSharedWorldRulesBlock(worldRules)},
+		{"主角状态机 (Beats)", "节拍提示词 user 段：主角状态原文（与渲染路共有块一致）", previewSharedProtagonistBlock(protEntry)},
+		{"全域百科与关联 (Beats)", "节拍提示词 user 段：Codex 原文（与渲染路共有块一致），为空整块省略", previewSharedCodexBlock(codexText)},
+		{"前序正史视界 (Beats)", "节拍提示词 user 段：滚动正史与历史回调原文，节拍路独有", previewBeatsCanonBlock(rollingCanon, callbacks)},
+		{"开放伏笔 (Beats)", "节拍提示词 user 段：伏笔台账原文罗列，节拍路独有", previewBeatsHooksBlock(hooks)},
+		{"核心冲突 (Beats)", "节拍提示词 user 段输入：冲突原文（生产空回退不复写）", previewBeatsConflictBlock(req.CoreConflict, req.Conflict)},
+		{"作者路线与意图卡 (Beats)", "节拍提示词 user 段输入：计划与锁定意图卡原文", previewBeatsPlanIntentBlock(planText, intent)},
+	}
+	return newPromptAssembly(PreviewAudienceBeats, beatsSystemPrompt, parts)
+}
+
+// buildReviewGateContent 评审门禁诊断内容（预览诊断，非任一路生产提示词）。
+// 原 handler 内联逻辑整体搬迁至此，行为不变。
+func (s *Server) buildReviewGateContent(r *http.Request, projectID string, horizonContext string, chapterIndex int) (reviewGate, heuristicSummary, lastAuditSummary string) {
 	var linterRes domain.LinterResult
 	if s.linter != nil {
 		linterRes = s.linter.Analyze(horizonContext)
@@ -187,7 +551,6 @@ func (s *Server) handlePromptPreview(w http.ResponseWriter, r *http.Request, pro
 		linterRes = s.qualityGate.FastAnalyze(horizonContext)
 	}
 
-	var heuristicSummary string
 	if strings.TrimSpace(horizonContext) == "" {
 		heuristicSummary = "前序上下文为空，本章暂无启发式预检数据"
 	} else {
@@ -215,8 +578,8 @@ func (s *Server) handlePromptPreview(w http.ResponseWriter, r *http.Request, pro
 		heuristicSummary = fmt.Sprintf("[%s] %s", status, strings.Join(details, "；"))
 	}
 
-	var lastAuditSummary string
-	cp, err := s.store.GetCheckpoint(ctx, projectID, req.ChapterIndex)
+	ctx := r.Context()
+	cp, err := s.store.GetCheckpoint(ctx, projectID, chapterIndex)
 	if err == nil && cp != nil && cp.AuditReport != nil {
 		rep := cp.AuditReport
 		var issuesText string
@@ -246,33 +609,78 @@ func (s *Server) handlePromptPreview(w http.ResponseWriter, r *http.Request, pro
 	reviewGateContent.WriteString("\n\n")
 	reviewGateContent.WriteString("【历史评审记录】\n")
 	reviewGateContent.WriteString(lastAuditSummary)
+	return reviewGateContent.String(), heuristicSummary, lastAuditSummary
+}
 
-	components = append(components, PromptComponentPreview{
-		Name:          "评审门禁 (Review Gate)",
-		Description:   "Fail-Closed 放行规则、本章启发式预检与历史评审记录",
-		Content:       reviewGateContent.String(),
-		TokenEstimate: estimateTokens(reviewGateContent.String()),
-	})
-
-	totalTokens := 0
-	for _, c := range components {
-		totalTokens += c.TokenEstimate
+func (s *Server) handlePromptPreview(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req PromptPreviewRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	if req.ChapterIndex <= 0 {
+		req.ChapterIndex = 1
 	}
 
-	systemPrompt := `你是一名冷峻、极具电影镜头感的小说名家。严格遵循因果设定与声口约束，杜绝AI套话与伪高潮。`
-	var userPrompt strings.Builder
-	userPrompt.WriteString(frameworkContent)
-	userPrompt.WriteString("\n\n---\n\n")
-	userPrompt.WriteString(canonContent)
-	userPrompt.WriteString("\n\n---\n\n")
-	userPrompt.WriteString(codexContent)
-	userPrompt.WriteString("\n\n---\n\n")
-	userPrompt.WriteString(sceneSpec.String())
+	ctx := r.Context()
+	p, err := s.store.GetProject(ctx, projectID)
+	if err != nil || p == nil {
+		errorResponse(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	horizon, err := s.chronicle.AssembleHorizon(ctx, projectID, req.ChapterIndex)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, "assemble horizon: "+err.Error())
+		return
+	}
+
+	// 只读装载作者路线与意图卡（store 直读；缺失/失败即省略对应块，不阻断预览）。
+	var planText string
+	if ps, ok := s.store.(interface {
+		GetActivePlan(ctx context.Context, projectID string) (*domain.ActivePlan, error)
+	}); ok {
+		if plan, pErr := ps.GetActivePlan(ctx, projectID); pErr == nil && plan != nil &&
+			plan.Status == domain.PlanStatusActive && strings.TrimSpace(plan.PlanText) != "" {
+			planText = plan.PlanText
+		}
+	}
+	var intent *domain.ChapterIntent
+	if got, iErr := s.store.GetChapterIntent(ctx, projectID, req.ChapterIndex); iErr == nil && got != nil &&
+		got.Status == domain.IntentStatusLocked {
+		intent = got
+	}
+
+	renderAssembly := buildRenderAssembly(p, horizon, req)
+	beatsAssembly := buildBeatsAssembly(p, horizon, req, planText, intent)
+
+	horizonContext := horizon.RollingCanonText
+	if horizon.TailAnchor != "" {
+		if horizonContext != "" {
+			horizonContext += "\n" + horizon.TailAnchor
+		} else {
+			horizonContext = horizon.TailAnchor
+		}
+	}
+	reviewGate, heuristicSummary, lastAuditSummary := s.buildReviewGateContent(r, projectID, horizonContext, req.ChapterIndex)
 
 	jsonResponse(w, http.StatusOK, PromptPreviewResponse{
-		SystemPrompt:        systemPrompt,
-		UserPrompt:          userPrompt.String(),
-		Components:          components,
-		TotalTokensEstimate: totalTokens,
+		Render: renderAssembly,
+		Beats:  beatsAssembly,
+		Diagnostics: PromptPreviewDiagnostics{
+			ReviewGate: PromptComponentPreview{
+				Name:          "评审门禁 (预览诊断)",
+				Description:   "Fail-Closed 放行规则、本章启发式预检与历史评审记录；非生产提示词",
+				Content:       reviewGate,
+				TokenEstimate: estimateTokens(reviewGate),
+				Audience:      "",
+			},
+			HeuristicSummary: heuristicSummary,
+			LastAuditSummary: lastAuditSummary,
+		},
 	})
 }

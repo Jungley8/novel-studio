@@ -447,30 +447,68 @@ func TestServer_MatrixScenesAndAnalytics(t *testing.T) {
 		t.Fatalf("prompt preview failed: %d, body: %s", w.Code, w.Body.String())
 	}
 	var prevResp struct {
-		SystemPrompt string `json:"system_prompt"`
-		UserPrompt   string `json:"user_prompt"`
-		Components   []struct {
-			Name          string `json:"name"`
-			Description   string `json:"description"`
-			Content       string `json:"content"`
-			TokenEstimate int    `json:"token_estimate"`
-		} `json:"components"`
-		TotalTokensEstimate int `json:"total_tokens_estimate"`
+		Render struct {
+			Audience   string `json:"audience"`
+			Components []struct {
+				Name          string `json:"name"`
+				Description   string `json:"description"`
+				Content       string `json:"content"`
+				TokenEstimate int    `json:"token_estimate"`
+				Audience      string `json:"audience"`
+			} `json:"components"`
+			TotalTokensEstimate int `json:"total_tokens_estimate"`
+		} `json:"render"`
+		Beats struct {
+			Audience   string `json:"audience"`
+			Components []struct {
+				Name          string `json:"name"`
+				Description   string `json:"description"`
+				Content       string `json:"content"`
+				TokenEstimate int    `json:"token_estimate"`
+				Audience      string `json:"audience"`
+			} `json:"components"`
+			TotalTokensEstimate int `json:"total_tokens_estimate"`
+		} `json:"beats"`
+		Diagnostics struct {
+			ReviewGate struct {
+				Name    string `json:"name"`
+				Content string `json:"content"`
+			} `json:"review_gate"`
+		} `json:"diagnostics"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &prevResp)
-	if len(prevResp.Components) != 5 || prevResp.TotalTokensEstimate <= 0 {
-		t.Fatalf("expected 5 components in prompt preview response, got %d (tokens: %d)", len(prevResp.Components), prevResp.TotalTokensEstimate)
+	// P2 预览拆分：双路装配互斥——render 路无里程碑块，beats 路无母题块。
+	for _, c := range prevResp.Render.Components {
+		if strings.Contains(c.Content, "【全书宏观节拍定位】") {
+			t.Fatalf("render assembly must not contain milestone block, got %q", c.Name)
+		}
+		if c.Audience != "render" {
+			t.Fatalf("render component %q has wrong audience %q", c.Name, c.Audience)
+		}
+	}
+	for _, c := range prevResp.Beats.Components {
+		if strings.Contains(c.Content, "【有意母题与符号") {
+			t.Fatalf("beats assembly must not contain motif block, got %q", c.Name)
+		}
+		if c.Audience != "beats" {
+			t.Fatalf("beats component %q has wrong audience %q", c.Name, c.Audience)
+		}
+	}
+	if len(prevResp.Render.Components) == 0 || len(prevResp.Beats.Components) == 0 {
+		t.Fatalf("expected non-empty render/beats assemblies, got render=%d beats=%d",
+			len(prevResp.Render.Components), len(prevResp.Beats.Components))
+	}
+	if prevResp.Render.TotalTokensEstimate <= 0 || prevResp.Beats.TotalTokensEstimate <= 0 {
+		t.Fatalf("expected positive token estimates, got render=%d beats=%d",
+			prevResp.Render.TotalTokensEstimate, prevResp.Beats.TotalTokensEstimate)
 	}
 
-	gateComp := prevResp.Components[4]
-	if gateComp.Name != "评审门禁 (Review Gate)" {
-		t.Errorf("expected 5th component Name to be '评审门禁 (Review Gate)', got %q", gateComp.Name)
-	}
+	gateComp := prevResp.Diagnostics.ReviewGate
 	if !strings.Contains(gateComp.Content, "≥80") {
-		t.Errorf("expected 5th component to contain '≥80', got %q", gateComp.Content)
+		t.Errorf("expected diagnostics review gate to contain '≥80', got %q", gateComp.Content)
 	}
 	if !strings.Contains(gateComp.Content, "本章暂无评审记录") {
-		t.Errorf("expected 5th component without checkpoint to contain '本章暂无评审记录', got %q", gateComp.Content)
+		t.Errorf("expected diagnostics review gate without checkpoint to contain '本章暂无评审记录', got %q", gateComp.Content)
 	}
 
 	// Test Prompt Preview with Checkpoint AuditReport
@@ -495,24 +533,23 @@ func TestServer_MatrixScenesAndAnalytics(t *testing.T) {
 		t.Fatalf("prompt preview with checkpoint failed: %d", w.Code)
 	}
 	var prevRespWithAudit struct {
-		Components []struct {
-			Name    string `json:"name"`
-			Content string `json:"content"`
-		} `json:"components"`
+		Diagnostics struct {
+			ReviewGate struct {
+				Name    string `json:"name"`
+				Content string `json:"content"`
+			} `json:"review_gate"`
+		} `json:"diagnostics"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &prevRespWithAudit)
-	if len(prevRespWithAudit.Components) != 5 {
-		t.Fatalf("expected 5 components with checkpoint, got %d", len(prevRespWithAudit.Components))
-	}
-	gateWithAudit := prevRespWithAudit.Components[4]
+	gateWithAudit := prevRespWithAudit.Diagnostics.ReviewGate
 	if !strings.Contains(gateWithAudit.Content, string(domain.ReviewVerdictAccepted)) {
-		t.Errorf("expected 5th component to contain verdict %s, got %q", domain.ReviewVerdictAccepted, gateWithAudit.Content)
+		t.Errorf("expected diagnostics review gate to contain verdict %s, got %q", domain.ReviewVerdictAccepted, gateWithAudit.Content)
 	}
 	if !strings.Contains(gateWithAudit.Content, "85") {
-		t.Errorf("expected 5th component to contain score 85, got %q", gateWithAudit.Content)
+		t.Errorf("expected diagnostics review gate to contain score 85, got %q", gateWithAudit.Content)
 	}
 	if !strings.Contains(gateWithAudit.Content, "首段环境描写稍显冗余") {
-		t.Errorf("expected 5th component to contain issue, got %q", gateWithAudit.Content)
+		t.Errorf("expected diagnostics review gate to contain issue, got %q", gateWithAudit.Content)
 	}
 
 	_ = s.ClearCheckpoint(ctx, created.ID, 1)
