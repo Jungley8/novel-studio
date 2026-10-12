@@ -81,12 +81,12 @@ func NewReviewCourt(client LLMClient, linter *Linter) *ReviewCourt {
 	return &ReviewCourt{
 		client:          client,
 		linter:          linter,
-		divisionTimeout: 180 * time.Second,
+		divisionTimeout: 360 * time.Second,
 		records:         make([]CourtRecord, 0),
 	}
 }
 
-// SetDivisionTimeout configures per-division timeout (default 180s; reasoning
+// SetDivisionTimeout configures per-division timeout (default 360s; reasoning
 // reviewers routinely need well over a minute per division on a full draft).
 func (c *ReviewCourt) SetDivisionTimeout(d time.Duration) {
 	c.mu.Lock()
@@ -405,7 +405,7 @@ func (c *ReviewCourt) ChiefJudge(
 	timeout := c.divisionTimeout
 	c.mu.RUnlock()
 	if timeout <= 0 {
-		timeout = 180 * time.Second
+		timeout = 360 * time.Second
 	}
 
 	g, gCtx := newCourtErrGroup(ctx)

@@ -570,6 +570,27 @@ web 侧 `pnpm test` 4/4 通过，`pnpm run build:dev` 可产出非压缩构建�
 
 验证：14 例可重试分类表 + 伪 flaky 服务器用例全绿；全量 `go test ./... -race` 全绿。
 
+
+### 第十一轮：审校模型实战选型与分庭预算调整（2026-10-13 凌晨 · 全自动成书实战第五障碍）
+
+实战：第五轮，连续性分庭在 180s 预算内未完成（`context deadline exceeded`）。
+
+归因实验（真实第 1 章 3024 字草稿 + 逐字提示词，流式横评）：
+- `glm-5.3`：4s 收到首事件，300s 内烧掉 7 万字符推理仍无正文（思考失控）→ 不可用；
+- `deepseek-v4.1-flash`：~181s；`kimi-k2.6`：~199s（可用但紧）；
+- `qwen3.8-flash`：108–153s，两次全过，评审抓出真实状态机漏洞（铜钥匙空间状态跳跃、
+  遗物登记动机缺口）→ **选为审校模型**；
+- `mimo-v2.6-flash`：~62s（最快且评审扎实，列为备用）；
+- `deepseek-v4-flash` / `deepseek-flash` / `glm-5.3-flash`：300s 无正文（同类思考失控）；
+- `minimax-m3`：请求即败。
+
+变更：
+1. 配置：`reviewer_model` → `qwen3.8-flash`（仍是 Zen/go chat 协议）；
+2. 代码：`ReviewCourt` 分庭预算 180s → **360s**，为后段章节递增的上下文本量留
+   2x+ 余量；真实挂死仍由预算 Fail-Closed 停线。
+
+验证：`go test ./internal/engine/ -race` 全绿；实战续产验证（见下）。
+
 ### 后续待办
 
 - （无）——已知互斥缺口全部闭环。
