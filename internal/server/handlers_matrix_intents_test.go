@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -473,11 +474,12 @@ func TestMatrixGenerateFromIntents_MethodNotAllowed405(t *testing.T) {
 }
 
 func TestMatrixGenerateFromIntents_PartialFailureContinues(t *testing.T) {
-	var callCount int32
 	srv, s, mockServer := setupTestServerForMatrixIntents(t, func(w http.ResponseWriter, r *http.Request) {
-		idx := atomic.AddInt32(&callCount, 1)
-		if idx == 1 {
-			// 第一章 LLM 报错
+		// Chapter 1's upstream fails persistently (this now exercises the
+		// bounded LLM retries); chapter 2 succeeds. Match on request content so
+		// the fake does not need to know the retry budget.
+		raw, _ := io.ReadAll(r.Body)
+		if bytes.Contains(raw, []byte("第一章冲突")) {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"error": "LLM upstream rate limit"}`))
 			return

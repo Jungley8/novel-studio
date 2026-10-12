@@ -298,10 +298,10 @@ func TestHTTPLLMClient_StreamCancellationLeakPrevention(t *testing.T) {
 	}
 }
 
-func TestHTTPLLMClient_StrictFailClosedWithoutBlindRetry(t *testing.T) {
-	attempts := 0
+func TestHTTPLLMClient_BoundedRetryThenFailClosedOn429(t *testing.T) {
+	var attempts atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts++
+		attempts.Add(1)
 		w.WriteHeader(http.StatusTooManyRequests)
 		_, _ = w.Write([]byte(`{"error":{"message":"rate limit exceeded"}}`))
 	}))
@@ -310,10 +310,11 @@ func TestHTTPLLMClient_StrictFailClosedWithoutBlindRetry(t *testing.T) {
 	client := engine.NewHTTPLLMClient(ts.URL, "test-key")
 	_, _, err := client.ChatCompletionWithUsage(context.Background(), "test-model", "sys", "user", 0.7)
 	if err == nil {
-		t.Fatalf("expected error on 429 rate limit, got nil")
+		t.Fatalf("expected error after exhausting bounded retries on a persistent 429, got nil")
 	}
-	if attempts != 1 {
-		t.Fatalf("expected strictly 1 attempt (no blind retries), got %d attempts", attempts)
+	// 1 initial attempt + 2 bounded, backoff-gated retries — not a retry storm.
+	if got := attempts.Load(); got != 3 {
+		t.Fatalf("expected 3 attempts (1 initial + 2 bounded retries) on 429, got %d", got)
 	}
 }
 
@@ -536,10 +537,16 @@ func TestStream_OutputLimitExhausted(t *testing.T) {
 	}
 }
 
-func TestStream_NetworkErrorNoContinuation(t *testing.T) {
-	var requestCount atomic.Int32
+func TestStream_NetworkErrorRetriesBoundedThenFails(t *testing.T) {
+	var requestCount, continuationShaped atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			if msgs, ok := body["messages"].([]interface{}); ok && len(msgs) >= 4 {
+				continuationShaped.Add(1)
+			}
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := w.(http.Flusher)
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"开始生成一部分\"}}]}\n\n"))
@@ -567,10 +574,18 @@ func TestStream_NetworkErrorNoContinuation(t *testing.T) {
 		nil,
 	)
 	if err == nil {
-		t.Fatalf("expected error on stream network disconnection, got nil")
+		t.Fatalf("expected error after exhausting bounded retries on a persistent stream cut, got nil")
 	}
-	if requestCount.Load() != 1 {
-		t.Fatalf("expected strictly 1 request (network error must bubble up without continuation), got %d", requestCount.Load())
+	// 1 initial attempt + 2 bounded retries; the transport error must still
+	// bubble up (fail-closed) once the retry budget is spent.
+	if got := requestCount.Load(); got != 3 {
+		t.Fatalf("expected 3 attempts (1 initial + 2 bounded retries), got %d", got)
+	}
+	// Every attempt must be a fresh initial request (system+user), never an
+	// output-limit continuation (4 messages) — network retries must not
+	// masquerade as continuations.
+	if got := continuationShaped.Load(); got != 0 {
+		t.Fatalf("network retries sent %d continuation-shaped requests, want 0", got)
 	}
 }
 

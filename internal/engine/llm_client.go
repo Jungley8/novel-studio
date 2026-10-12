@@ -294,6 +294,87 @@ func isTimeoutError(err error) bool {
 		strings.Contains(msg, "timeout exceeded")
 }
 
+// maxLLMRetryAttempts is the number of EXTRA attempts made for transient
+// transport-level failures (EOF, connection reset, timeouts, HTTP 5xx/429).
+// Content-level failures (parse errors, 4xx) are never retried.
+const maxLLMRetryAttempts = 2
+
+// isRetryableLLMError reports whether err is a transient transport failure
+// worth a bounded retry. Business errors (HTTP 4xx other than 429, malformed
+// request, empty choices) are not retryable.
+func isRetryableLLMError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	if isTimeoutError(err) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{"connection reset", "broken pipe", "unexpected eof", " eof", "eof\"", "connection refused"} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	for _, needle := range []string{
+		"llm api returned http 5", "llm api returned http 429",
+		"stream api returned http 5", "stream api returned http 429",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// sleepRetryBackoff waits 2s, 4s, ... between attempts; returns false when ctx
+// is cancelled first.
+func sleepRetryBackoff(ctx context.Context, attempt int) bool {
+	delay := time.Duration(attempt) * 2 * time.Second
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// chatCompletionOnceWithRetry adds bounded retries around chatCompletionOnce
+// for transient transport failures; the caller's ctx gates every retry.
+func (c *HTTPLLMClient) chatCompletionOnceWithRetry(ctx context.Context, model string, messages []chatMessage, temperature float64) (string, TokenUsage, string, error) {
+	content, usage, finishReason, err := c.chatCompletionOnce(ctx, model, messages, temperature)
+	for attempt := 1; err != nil && attempt <= maxLLMRetryAttempts && isRetryableLLMError(err) && ctx.Err() == nil; attempt++ {
+		if !sleepRetryBackoff(ctx, attempt) {
+			break
+		}
+		content, usage, finishReason, err = c.chatCompletionOnce(ctx, model, messages, temperature)
+	}
+	return content, usage, finishReason, err
+}
+
+// streamOnceWithRetry adds bounded retries around streamOnce for transient
+// transport failures. A retried attempt restarts generation from scratch;
+// consumers that received partial deltas (UI streaming) may observe a
+// restart, which is strictly better than failing the whole chapter.
+func streamOnceWithRetry(ctx context.Context, client LLMClient, model string, messages []chatMessage, temperature float64, onDelta func(string)) (string, TokenUsage, string, error) {
+	content, usage, finishReason, err := streamOnce(ctx, client, model, messages, temperature, onDelta)
+	for attempt := 1; err != nil && attempt <= maxLLMRetryAttempts && isRetryableLLMError(err) && ctx.Err() == nil; attempt++ {
+		if !sleepRetryBackoff(ctx, attempt) {
+			break
+		}
+		content, usage, finishReason, err = streamOnce(ctx, client, model, messages, temperature, onDelta)
+	}
+	return content, usage, finishReason, err
+}
+
 func (c *HTTPLLMClient) ChatCompletion(ctx context.Context, model string, systemPrompt, userPrompt string, temperature float64) (string, error) {
 	content, _, err := c.ChatCompletionWithUsage(ctx, model, systemPrompt, userPrompt, temperature)
 	return content, err
@@ -304,7 +385,7 @@ func (c *HTTPLLMClient) ChatCompletionWithUsage(ctx context.Context, model strin
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
 	}
-	content, usage, finishReason, err := c.chatCompletionOnce(ctx, model, initialMessages, temperature)
+	content, usage, finishReason, err := c.chatCompletionOnceWithRetry(ctx, model, initialMessages, temperature)
 	if err != nil {
 		return "", usage, err
 	}
@@ -821,7 +902,9 @@ func streamOnce(
 
 // SafeChatCompletionWithStreamFallback executes an LLM request using streaming first to eliminate
 // 'awaiting headers' timeouts on gateways. If streaming succeeds, tokens are aggregated in memory;
-// transport errors are hard failures that bubble up unchanged (no retry, no sync fallback).
+// transient transport errors (EOF, connection resets, timeouts, HTTP 5xx/429) get bounded
+// backoff-gated retries and still bubble up fail-closed once the budget is spent; non-retryable
+// errors bubble up unchanged (no retry, no sync fallback).
 // If streaming completes with empty content, it falls back to ChatCompletionWithUsage.
 // Output-limit finishes trigger bounded continuation via mergeExactContinuation.
 func SafeChatCompletionWithStreamFallback(
@@ -841,7 +924,7 @@ func SafeChatCompletionWithStreamFallback(
 		{Role: "user", Content: userPrompt},
 	}
 
-	content, usage, finishReason, err := streamOnce(ctx, client, model, initialMessages, temperature, onDelta)
+	content, usage, finishReason, err := streamOnceWithRetry(ctx, client, model, initialMessages, temperature, onDelta)
 	if err == nil && content != "" {
 		if !isOutputLimitFinishReason(finishReason) {
 			return content, usage, nil

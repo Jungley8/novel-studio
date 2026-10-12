@@ -547,6 +547,29 @@ web 侧 `pnpm test` 4/4 通过，`pnpm run build:dev` 可产出非压缩构建�
 真实炸线载荷复现）全绿；既有 10 个提取器边界用例零回归；全量
 `go test ./... -race` 全绿。
 
+### 第十轮：LLM 瞬态传输故障有界重试（2026-10-12 深夜 · 全自动成书实战第四障碍）
+
+实战：第 1 章渲染调用被上游 EOF 掐断（`do stream HTTP request: … EOF`），
+客户端原契约「传输错误不重试、直接冒泡」→ 一次网络抖动废掉整卷。
+
+修复：`HTTPLLMClient` 增补有界重试：
+- `isRetryableLLMError`：EOF/意外 EOF/net.Error/超时/连接重置/断管/HTTP 5xx/429
+  可重试；HTTP 4xx（非 429）与内容级错误（解析失败等）一律不重试；
+- `chatCompletionOnceWithRetry` / `streamOnceWithRetry`：最多 2 次追加尝试，
+  2s/4s 退避，全程受调用方 ctx 门控（ctx 已死或分庭预算耗尽即不再重试）；
+- 接入 `ChatCompletionWithUsage` 与 `SafeChatCompletionWithStreamFallback`，
+  同步/流式全路径自愈。
+
+契约测试更新（原「绝不重试」契约 → 「有界重试后仍 Fail-Closed」）：
+- `TestHTTPLLMClient_BoundedRetryThenFailClosedOn429`（持久 429：恰 3 次尝试）；
+- `TestStream_NetworkErrorRetriesBoundedThenFails`（持续断流：恰 3 次尝试，
+  且重试载荷必须是全新初始请求，绝不伪装成「输出截断续写」）；
+- `TestMatrixGenerateFromIntents_PartialFailureContinues` 伪上游改为按章节内容
+  持续 500（与重试预算解耦）；
+- `TestHTTPLLMClient_TimeoutStopsRetryStorm` 原样通过（ctx 超时不自旋）。
+
+验证：14 例可重试分类表 + 伪 flaky 服务器用例全绿；全量 `go test ./... -race` 全绿。
+
 ### 后续待办
 
 - （无）——已知互斥缺口全部闭环。
