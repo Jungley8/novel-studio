@@ -862,7 +862,16 @@ func (s *Server) handleProjectScenes(w http.ResponseWriter, r *http.Request, pro
 			chapterID := r.URL.Query().Get("chapter_id")
 			var scenes []*domain.Scene
 			if chapterID != "" {
-				var err error
+				// Fail-Closed：按章节列举场次时，章节若已归档必须归属本作品。
+				owner, err := s.store.ChapterProjectID(ctx, chapterID)
+				if err != nil {
+					errorResponse(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				if owner != "" && owner != projectID {
+					errorResponse(w, http.StatusNotFound, "chapter not found")
+					return
+				}
 				scenes, err = s.store.ListScenes(ctx, chapterID)
 				if err != nil {
 					errorResponse(w, http.StatusInternalServerError, err.Error())

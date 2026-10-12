@@ -204,6 +204,29 @@ func TestScenes_RejectForeignProjectOwnership(t *testing.T) {
 	if createW.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for foreign chapter mount, got %d: %s", createW.Code, createW.Body.String())
 	}
+
+	// 3) pB 按 pA 的章节列举场次 → 404
+	listReq := httptest.NewRequest(http.MethodGet, "/api/projects/pB/scenes?chapter_id=ch-a1", nil)
+	listW := httptest.NewRecorder()
+	srv.ServeHTTP(listW, listReq)
+	if listW.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for listing scenes of foreign chapter, got %d: %s", listW.Code, listW.Body.String())
+	}
+
+	// 4) 本作品按章节列举场次 → 200 且可见
+	ownReq := httptest.NewRequest(http.MethodGet, "/api/projects/pA/scenes?chapter_id=ch-a1", nil)
+	ownW := httptest.NewRecorder()
+	srv.ServeHTTP(ownW, ownReq)
+	if ownW.Code != http.StatusOK {
+		t.Fatalf("expected 200 for own chapter listing, got %d: %s", ownW.Code, ownW.Body.String())
+	}
+	var listed []*domain.Scene
+	if err := json.Unmarshal(ownW.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("unmarshal scenes: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != "sc-a1" {
+		t.Fatalf("expected own scene listed, got %+v", listed)
+	}
 }
 
 func TestCheckpointLatest_ReturnsMostRecentlyUpdated(t *testing.T) {
