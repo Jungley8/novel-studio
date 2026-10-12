@@ -56,7 +56,7 @@
 
 <script setup>
 import { onMounted, onErrorCaptured } from 'vue';
-import { state, actions } from './stores/appState';
+import { state, actions, startEditLeaseHeartbeat } from './stores/appState';
 
 onErrorCaptured((err, instance, info) => {
   console.error('[App onErrorCaptured]', err, info);
@@ -108,6 +108,9 @@ import MessageCenterModal from './components/modals/MessageCenterModal.vue';
 onMounted(async () => {
   await actions.loadConfig();
   await actions.loadProjects();
+
+  // 前台编辑租约心跳：在途编辑期间阻止调度器对同一作品并发续产
+  startEditLeaseHeartbeat();
 
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && state.isZenMode) {

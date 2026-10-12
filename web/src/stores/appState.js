@@ -1,4 +1,5 @@
 import { reactive, computed } from 'vue';
+import { api } from '../api/client';
 import { createConfigActions } from './domain/configActions';
 import { createProjectActions } from './domain/projectActions';
 import { createWorkbenchActions } from './domain/workbenchActions';
@@ -396,6 +397,49 @@ export const dialogs = {
     });
   },
 };
+
+// —— 前台编辑租约：在途编辑期间向服务端声明“人工在场”，
+// 调度器对同一作品将跳过自动续产（Fail-Closed 并发互斥）。
+// 心跳仅在页面可见且工作台存在在途内容时续期；切走/完工自动释放，页面关闭由 TTL 兜底。
+const EDIT_LEASE_TTL_SECONDS = 120;
+const EDIT_LEASE_HEARTBEAT_MS = 40000;
+let editLeaseProjectId = '';
+let editLeaseTimer = null;
+
+function editLeaseNeeded() {
+  return Boolean(
+    state.workbench.content?.trim() ||
+    state.workbench.coreConflict?.trim() ||
+    state.editingChapterIndex ||
+    state.reviewResult
+  );
+}
+
+async function syncEditLease() {
+  const projectId = state.currentProject?.id || '';
+  if (editLeaseProjectId && editLeaseProjectId !== projectId) {
+    try { await api.releaseEditLease(editLeaseProjectId); } catch (_) {}
+    editLeaseProjectId = '';
+  }
+  if (!projectId) return;
+  const visible = typeof document === 'undefined' || document.visibilityState === 'visible';
+  if (editLeaseNeeded() && visible) {
+    try {
+      await api.acquireEditLease(projectId, EDIT_LEASE_TTL_SECONDS);
+      editLeaseProjectId = projectId;
+    } catch (_) {}
+  } else if (editLeaseProjectId === projectId) {
+    try { await api.releaseEditLease(projectId); } catch (_) {}
+    editLeaseProjectId = '';
+  }
+}
+
+// 启动编辑租约心跳（App 挂载时调用一次；重复调用无副作用）。
+export function startEditLeaseHeartbeat() {
+  if (editLeaseTimer) return;
+  syncEditLease();
+  editLeaseTimer = setInterval(syncEditLease, EDIT_LEASE_HEARTBEAT_MS);
+}
 
 // Assemble Domain Actions with Cross-Domain Coordination
 const actionHelpers = {};

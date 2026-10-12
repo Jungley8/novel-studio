@@ -185,6 +185,8 @@ export const api = {
   getLatestCheckpoint: (projectId) => apiFetch(`/api/projects/${projectId}/checkpoint?latest=true`),
   saveCheckpoint: (projectId, data) => apiFetch(`/api/projects/${projectId}/checkpoint`, { method: 'POST', body: JSON.stringify(data) }),
   clearCheckpoint: (projectId, chapterIndex) => apiFetch(`/api/projects/${projectId}/checkpoint?chapter_index=${chapterIndex}`, { method: 'DELETE' }),
+  acquireEditLease: (projectId, ttlSeconds = 120) => apiFetch(`/api/projects/${projectId}/edit-lease`, { method: 'POST', body: JSON.stringify({ ttl_seconds: ttlSeconds }) }),
+  releaseEditLease: (projectId) => apiFetch(`/api/projects/${projectId}/edit-lease`, { method: 'DELETE' }),
   produceAutonomous: (projectId, data) => apiFetch(`/api/projects/${projectId}/workshop/produce`, { method: 'POST', body: JSON.stringify(data) }),
   inlineAction: (data) => apiFetch('/api/workshop/inline-action', { method: 'POST', body: JSON.stringify(data) }),
   promptPreview: (projectId, data) => apiFetch(`/api/projects/${projectId}/prompt-preview`, { method: 'POST', body: JSON.stringify(data) }),
