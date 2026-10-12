@@ -673,6 +673,17 @@ beats 等最大 JSON 载荷并留余量）；chat 协议行为不变。
 （sqlite want 列、bench 逾期判定、dramatic_outcome tag、project_id 过滤各自按预期变红后还原）；
 `core_motivation` 全库仅剩 migrate 一次性搬运/删除语句。
 
+
+### 运营备注：低成本模型阵容（2026-10-13 凌晨 · 用户要求降本）
+
+- 推理（responses 协议）：`muse-spark-1.3-contributor`（唯一可用 responses 模型，保持）；
+- 写作（chat 协议）：`kimi-k3` → **`qwen3.8-flash`**（flash 档；写作实测 9s/229 字，
+  短句白描、无 AI 套词、有钩子收尾，质量达标）；
+- 审校（chat 协议）：`glm-5.3`（思考失控）→ `qwen3.8-flash` → **`mimo-v2.6-flash`**
+ （横评最快 ~62s/章、评审意见扎实；与写作模型保持异构）。
+
+注：纯 `~/.novel-studio/config.json` 运营配置变更，未动代码；桌面端下次启动自动生效。
+
 ### 后续待办
 
 - （无）——已知互斥缺口全部闭环。
