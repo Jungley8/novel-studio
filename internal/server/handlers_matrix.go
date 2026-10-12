@@ -490,6 +490,21 @@ func (s *Server) handleProjectCodex(w http.ResponseWriter, r *http.Request, proj
 				errorResponse(w, http.StatusBadRequest, "invalid json: "+err.Error())
 				return
 			}
+			// Fail-Closed：关系两端的词条必须归属本作品，禁止跨作品引用。
+			for _, eid := range []string{rel.SourceEntryID, rel.TargetEntryID} {
+				if eid == "" {
+					continue
+				}
+				owner, err := s.store.CodexEntryProjectID(ctx, eid)
+				if err != nil {
+					errorResponse(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				if owner != projectID {
+					errorResponse(w, http.StatusBadRequest, "relation references entries outside this project")
+					return
+				}
+			}
 			rel.ProjectID = projectID
 			if err := s.store.SaveCodexRelation(ctx, projectID, &rel); err != nil {
 				errorResponse(w, http.StatusBadRequest, err.Error())
@@ -554,6 +569,16 @@ func (s *Server) handleProjectCodex(w http.ResponseWriter, r *http.Request, proj
 
 	// 5. /api/projects/:id/codex/:entryId/progressions
 	if len(subParts) == 2 && subParts[1] == "progressions" {
+		// Fail-Closed：词条必须归属本作品，禁止借道写入其它作品的词条演进。
+		owner, err := s.store.CodexEntryProjectID(ctx, entryID)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if owner != projectID {
+			errorResponse(w, http.StatusNotFound, "codex entry not found")
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			progs, err := s.store.ListCodexProgressions(ctx, entryID)
@@ -867,6 +892,18 @@ func (s *Server) handleProjectScenes(w http.ResponseWriter, r *http.Request, pro
 				return
 			}
 			sc.ProjectID = projectID
+			// Fail-Closed：场次挂载的章节若已归档，必须归属本作品（纯规划章节允许占位挂载）。
+			if sc.ChapterID != "" {
+				owner, err := s.store.ChapterProjectID(ctx, sc.ChapterID)
+				if err != nil {
+					errorResponse(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				if owner != "" && owner != projectID {
+					errorResponse(w, http.StatusBadRequest, "scene chapter does not belong to this project")
+					return
+				}
+			}
 			if sc.ID == "" {
 				sc.ID = fmt.Sprintf("sc-%d", time.Now().UnixNano())
 			}
@@ -895,12 +932,21 @@ func (s *Server) handleProjectScenes(w http.ResponseWriter, r *http.Request, pro
 				errorResponse(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			if sc == nil {
+			if sc == nil || sc.ProjectID != projectID {
 				errorResponse(w, http.StatusNotFound, "scene not found")
 				return
 			}
 			jsonResponse(w, http.StatusOK, sc)
 		case http.MethodPut:
+			existing, err := s.store.GetScene(ctx, sceneID)
+			if err != nil {
+				errorResponse(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if existing == nil || existing.ProjectID != projectID {
+				errorResponse(w, http.StatusNotFound, "scene not found")
+				return
+			}
 			var sc domain.Scene
 			if err := json.NewDecoder(r.Body).Decode(&sc); err != nil {
 				errorResponse(w, http.StatusBadRequest, "invalid json: "+err.Error())
@@ -908,6 +954,17 @@ func (s *Server) handleProjectScenes(w http.ResponseWriter, r *http.Request, pro
 			}
 			sc.ID = sceneID
 			sc.ProjectID = projectID
+			if sc.ChapterID != "" {
+				owner, err := s.store.ChapterProjectID(ctx, sc.ChapterID)
+				if err != nil {
+					errorResponse(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				if owner != "" && owner != projectID {
+					errorResponse(w, http.StatusBadRequest, "scene chapter does not belong to this project")
+					return
+				}
+			}
 			if err := sc.Validate(); err != nil {
 				errorResponse(w, http.StatusBadRequest, err.Error())
 				return
@@ -918,6 +975,15 @@ func (s *Server) handleProjectScenes(w http.ResponseWriter, r *http.Request, pro
 			}
 			jsonResponse(w, http.StatusOK, sc)
 		case http.MethodDelete:
+			existing, err := s.store.GetScene(ctx, sceneID)
+			if err != nil {
+				errorResponse(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if existing == nil || existing.ProjectID != projectID {
+				errorResponse(w, http.StatusNotFound, "scene not found")
+				return
+			}
 			if err := s.store.DeleteScene(ctx, sceneID); err != nil {
 				errorResponse(w, http.StatusInternalServerError, err.Error())
 				return

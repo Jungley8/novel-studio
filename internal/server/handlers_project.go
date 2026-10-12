@@ -392,6 +392,16 @@ func (s *Server) handleProjectCheckpoint(w http.ResponseWriter, r *http.Request,
 	ctx := r.Context()
 	switch r.Method {
 	case http.MethodGet:
+		// ?latest=true 返回该作品最近更新的在途断点（切换作品时恢复“最近推进的一章”）。
+		if r.URL.Query().Get("latest") == "true" {
+			cp, err := s.store.GetLatestCheckpoint(ctx, projectID)
+			if err != nil {
+				errorResponse(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			jsonResponse(w, http.StatusOK, cp)
+			return
+		}
 		idxStr := r.URL.Query().Get("chapter_index")
 		idx, _ := strconv.Atoi(idxStr)
 		if idx <= 0 {
@@ -484,6 +494,18 @@ func (s *Server) handleProjectHooks(w http.ResponseWriter, r *http.Request, proj
 		if err := json.NewDecoder(r.Body).Decode(&h); err != nil {
 			errorResponse(w, http.StatusBadRequest, err.Error())
 			return
+		}
+		// Fail-Closed：已存在的伏笔必须归属本作品，严禁用其它作品的伏笔 ID 覆盖其数据。
+		if h.ID != "" {
+			owner, err := s.store.PlotHookProjectID(ctx, h.ID)
+			if err != nil {
+				errorResponse(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if owner != "" && owner != projectID {
+				errorResponse(w, http.StatusConflict, "plot hook belongs to another project")
+				return
+			}
 		}
 		h.ProjectID = projectID
 		if h.ID == "" {

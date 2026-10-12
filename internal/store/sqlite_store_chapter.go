@@ -370,6 +370,20 @@ func (s *SQLiteStore) SaveChapter(ctx context.Context, c *domain.Chapter) error 
 	return nil
 }
 
+// ChapterProjectID 返回指定章节 ID 实际归属的作品 ID；章节不存在时返回空字符串。
+// 用于请求侧 Fail-Closed 校验：场景等子资源不得挂载其它作品的章节。
+func (s *SQLiteStore) ChapterProjectID(ctx context.Context, id string) (string, error) {
+	var projectID string
+	err := s.db.QueryRowContext(ctx, `SELECT project_id FROM chapters WHERE id = ?`, id).Scan(&projectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("query chapter project: %w", err)
+	}
+	return projectID, nil
+}
+
 func (s *SQLiteStore) GetChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.Chapter, error) {
 	query := `
 	SELECT id, project_id, chapter_index, title, core_conflict, beats_json, state_mutation_json,

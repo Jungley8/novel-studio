@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,20 @@ import (
 	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/domain"
 )
+
+// PlotHookProjectID 返回指定伏笔实际归属的作品 ID；伏笔不存在时返回空字符串。
+// 用于请求侧 Fail-Closed 校验：禁止用其它作品的伏笔 ID 覆盖其数据。
+func (s *SQLiteStore) PlotHookProjectID(ctx context.Context, id string) (string, error) {
+	var projectID string
+	err := s.db.QueryRowContext(ctx, `SELECT project_id FROM plot_hooks WHERE id = ?`, id).Scan(&projectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("query plot hook project: %w", err)
+	}
+	return projectID, nil
+}
 
 func (s *SQLiteStore) SavePlotHook(ctx context.Context, h *domain.PlotHook) error {
 	if err := h.Validate(); err != nil {

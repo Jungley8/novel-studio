@@ -181,6 +181,26 @@ func (s *SQLiteStore) ClearCheckpoint(ctx context.Context, projectID string, cha
 	return nil
 }
 
+// GetLatestCheckpoint 返回指定作品最近更新的在途断点；不存在时返回 (nil, nil)。
+// 切换作品时用于恢复“最近正在推进的一章”的草稿（含已归档章节的重修稿）。
+func (s *SQLiteStore) GetLatestCheckpoint(ctx context.Context, projectID string) (*domain.ChapterCheckpoint, error) {
+	var payload string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT payload_json FROM chapter_checkpoints WHERE project_id = ? ORDER BY updated_at DESC LIMIT 1`,
+		projectID).Scan(&payload)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get latest checkpoint: %w", err)
+	}
+	var cp domain.ChapterCheckpoint
+	if err := json.Unmarshal([]byte(payload), &cp); err != nil {
+		return nil, fmt.Errorf("unmarshal latest checkpoint: %w", err)
+	}
+	return &cp, nil
+}
+
 // ListNeedsHumanCheckpoints 返回全部带 NeedsHuman 审校标记的断点（跨项目，按 updated_at 降序）。
 func (s *SQLiteStore) ListNeedsHumanCheckpoints(ctx context.Context) ([]*domain.ChapterCheckpoint, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT payload_json, updated_at FROM chapter_checkpoints ORDER BY updated_at DESC`)

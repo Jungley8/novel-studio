@@ -185,6 +185,15 @@ func (m *mockChronicleStore) CodexEntryProjectID(ctx context.Context, id string)
 	}
 	return "", nil
 }
+func (m *mockChronicleStore) PlotHookProjectID(ctx context.Context, id string) (string, error) {
+	return "", nil
+}
+func (m *mockChronicleStore) ChapterProjectID(ctx context.Context, id string) (string, error) {
+	return "", nil
+}
+func (m *mockChronicleStore) GetLatestCheckpoint(ctx context.Context, projectID string) (*domain.ChapterCheckpoint, error) {
+	return nil, nil
+}
 func (m *mockChronicleStore) ListCodexEntries(ctx context.Context, projectID string, category domain.CodexCategory) ([]*domain.CodexEntry, error) {
 	return m.codexEntries, nil
 }

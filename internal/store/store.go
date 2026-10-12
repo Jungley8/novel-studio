@@ -25,6 +25,7 @@ type Store interface {
 	UncommitChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, *domain.Project, error)
 	SaveChapter(ctx context.Context, chapter *domain.Chapter) error
 	GetChapter(ctx context.Context, projectID string, chapterIndex int) (*domain.Chapter, error)
+	ChapterProjectID(ctx context.Context, id string) (string, error)
 	ListChapters(ctx context.Context, projectID string) ([]*domain.Chapter, error)
 	DeleteChapter(ctx context.Context, projectID string, chapterIndex int) error
 	ListStateSnapshots(ctx context.Context, projectID string) ([]*domain.ChapterStateSnapshot, error) // 快照链只读供给（bench 用，按 chapter_index 升序）
@@ -43,10 +44,12 @@ type Store interface {
 	SavePlotHook(ctx context.Context, hook *domain.PlotHook) error
 	ListPlotHooks(ctx context.Context, projectID string) ([]*domain.PlotHook, error)
 	DeletePlotHook(ctx context.Context, id string) error
+	PlotHookProjectID(ctx context.Context, id string) (string, error)
 
 	// Chapter Checkpoint (断点续跑)
 	SaveCheckpoint(ctx context.Context, checkpoint *domain.ChapterCheckpoint) error
 	GetCheckpoint(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterCheckpoint, error)
+	GetLatestCheckpoint(ctx context.Context, projectID string) (*domain.ChapterCheckpoint, error)
 	ClearCheckpoint(ctx context.Context, projectID string, chapterIndex int) error
 	ListNeedsHumanCheckpoints(ctx context.Context) ([]*domain.ChapterCheckpoint, error)
 
