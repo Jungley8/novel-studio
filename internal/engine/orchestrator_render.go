@@ -192,10 +192,7 @@ func (o *Orchestrator) RenderSceneStream(
 【必须执行的场景节拍 (请严格按节拍顺序与因果展开)】
 %s
 
-【元素纪律（违者审校必挂）】
-- 只允许出现本章「必须执行的场景节拍」、已开放伏笔与 codex 已登记元素；
-- 严禁引入后续章节计划中的人物/道具/信息：未出场人物不得提前登场，计划后续章节回收的伏笔不得提前揭示；
-- 不确定的关键元素宁可不写，也绝不即兴发明关键道具、人物关系或身世真相。
+%s
 
 请直接输出小说正文内容，无需任何开场白或寒暄。`,
 		project.Title, chapterIndex, wordsTarget,
@@ -204,6 +201,7 @@ func (o *Orchestrator) RenderSceneStream(
 		anchorSection, codexSection,
 		wordBudgetDirective,
 		string(beatsJSON),
+		BuildElementDisciplineBlock(),
 	)
 
 	if horizon != nil && horizon.ConsumedIntent != nil && horizon.ConsumedIntent.Status == domain.IntentStatusLocked {
@@ -223,6 +221,12 @@ func (o *Orchestrator) RenderSceneStream(
 
 	ctxRole := ContextWithRole(ctx, RoleWriter)
 	return SafeChatCompletionWithStreamFallback(ctxRole, o.client, writerModel, systemPrompt, userPrompt, 0.75, onDelta)
+}
+
+// BuildElementDisciplineBlock 元素纪律块（渲染提示词 user 段）：静态行文，无任何逻辑。
+// 导出供提示词预览直接嵌入，保证与生产提示词逐字同源。
+func BuildElementDisciplineBlock() string {
+	return "【元素纪律（违者审校必挂）】\n- 只允许出现本章「必须执行的场景节拍」、已开放伏笔与 codex 已登记元素；\n- 严禁引入后续章节计划中的人物/道具/信息：未出场人物不得提前登场，计划后续章节回收的伏笔不得提前揭示；\n- 不确定的关键元素宁可不写，也绝不即兴发明关键道具、人物关系或身世真相。"
 }
 
 // BuildMotifConceptPrompt 有意母题与符号清单注入块（RC 精修锚点）。

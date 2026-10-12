@@ -162,6 +162,13 @@ func TestPreviewAssembliesMutualExclusion(t *testing.T) {
 	if !strings.Contains(beatsText, "- [OPEN] 玉佩之谜 (目标回收: 第 12 章)") {
 		t.Errorf("beats hooks entry must mirror beats.go:151 verbatim, got:\n%s", beatsText)
 	}
+	// 元素纪律块：render 路逐字嵌入生产 BuildElementDisciplineBlock，beats 路无。
+	if !strings.Contains(renderText, "【元素纪律（违者审校必挂）】") {
+		t.Errorf("render assembly must contain element-discipline block, got:\n%s", renderText)
+	}
+	if strings.Contains(beatsText, "【元素纪律（违者审校必挂）】") {
+		t.Errorf("beats assembly must not contain element-discipline block, got:\n%s", beatsText)
+	}
 	// 唯一共有块一致：百科两路字符串相等。
 	findContent := func(a PromptAssemblyPreview, substr string) string {
 		for _, c := range a.Components {

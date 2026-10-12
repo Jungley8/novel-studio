@@ -24,7 +24,8 @@ import (
 //     protNameLevel/protInventory，见 orchestrator_codex.go:226-238）
 //     + anchorSection（StyleVaultAnchor 主锚 + TailAnchor 辅锚 +
 //     BuildMotifConceptPrompt 母题）+ CodexContextText + wordBudget
-//     buildBeatWordBudgetPrompt ← beats + beatsJSON；LOCKED 意图追加
+//     buildBeatWordBudgetPrompt ← beats + beatsJSON + 元素纪律
+//     BuildElementDisciplineBlock；LOCKED 意图追加
 //     buildRenderIntentDirective。
 //   - 有母题块，无里程碑块，无 RollingCanon/HistoricalCallbacks/hooks，
 //     无立意梗概/分卷/战力块。
@@ -322,6 +323,12 @@ func previewRenderBeatsInput(beats []domain.SceneBeat, wordsTarget int) string {
 	return b.String()
 }
 
+// previewRenderDisciplineBlock 元素纪律块：直接嵌入生产块
+// engine.BuildElementDisciplineBlock 的输出（静态行文，逐字同源），渲染路独有。
+func previewRenderDisciplineBlock() string {
+	return engine.BuildElementDisciplineBlock()
+}
+
 // ---- 节拍路独有块（只读展示；生产包装见 orchestrator_beats.go，不复写） ----
 
 func previewBeatsWorkInfoBlock(title, platform string, chapterIndex int) string {
@@ -512,6 +519,7 @@ func buildRenderAssembly(p *domain.Project, horizon *engine.CanonHorizon, req Pr
 		{"全域百科与关联 (Render)", "渲染提示词 user 段：Codex 原文（与节拍路共有块一致），为空整块省略", previewSharedCodexBlock(codexText)},
 		{"场景戏剧规格 (Render)", "渲染场景输入：老请求字段展示，全空则省略", previewRenderSceneSpec(req)},
 		{"节拍输入与篇幅 (Render)", "渲染提示词 user 段输入：节拍 JSON 原文与目标字数", previewRenderBeatsInput(req.Beats, req.WordsTarget)},
+		{"元素纪律 (Render)", "渲染提示词 user 段：生产块逐字同源，渲染路独有", previewRenderDisciplineBlock()},
 	}
 	return newPromptAssembly(PreviewAudienceRender, renderSystemPrompt, parts)
 }
