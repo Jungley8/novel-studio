@@ -194,6 +194,27 @@ func (m *mockChronicleStore) ChapterProjectID(ctx context.Context, id string) (s
 func (m *mockChronicleStore) GetLatestCheckpoint(ctx context.Context, projectID string) (*domain.ChapterCheckpoint, error) {
 	return nil, nil
 }
+func (m *mockChronicleStore) UpsertEditLease(ctx context.Context, projectID string, ttl time.Duration) (time.Time, error) {
+	return time.Time{}, nil
+}
+func (m *mockChronicleStore) DeleteEditLease(ctx context.Context, projectID string) error {
+	return nil
+}
+func (m *mockChronicleStore) GetLiveLease(ctx context.Context, projectID, kind string) (*domain.CoordinationLease, error) {
+	return nil, nil
+}
+func (m *mockChronicleStore) AcquireProductionLease(ctx context.Context, projectID, holder, label string, chapter int, ttl time.Duration) (*domain.CoordinationLease, error) {
+	return nil, nil
+}
+func (m *mockChronicleStore) HeartbeatProductionLease(ctx context.Context, projectID, holder string, chapter int, ttl time.Duration) (bool, error) {
+	return true, nil
+}
+func (m *mockChronicleStore) ReleaseProductionLease(ctx context.Context, projectID, holder string) error {
+	return nil
+}
+func (m *mockChronicleStore) CleanupExpiredLeases(ctx context.Context) (int64, error) {
+	return 0, nil
+}
 func (m *mockChronicleStore) ListCodexEntries(ctx context.Context, projectID string, category domain.CodexCategory) ([]*domain.CodexEntry, error) {
 	return m.codexEntries, nil
 }

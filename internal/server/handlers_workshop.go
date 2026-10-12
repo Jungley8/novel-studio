@@ -1,13 +1,16 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Jungley8/novel-studio/internal/coord"
 	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/engine"
 )
@@ -338,26 +341,47 @@ func (s *Server) handleWorkshopProduce(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 
-	// Fail-Closed：并发生产互斥。人工点击“一键成章”视为人工接管，
-	// 先释放自身的编辑租约，再登记生产锁（调度器运行期间会跳过该作品）。
-	s.coord.ReleaseEdit(projectID)
-	release, err := s.coord.BeginProduction(projectID, "一键成章")
+	// Fail-Closed：并发生产互斥。人工点击“一键成章”视为人工接管：
+	// 先释放本窗口的编辑租约，再登记跨进程生产锁（SQLite 单一事实源），
+	// 调度器/CLI 在此期间会因锁在位而拒绝/跳过同一作品。
+	ctx := r.Context()
+	_ = s.store.DeleteEditLease(ctx, projectID)
+	holder := fmt.Sprintf("ui-%d", time.Now().UnixNano())
+	blocking, err := s.store.AcquireProductionLease(ctx, projectID, holder, "一键成章", req.ChapterIndex, coord.ProductionLeaseTTL)
 	if err != nil {
-		if info, active := s.coord.Production(projectID); active {
-			chapterNote := ""
-			if info.Chapter > 0 {
-				chapterNote = fmt.Sprintf("·第 %d 章", info.Chapter)
+		if errors.Is(err, coord.ErrBusy) {
+			switch {
+			case blocking != nil && blocking.Kind == coord.KindEdit:
+				errorResponse(w, http.StatusConflict, "作品存在人工编辑租约（另一窗口正在编辑），已拒绝并发生产")
+			case blocking != nil && blocking.Chapter > 0:
+				errorResponse(w, http.StatusConflict, fmt.Sprintf("该作品正在生产（%s·第 %d 章），请等待完成后再试", blocking.Label, blocking.Chapter))
+			case blocking != nil:
+				errorResponse(w, http.StatusConflict, fmt.Sprintf("该作品正在生产（%s），请等待完成后再试", blocking.Label))
+			default:
+				errorResponse(w, http.StatusConflict, "该作品已有在途生产任务，请等待完成后再试")
 			}
-			errorResponse(w, http.StatusConflict, fmt.Sprintf("该作品正在生产（%s%s），请等待完成后再试", info.Label, chapterNote))
 		} else {
-			errorResponse(w, http.StatusConflict, "作品存在其它窗口的人工编辑租约，已拒绝并发生产")
+			errorResponse(w, http.StatusInternalServerError, err.Error())
 		}
 		return
 	}
-	defer release()
-	if req.ChapterIndex > 0 {
-		s.coord.SetProductionChapter(projectID, req.ChapterIndex)
-	}
+	defer func() { _ = s.store.ReleaseProductionLease(context.Background(), projectID, holder) }()
+
+	// 生产锁心跳：SSE 长连接可能持续数分钟，按固定间隔续期并跟随章节号。
+	hbCtx, hbCancel := context.WithCancel(ctx)
+	defer hbCancel()
+	go func() {
+		ticker := time.NewTicker(coord.ProductionHeartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-ticker.C:
+				_, _ = s.store.HeartbeatProductionLease(hbCtx, projectID, holder, req.ChapterIndex, coord.ProductionLeaseTTL)
+			}
+		}
+	}()
 
 	isSSE := strings.Contains(r.Header.Get("Accept"), "text/event-stream") || r.URL.Query().Get("stream") == "true"
 	if isSSE {

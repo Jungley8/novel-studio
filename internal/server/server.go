@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Jungley8/novel-studio/internal/config"
-	"github.com/Jungley8/novel-studio/internal/coord"
 	"github.com/Jungley8/novel-studio/internal/engine"
 	"github.com/Jungley8/novel-studio/internal/notify"
 	"github.com/Jungley8/novel-studio/internal/scheduler"
@@ -31,7 +30,6 @@ type Server struct {
 	workshop    *engine.ChapterWorkshop
 	scheduler   *scheduler.Scheduler
 	schedCancel context.CancelFunc
-	coord       *coord.Coordinator
 	mux         *http.ServeMux
 	fs          fs.FS
 }
@@ -82,9 +80,13 @@ func New(
 		chronicle:   chronicle,
 		qualityGate: qualityGate,
 		workshop:    workshop,
-		coord:       coord.New(),
 		mux:         http.NewServeMux(),
 		fs:          webFS,
+	}
+
+	// 启动期清理跨进程协调租约的过期残留（上次崩溃遗留的生产锁/编辑租约）。
+	if removed, err := s.CleanupExpiredLeases(context.Background()); err == nil && removed > 0 {
+		fmt.Printf("[coord] cleaned %d expired coordination lease(s)\n", removed)
 	}
 
 	srv.routes()

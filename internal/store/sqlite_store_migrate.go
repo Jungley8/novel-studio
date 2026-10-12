@@ -64,6 +64,18 @@ func (s *SQLiteStore) migrate() error {
 		FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 	);
 
+	CREATE TABLE IF NOT EXISTS coordination_leases (
+		project_id TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		holder TEXT NOT NULL DEFAULT '',
+		label TEXT NOT NULL DEFAULT '',
+		chapter INTEGER NOT NULL DEFAULT 0,
+		updated_at TIMESTAMP NOT NULL,
+		expires_at TIMESTAMP NOT NULL,
+		PRIMARY KEY(project_id, kind),
+		FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+	);
+
 	CREATE TABLE IF NOT EXISTS chapter_intents (
 		project_id TEXT NOT NULL,
 		chapter_index INTEGER NOT NULL,

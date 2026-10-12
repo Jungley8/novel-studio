@@ -10,12 +10,13 @@ import (
 	"testing"
 
 	"github.com/Jungley8/novel-studio/internal/config"
+	"github.com/Jungley8/novel-studio/internal/coord"
 	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/engine"
 	"github.com/Jungley8/novel-studio/internal/store"
 )
 
-// 并发互斥（前台编辑租约 + 后台生产锁）的接口层接线测试（白盒：直接操控 srv.coord）。
+// 并发互斥（编辑租约 + 生产锁）的接口层接线测试（白盒：直接操控 store 的协调租约）。
 
 func newCoordTestServer(t *testing.T) (*Server, store.Store) {
 	t.Helper()
@@ -40,7 +41,8 @@ func newCoordTestServer(t *testing.T) (*Server, store.Store) {
 }
 
 func TestEditLeaseEndpoint_Roundtrip(t *testing.T) {
-	srv, _ := newCoordTestServer(t)
+	srv, s := newCoordTestServer(t)
+	ctx := context.Background()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/projects/p1/edit-lease", strings.NewReader(`{"ttl_seconds": 60}`))
 	w := httptest.NewRecorder()
@@ -58,8 +60,9 @@ func TestEditLeaseEndpoint_Roundtrip(t *testing.T) {
 	if resp.Status != "held" || resp.ExpiresAt == "" {
 		t.Fatalf("unexpected lease response: %+v", resp)
 	}
-	if !srv.coord.EditActive("p1") {
-		t.Fatal("edit lease should be active after acquire")
+	lease, err := s.GetLiveLease(ctx, "p1", coord.KindEdit)
+	if err != nil || lease == nil {
+		t.Fatalf("edit lease should be live after acquire, got lease=%+v err=%v", lease, err)
 	}
 
 	del := httptest.NewRequest(http.MethodDelete, "/api/projects/p1/edit-lease", nil)
@@ -68,8 +71,8 @@ func TestEditLeaseEndpoint_Roundtrip(t *testing.T) {
 	if dw.Code != http.StatusOK {
 		t.Fatalf("release expected 200, got %d: %s", dw.Code, dw.Body.String())
 	}
-	if srv.coord.EditActive("p1") {
-		t.Fatal("edit lease should be released")
+	if lease, _ = s.GetLiveLease(ctx, "p1", coord.KindEdit); lease != nil {
+		t.Fatalf("edit lease should be released, got %+v", lease)
 	}
 }
 
@@ -77,11 +80,10 @@ func TestCanonWrites_RejectedWhileProductionActive(t *testing.T) {
 	srv, s := newCoordTestServer(t)
 	ctx := context.Background()
 
-	release, err := srv.coord.BeginProduction("p1", "排程自动续产")
-	if err != nil {
-		t.Fatalf("begin production: %v", err)
+	blocking, err := s.AcquireProductionLease(ctx, "p1", "test-holder", "排程自动续产", 3, coord.ProductionLeaseTTL)
+	if err != nil || blocking != nil {
+		t.Fatalf("acquire production lease failed: blocking=%+v err=%v", blocking, err)
 	}
-	srv.coord.SetProductionChapter("p1", 3)
 
 	cases := []struct {
 		name, method, path, body string
@@ -114,7 +116,9 @@ func TestCanonWrites_RejectedWhileProductionActive(t *testing.T) {
 	}
 
 	// 生产结束后正史写入口恢复
-	release()
+	if err := s.ReleaseProductionLease(ctx, "p1", "test-holder"); err != nil {
+		t.Fatalf("release production lease: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodPost, "/api/projects/p1/chapters", strings.NewReader(`{"chapter_index":3,"title":"t","content":"正文内容"}`))
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)

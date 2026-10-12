@@ -53,6 +53,15 @@ type Store interface {
 	ClearCheckpoint(ctx context.Context, projectID string, chapterIndex int) error
 	ListNeedsHumanCheckpoints(ctx context.Context) ([]*domain.ChapterCheckpoint, error)
 
+	// Coordination (跨进程编辑租约 / 生产锁；守护服务与 CLI 共享同一数据面)
+	UpsertEditLease(ctx context.Context, projectID string, ttl time.Duration) (time.Time, error)
+	DeleteEditLease(ctx context.Context, projectID string) error
+	GetLiveLease(ctx context.Context, projectID, kind string) (*domain.CoordinationLease, error)
+	AcquireProductionLease(ctx context.Context, projectID, holder, label string, chapter int, ttl time.Duration) (*domain.CoordinationLease, error)
+	HeartbeatProductionLease(ctx context.Context, projectID, holder string, chapter int, ttl time.Duration) (bool, error)
+	ReleaseProductionLease(ctx context.Context, projectID, holder string) error
+	CleanupExpiredLeases(ctx context.Context) (int64, error)
+
 	// Activity Ledger (内容生产与变更事件账本, append-only)
 	AppendEvent(ctx context.Context, event *activity.ActivityEvent) error
 	ListEvents(ctx context.Context, q activity.EventQuery) ([]*activity.ActivityEvent, int64, error)

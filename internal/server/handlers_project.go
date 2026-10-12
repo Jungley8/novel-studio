@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Jungley8/novel-studio/internal/activity"
+	"github.com/Jungley8/novel-studio/internal/coord"
 	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/engine"
 	"github.com/Jungley8/novel-studio/internal/store"
@@ -255,7 +256,7 @@ func (s *Server) handleProjectChapters(w http.ResponseWriter, r *http.Request, p
 			return
 		}
 		// Fail-Closed：后台生产锁生效期间拒绝人工定稿（避免并发覆盖正史与状态双写）。
-		if s.rejectIfProducing(w, projectID, "定稿") {
+		if s.rejectIfProducing(w, r, projectID, "定稿") {
 			return
 		}
 		c.ProjectID = projectID
@@ -330,7 +331,7 @@ func (s *Server) handleProjectChapterSub(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		// Fail-Closed：后台生产锁生效期间拒绝撤回归档（状态时钟被生产方掌握）。
-		if s.rejectIfProducing(w, projectID, "撤回归档") {
+		if s.rejectIfProducing(w, r, projectID, "撤回归档") {
 			return
 		}
 		cp, updatedProj, err := s.store.UncommitChapter(ctx, projectID, chapterIndex)
@@ -364,7 +365,7 @@ func (s *Server) handleProjectChapterSub(w http.ResponseWriter, r *http.Request,
 		jsonResponse(w, http.StatusOK, chapter)
 	case http.MethodDelete:
 		// Fail-Closed：后台生产锁生效期间拒绝删除/撤回章节。
-		if s.rejectIfProducing(w, projectID, "删除或撤回章节") {
+		if s.rejectIfProducing(w, r, projectID, "删除或撤回章节") {
 			return
 		}
 		toDraft := r.URL.Query().Get("to_draft") == "true"
@@ -403,16 +404,20 @@ func (s *Server) handleProjectChapterSub(w http.ResponseWriter, r *http.Request,
 }
 
 // rejectIfProducing 在后台生产锁生效期间拒绝正史写入口；返回 true 表示已写出 409。
-func (s *Server) rejectIfProducing(w http.ResponseWriter, projectID, action string) bool {
-	info, active := s.coord.Production(projectID)
-	if !active {
+func (s *Server) rejectIfProducing(w http.ResponseWriter, r *http.Request, projectID, action string) bool {
+	lease, err := s.store.GetLiveLease(r.Context(), projectID, coord.KindProduction)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return true
+	}
+	if lease == nil {
 		return false
 	}
 	chapterNote := ""
-	if info.Chapter > 0 {
-		chapterNote = fmt.Sprintf("·第 %d 章", info.Chapter)
+	if lease.Chapter > 0 {
+		chapterNote = fmt.Sprintf("·第 %d 章", lease.Chapter)
 	}
-	errorResponse(w, http.StatusConflict, fmt.Sprintf("该作品正在后台生产（%s%s），请等待完成后再%s", info.Label, chapterNote, action))
+	errorResponse(w, http.StatusConflict, fmt.Sprintf("该作品正在后台生产（%s%s），请等待完成后再%s", lease.Label, chapterNote, action))
 	return true
 }
 
@@ -420,8 +425,10 @@ func (s *Server) rejectIfProducing(w http.ResponseWriter, projectID, action stri
 //   - POST：获取/续期（默认 TTL 120s，允许 30~600s）
 //   - DELETE：释放
 //
-// 租约存在期间，调度器不会对同一作品启动自动续产（Fail-Closed）。
+// 租约存于 SQLite（跨进程可见）；租约存在期间，守护服务调度器与 CLI
+// 生产都不会对同一作品启动（Fail-Closed）。
 func (s *Server) handleProjectEditLease(w http.ResponseWriter, r *http.Request, projectID string) {
+	ctx := r.Context()
 	switch r.Method {
 	case http.MethodPost:
 		var req struct {
@@ -430,7 +437,7 @@ func (s *Server) handleProjectEditLease(w http.ResponseWriter, r *http.Request, 
 		_ = json.NewDecoder(r.Body).Decode(&req) // 允许空 Body（使用默认 TTL）
 		ttl := req.TTLSeconds
 		if ttl <= 0 {
-			ttl = 120
+			ttl = int(coord.EditLeaseTTL / time.Second)
 		}
 		if ttl < 30 {
 			ttl = 30
@@ -438,13 +445,20 @@ func (s *Server) handleProjectEditLease(w http.ResponseWriter, r *http.Request, 
 		if ttl > 600 {
 			ttl = 600
 		}
-		expiry := s.coord.AcquireEdit(projectID, time.Duration(ttl)*time.Second)
+		expiry, err := s.store.UpsertEditLease(ctx, projectID, time.Duration(ttl)*time.Second)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		jsonResponse(w, http.StatusOK, map[string]any{
 			"status":     "held",
 			"expires_at": expiry.UTC().Format(time.RFC3339),
 		})
 	case http.MethodDelete:
-		s.coord.ReleaseEdit(projectID)
+		if err := s.store.DeleteEditLease(ctx, projectID); err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		jsonResponse(w, http.StatusOK, map[string]string{"status": "released"})
 	default:
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")

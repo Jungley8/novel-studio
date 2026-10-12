@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
+	"time"
 
+	"github.com/Jungley8/novel-studio/internal/coord"
 	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/engine"
 )
@@ -67,17 +70,38 @@ func (r *schedulerRuntime) RunContinuation(
 	count int,
 	progress func(string),
 ) (halted bool, message string, err error) {
-	if r.srv == nil || r.srv.workshop == nil || r.srv.store == nil || r.srv.coord == nil {
-		return false, "", errors.New("workshop, store or coordinator not configured")
+	if r.srv == nil || r.srv.workshop == nil || r.srv.store == nil {
+		return false, "", errors.New("workshop or store not configured")
 	}
 
-	// Fail-Closed：人工编辑租约未过期或已有生产任务时拒绝开工；
-	// 调度器收到 coord.ErrBusy 会跳过本轮并在下一趟自动重试。
-	release, err := r.srv.coord.BeginProduction(projectID, "排程自动续产")
+	// Fail-Closed：跨进程生产锁。存在有效编辑租约（守护 UI/CLI）或已有生产任务时
+	// 返回 coord.ErrBusy；调度器据此跳过本轮并在下一趟自动重试。
+	holder := fmt.Sprintf("scheduler-%d", time.Now().UnixNano())
+	blocking, err := r.srv.store.AcquireProductionLease(ctx, projectID, holder, "排程自动续产", 0, coord.ProductionLeaseTTL)
 	if err != nil {
+		if errors.Is(err, coord.ErrBusy) && blocking != nil {
+			return false, "", fmt.Errorf("%w（%s）", err, blocking.Label)
+		}
 		return false, "", err
 	}
-	defer release()
+	defer func() { _ = r.srv.store.ReleaseProductionLease(context.Background(), projectID, holder) }()
+
+	// 生产锁心跳：长卷批产可达数小时，按固定间隔续期并跟随当前章节号。
+	var currentChapter atomic.Int64
+	hbCtx, hbCancel := context.WithCancel(ctx)
+	defer hbCancel()
+	go func() {
+		ticker := time.NewTicker(coord.ProductionHeartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-ticker.C:
+				_, _ = r.srv.store.HeartbeatProductionLease(hbCtx, projectID, holder, int(currentChapter.Load()), coord.ProductionLeaseTTL)
+			}
+		}
+	}()
 
 	words, loops, style, reasoningModel, writerModel, reviewerModel := r.resolveDefaults()
 
@@ -89,7 +113,7 @@ func (r *schedulerRuntime) RunContinuation(
 				return false, "", fmt.Errorf("list chapters for project %s: %w", projectID, err)
 			}
 			next := nextChapterIndex(chapters)
-			r.srv.coord.SetProductionChapter(projectID, next)
+			currentChapter.Store(int64(next))
 
 			var onProg engine.ProgressCallback
 			if progress != nil {
@@ -138,7 +162,7 @@ func (r *schedulerRuntime) RunContinuation(
 				return false, "", fmt.Errorf("list chapters for project %s: %w", projectID, err)
 			}
 			next := nextChapterIndex(chapters)
-			r.srv.coord.SetProductionChapter(projectID, 0)
+			currentChapter.Store(0)
 
 			arcs := engine.BackfillVolumeArcs(project.Framework.VolumeArcs)
 			arc := findArcForChapter(arcs, next)
@@ -150,7 +174,7 @@ func (r *schedulerRuntime) RunContinuation(
 			if progress != nil {
 				onProg = func(ev engine.VolumeEvent) {
 					if ev.ChapterIndex > 0 {
-						r.srv.coord.SetProductionChapter(projectID, ev.ChapterIndex)
+						currentChapter.Store(int64(ev.ChapterIndex))
 					}
 					progress(ev.Message)
 				}
