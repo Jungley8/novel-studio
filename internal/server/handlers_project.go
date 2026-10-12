@@ -128,6 +128,12 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "bench":
 		s.handleProjectBench(w, r, projectID)
+	case "structure-audit":
+		subParts := []string{}
+		if len(parts) > 2 {
+			subParts = parts[2:]
+		}
+		s.handleProjectStructureAudit(w, r, projectID, subParts)
 	case "forecast":
 		subParts := []string{}
 		if len(parts) > 2 {

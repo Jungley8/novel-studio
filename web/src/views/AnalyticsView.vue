@@ -69,6 +69,15 @@
             <Activity class="w-3.5 h-3.5" />
             <span>情节起伏</span>
           </button>
+          <button 
+            @click="subTab = 'audit'" 
+            :class="subTab === 'audit' 
+              ? 'bg-atelier-800 text-brand-amber font-semibold shadow-atelier-sm' 
+              : 'text-ink-400 hover:text-ink-200'" 
+            class="px-3 py-1.5 rounded-md transition cursor-pointer flex items-center gap-1.5">
+            <Compass class="w-3.5 h-3.5" />
+            <span>结构审读</span>
+          </button>
         </div>
 
         <button 
@@ -604,6 +613,140 @@
         </p>
       </div>
     </div>
+
+    <!-- 子视图 D: 全书结构审读 -->
+    <div v-if="subTab === 'audit'" class="space-y-4">
+      <!-- 审读控制栏 -->
+      <div class="bg-atelier-900 border border-atelier-750 rounded-xl p-5 shadow-atelier-md space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <span class="font-serif font-bold text-ink-100 text-sm">全书结构审读体检</span>
+              <span v-if="structureFindings.length > 0" class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-brand-amber/15 text-brand-amber border border-brand-amber/30">
+                {{ structureFindings.length }} 条问题
+              </span>
+            </div>
+            <p class="text-xs text-ink-400">
+              基于全书章节摘要、伏笔台账与宏观大纲的结构化体检（每次运行覆盖上次结果）。
+            </p>
+          </div>
+
+          <button 
+            @click="handleRunAudit" 
+            :disabled="isRunningAudit"
+            class="px-4 py-2 bg-gradient-to-r from-brand-amber to-amber-600 hover:from-brand-amber-hover hover:to-amber-500 text-atelier-950 font-bold text-xs rounded-lg transition shadow-atelier-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shrink-0">
+            <Sparkles class="w-4 h-4" :class="{ 'animate-spin': isRunningAudit }" />
+            <span>{{ isRunningAudit ? '正在审读中...' : '运行全书审读' }}</span>
+          </button>
+        </div>
+
+        <!-- 错误提示 -->
+        <div v-if="auditError" class="p-3 bg-rose-500/10 border border-rose-500/25 rounded-lg text-xs text-rose-400 flex items-center gap-2">
+          <AlertCircle class="w-4 h-4 shrink-0" />
+          <span>{{ auditError }}</span>
+        </div>
+
+        <!-- 备注提示 -->
+        <div v-if="auditNote" class="p-3 bg-brand-amber/10 border border-brand-amber/25 rounded-lg text-xs text-brand-amber flex items-center gap-2">
+          <AlertCircle class="w-4 h-4 shrink-0" />
+          <span>{{ auditNote }}</span>
+        </div>
+      </div>
+
+      <!-- Findings 列表 -->
+      <div v-if="structureFindings.length > 0" class="space-y-3">
+        <div 
+          v-for="f in structureFindings" 
+          :key="f.id"
+          class="bg-atelier-900 border border-atelier-750 rounded-xl p-4.5 shadow-atelier-md space-y-3 transition hover:border-atelier-700">
+          
+          <!-- 头部标签与操作 -->
+          <div class="flex flex-wrap items-center justify-between gap-2.5 border-b border-atelier-800 pb-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <!-- 类型标签 -->
+              <span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-atelier-800 text-ink-200 border border-atelier-700">
+                {{ findingTypeLabel(f.type) }}
+              </span>
+
+              <!-- 严重度标签 -->
+              <span 
+                :class="findingSeverityBadge(f.severity)"
+                class="px-2 py-0.5 rounded text-[11px] font-bold border">
+                {{ f.severity }}
+              </span>
+
+              <!-- 章节区间 -->
+              <span class="px-2 py-0.5 rounded text-[11px] font-mono bg-atelier-950 text-ink-300 border border-atelier-800">
+                {{ f.chapter_start === f.chapter_end ? `第 ${f.chapter_start} 章` : `第 ${f.chapter_start} - ${f.chapter_end} 章` }}
+              </span>
+
+              <!-- 状态 -->
+              <span 
+                :class="{
+                  'text-brand-amber bg-amber-500/10 border-amber-500/20': f.status === 'OPEN',
+                  'text-emerald-400 bg-emerald-500/10 border-emerald-500/20': f.status === 'RESOLVED',
+                  'text-ink-400 bg-atelier-800 border-atelier-700': f.status === 'IGNORED'
+                }"
+                class="px-2 py-0.5 rounded text-[11px] font-medium border">
+                {{ f.status === 'OPEN' ? '待处理' : (f.status === 'RESOLVED' ? '已解决' : '已忽略') }}
+              </span>
+            </div>
+
+            <!-- 状态操作按钮 -->
+            <div class="flex items-center gap-1.5 text-xs">
+              <button 
+                v-if="f.status !== 'RESOLVED'"
+                @click="handleUpdateFindingStatus(f.id, 'RESOLVED')"
+                class="px-2.5 py-1 rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 transition cursor-pointer font-medium">
+                解决
+              </button>
+              <button 
+                v-if="f.status !== 'IGNORED'"
+                @click="handleUpdateFindingStatus(f.id, 'IGNORED')"
+                class="px-2.5 py-1 rounded bg-atelier-800 hover:bg-atelier-750 text-ink-400 hover:text-ink-200 border border-atelier-700 transition cursor-pointer">
+                忽略
+              </button>
+              <button 
+                v-if="f.status !== 'OPEN'"
+                @click="handleUpdateFindingStatus(f.id, 'OPEN')"
+                class="px-2.5 py-1 rounded bg-brand-amber/15 hover:bg-brand-amber/25 text-brand-amber border border-brand-amber/30 transition cursor-pointer font-medium">
+                重开
+              </button>
+            </div>
+          </div>
+
+          <!-- 核心概述 -->
+          <div class="text-sm font-serif font-bold text-ink-100 leading-relaxed">
+            {{ f.summary }}
+          </div>
+
+          <!-- 事实证据引用 -->
+          <div class="bg-atelier-950/70 p-3 rounded-lg border border-atelier-800/80 text-xs space-y-1">
+            <div class="font-bold text-ink-400 text-[11px]">事实证据引用：</div>
+            <p class="text-ink-300 leading-relaxed">{{ f.evidence }}</p>
+          </div>
+
+          <!-- 修改建议 -->
+          <div class="bg-brand-amber/5 p-3 rounded-lg border border-brand-amber/20 text-xs space-y-1">
+            <div class="font-bold text-brand-amber text-[11px]">可落地修改建议：</div>
+            <p class="text-ink-200 leading-relaxed">{{ f.suggestion }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 空态提示 -->
+      <div 
+        v-else-if="!isRunningAudit" 
+        class="text-center py-20 bg-atelier-900 border border-dashed border-atelier-750 rounded-xl space-y-3">
+        <div class="w-12 h-12 rounded-full bg-atelier-800 flex items-center justify-center mx-auto text-brand-amber">
+          <Compass class="w-6 h-6" />
+        </div>
+        <h3 class="text-sm font-semibold text-ink-200">暂无全书结构审读结果</h3>
+        <p class="text-xs text-ink-400 max-w-md mx-auto">
+          点击上方“运行全书审读”，系统将全面排查全书伏笔回收、节奏平淡注水与角色弧光漂移。
+        </p>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -638,6 +781,12 @@ const isLoadingBench = ref(false);
 const benchError = ref(null);
 const showDrifts = ref(false);
 
+const structureFindings = ref([]);
+const isLoadingAudit = ref(false);
+const isRunningAudit = ref(false);
+const auditError = ref(null);
+const auditNote = ref(null);
+
 async function loadBench() {
   if (!state.currentProject) {
     benchReport.value = null;
@@ -656,10 +805,81 @@ async function loadBench() {
   }
 }
 
+async function loadAuditFindings() {
+  if (!state.currentProject) {
+    structureFindings.value = [];
+    return;
+  }
+  isLoadingAudit.value = true;
+  auditError.value = null;
+  try {
+    const res = await api.getStructureFindings(state.currentProject.id);
+    structureFindings.value = res?.findings || res || [];
+  } catch (err) {
+    auditError.value = err.message || '获取结构审读结果失败';
+    console.error('load structure findings error:', err);
+  } finally {
+    isLoadingAudit.value = false;
+  }
+}
+
+async function handleRunAudit() {
+  if (!state.currentProject || isRunningAudit.value) return;
+  isRunningAudit.value = true;
+  auditError.value = null;
+  auditNote.value = null;
+  try {
+    const res = await api.runStructureAudit(state.currentProject.id);
+    structureFindings.value = res?.findings || [];
+    if (res?.note) {
+      auditNote.value = res.note;
+    }
+  } catch (err) {
+    auditError.value = err.message || '运行全书结构审读失败';
+    console.error('run structure audit error:', err);
+  } finally {
+    isRunningAudit.value = false;
+  }
+}
+
+async function handleUpdateFindingStatus(findingId, newStatus) {
+  if (!state.currentProject) return;
+  try {
+    await api.updateStructureFindingStatus(state.currentProject.id, {
+      finding_id: findingId,
+      status: newStatus,
+    });
+    const item = structureFindings.value.find(f => f.id === findingId);
+    if (item) {
+      item.status = newStatus;
+    }
+  } catch (err) {
+    alert('更新状态失败: ' + (err.message || '未知错误'));
+  }
+}
+
+function findingSeverityBadge(sev) {
+  if (sev === 'HIGH') return 'bg-rose-500/10 text-rose-400 border-rose-500/25';
+  if (sev === 'MEDIUM') return 'bg-amber-500/10 text-brand-amber border-amber-500/25';
+  return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25';
+}
+
+function findingTypeLabel(typ) {
+  const map = {
+    PLOT_HOLE: '设定漏洞',
+    PACING: '节奏失衡',
+    REDUNDANT: '支线注水',
+    DROPPED_HOOK: '伏笔写丢',
+    ARC_DRIFT: '弧光漂移',
+  };
+  return map[typ] || typ;
+}
+
 async function handleRefresh() {
   await Promise.allSettled([
     actions.loadAnalytics ? actions.loadAnalytics() : Promise.resolve(),
     loadBench(),
+    loadAuditFindings(),
   ]);
 }
 
@@ -669,13 +889,18 @@ watch(
     if (newProjId !== oldProjId) {
       // 作品切换：先清空旧报告，避免加载期间展示上一个作品的数据
       benchReport.value = null;
+      structureFindings.value = [];
+      auditError.value = null;
+      auditNote.value = null;
     }
     if (!newProjId) {
       benchReport.value = null;
+      structureFindings.value = [];
       return;
     }
     if (newTab === 'analytics' && (newTab !== oldTab || newProjId !== oldProjId)) {
       loadBench();
+      loadAuditFindings();
     }
   },
   { immediate: true }
@@ -684,6 +909,7 @@ watch(
 onMounted(() => {
   if (state.currentProject && state.activeTab === 'analytics') {
     loadBench();
+    loadAuditFindings();
   }
 });
 

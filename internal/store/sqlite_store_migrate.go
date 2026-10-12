@@ -361,6 +361,22 @@ func (s *SQLiteStore) migrate() error {
 		value TEXT NOT NULL DEFAULT '',
 		updated_at TEXT NOT NULL
 	);
+
+	CREATE TABLE IF NOT EXISTS structure_findings (
+		id TEXT PRIMARY KEY,
+		project_id TEXT NOT NULL,
+		type TEXT NOT NULL,
+		severity TEXT NOT NULL,
+		chapter_start INTEGER NOT NULL,
+		chapter_end INTEGER NOT NULL,
+		summary TEXT NOT NULL,
+		evidence TEXT NOT NULL,
+		suggestion TEXT NOT NULL,
+		status TEXT NOT NULL,
+		created_at DATETIME NOT NULL,
+		FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS idx_structure_findings_proj ON structure_findings(project_id, chapter_start);
 	`
 	if _, err := s.db.Exec(schema); err != nil {
 		return err

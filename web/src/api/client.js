@@ -204,6 +204,9 @@ export const api = {
   getAnalyticsTension: (projectId) => apiFetch(`/api/projects/${projectId}/analytics/tension`),
   getBenchReport: (projectId) => apiFetch(`/api/projects/${projectId}/bench`),
   getProjectMetrics: (projectId) => apiFetch(`/api/projects/${projectId}/metrics`),
+  runStructureAudit: (projectId, data = {}) => apiFetch(`/api/projects/${projectId}/structure-audit`, { method: 'POST', body: JSON.stringify(data) }),
+  getStructureFindings: (projectId) => apiFetch(`/api/projects/${projectId}/structure-audit`),
+  updateStructureFindingStatus: (projectId, data) => apiFetch(`/api/projects/${projectId}/structure-audit/status`, { method: 'POST', body: JSON.stringify(data) }),
 
   // Activity Ledger (内容生产与变更时间线)
   listActivity: (projectId, params = {}) => {
