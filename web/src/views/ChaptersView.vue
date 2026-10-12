@@ -215,6 +215,15 @@
               <span>载入修改</span>
             </button>
 
+            <!-- 版本记录 -->
+            <button 
+              @click="showVersionsModal = true"
+              class="px-2.5 py-1 text-xs bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-750 rounded-md transition flex items-center gap-1 cursor-pointer"
+              title="查看本章历史版本并对比">
+              <History class="w-3.5 h-3.5 text-ink-400" />
+              <span>版本记录</span>
+            </button>
+
             <!-- 撤回归档为草稿 -->
             <button 
               @click="handleRevertToDraft(currentSelectedChapter.chapter_index)"
@@ -461,12 +470,20 @@
         </div>
       </div>
     </div>
+
+    <ChapterVersionsModal
+      v-if="showVersionsModal && currentSelectedChapter"
+      :project-id="state.currentProject.id"
+      :chapter="currentSelectedChapter"
+      @close="showVersionsModal = false"
+      @load="handleLoadVersion" />
   </div>
 </template>
 
 <script setup>
 import { reactive, computed, ref, watch } from 'vue';
 import { state, actions } from '../stores/appState';
+import ChapterVersionsModal from '../components/modals/ChapterVersionsModal.vue';
 import { 
   Archive, 
   ChevronDown, 
@@ -486,7 +503,8 @@ import {
   Search, 
   PenTool,
   RotateCcw,
-  FileEdit
+  FileEdit,
+  History
 } from 'lucide-vue-next';
 
 // 视图模式: 'tree' (树形目录) 或 'cards' (瀑布卡片)
@@ -496,6 +514,7 @@ const selectedChapterId = ref('');
 const activeReaderTab = ref('content'); // 'content', 'beats', 'review'
 const readerFontSize = ref('base'); // 'sm', 'base', 'lg'
 const copied = ref(false);
+const showVersionsModal = ref(false);
 
 const expandedMap = reactive({});
 const isAllExpanded = ref(false);
@@ -663,6 +682,12 @@ function formatDate(isoStr) {
 function handleLoadToWorkbench(chapter) {
   if (!chapter) return;
   actions.loadChapterToWorkbench(chapter);
+}
+
+function handleLoadVersion(version) {
+  if (!version) return;
+  actions.loadVersionToWorkbench(currentSelectedChapter.value, version);
+  showVersionsModal = false;
 }
 
 async function handleRevertToDraft(chapterIndex) {

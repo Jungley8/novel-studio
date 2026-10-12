@@ -152,14 +152,15 @@ func (s *SQLiteStore) ListChapterVersions(ctx context.Context, projectID string,
 	return list, nil
 }
 
-// GetChapterVersion returns a single chapter version including full prose content. Returns (nil, nil) if not found.
-func (s *SQLiteStore) GetChapterVersion(ctx context.Context, id string) (*domain.ChapterVersion, error) {
+// GetChapterVersion returns a single chapter version including full prose content.
+// Returns (nil, nil) if not found（含跨作品 ID → 视为不存在，租户安全）。
+func (s *SQLiteStore) GetChapterVersion(ctx context.Context, projectID, versionID string) (*domain.ChapterVersion, error) {
 	query := `
 	SELECT id, project_id, chapter_index, source, word_count, content_hash, content, created_at
 	FROM chapter_versions
-	WHERE id = ?;
+	WHERE id = ? AND project_id = ?;
 	`
-	row := s.db.QueryRowContext(ctx, query, id)
+	row := s.db.QueryRowContext(ctx, query, versionID, projectID)
 
 	var v domain.ChapterVersion
 	if err := row.Scan(

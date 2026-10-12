@@ -326,5 +326,18 @@ export function createProjectActions(state, notify, helpers, dialogs) {
       state.activeStep = 3; // 定位至手稿编辑画布
       notify('已载入工作台', `第 ${chapter.chapter_index} 章已载入，可直接修改润色`, 'success');
     },
+
+    loadVersionToWorkbench(chapter, version) {
+      if (!chapter || !version) return;
+      state.workbench.content = version.content || '';
+      state.workbench.beats = chapter.beats || [];
+      state.workbench.coreConflict = chapter.core_conflict || '';
+      state.workbench.stateMutation = chapter.state_mutation || { inventory_delta: '', power_delta: '' };
+      state.reviewResult = null; // 载入历史版本即视为重修，旧终审作废
+      state.editingChapterIndex = chapter.chapter_index;
+      state.activeTab = 'workbench';
+      state.activeStep = 3;
+      notify('已载入历史版本', `第 ${chapter.chapter_index} 章的「${version.source === 'edit' ? '编辑保存' : '定稿'}」版本已载入，可直接对比修改`, 'success');
+    },
   };
 }

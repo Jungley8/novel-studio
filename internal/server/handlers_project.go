@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -315,6 +316,12 @@ func (s *Server) handleProjectChapters(w http.ResponseWriter, r *http.Request, p
 	}
 }
 
+// chapterVersionSource 章节版本读取能力（只读；经类型断言获取，避免扩张 store.Store 大接口）。
+type chapterVersionSource interface {
+	ListChapterVersions(ctx context.Context, projectID string, chapterIndex int) ([]*domain.ChapterVersionMeta, error)
+	GetChapterVersion(ctx context.Context, projectID, versionID string) (*domain.ChapterVersion, error)
+}
+
 func (s *Server) handleProjectChapterSub(w http.ResponseWriter, r *http.Request, projectID string, subParts []string) {
 	chapterIndex, err := strconv.Atoi(subParts[0])
 	if err != nil || chapterIndex <= 0 {
@@ -351,6 +358,39 @@ func (s *Server) handleProjectChapterSub(w http.ResponseWriter, r *http.Request,
 			"project":     updatedProj,
 			"protagonist": protEntry,
 		})
+		return
+	}
+
+	// versions: /api/projects/:id/chapters/:chapterIndex/versions[/:versionId] (GET)
+	if len(subParts) >= 2 && subParts[1] == "versions" {
+		if r.Method != http.MethodGet {
+			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		vs, ok := s.store.(chapterVersionSource)
+		if !ok {
+			errorResponse(w, http.StatusInternalServerError, "store does not support chapter versions")
+			return
+		}
+		if len(subParts) >= 3 && strings.TrimSpace(subParts[2]) != "" {
+			version, verr := vs.GetChapterVersion(ctx, projectID, subParts[2])
+			if verr != nil {
+				errorResponse(w, http.StatusInternalServerError, "get chapter version failed: "+verr.Error())
+				return
+			}
+			if version == nil {
+				errorResponse(w, http.StatusNotFound, "chapter version not found")
+				return
+			}
+			jsonResponse(w, http.StatusOK, version)
+			return
+		}
+		list, lerr := vs.ListChapterVersions(ctx, projectID, chapterIndex)
+		if lerr != nil {
+			errorResponse(w, http.StatusInternalServerError, "list chapter versions failed: "+lerr.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, list)
 		return
 	}
 

@@ -402,7 +402,7 @@ func TestChapterHistory_Case4_ReadAPIsSortingAndFields(t *testing.T) {
 	}
 
 	// GetChapterVersion with content
-	vLatest, err := s.GetChapterVersion(ctx, vers[0].ID)
+	vLatest, err := s.GetChapterVersion(ctx, proj.ID, vers[0].ID)
 	if err != nil || vLatest == nil {
 		t.Fatalf("GetChapterVersion(%s) failed: v=%v, err=%v", vers[0].ID, vLatest, err)
 	}
@@ -414,7 +414,7 @@ func TestChapterHistory_Case4_ReadAPIsSortingAndFields(t *testing.T) {
 	}
 
 	// Non-existent ID returns nil, nil
-	vMissing, err := s.GetChapterVersion(ctx, "non_existent_id_xyz")
+	vMissing, err := s.GetChapterVersion(ctx, proj.ID, "non_existent_id_xyz")
 	if err != nil {
 		t.Fatalf("expected nil error for missing version, got: %v", err)
 	}
