@@ -445,7 +445,8 @@ func TestOrchestrator_GenerateMatrixScenes(t *testing.T) {
 			"dramatic_goal": "拍下残骨铁印",
 			"conflict_barrier": "黑煞门横插一脚抬价",
 			"tension_level": 7,
-			"prose_content": "拍卖会暗流涌动，主角沉着以幻影符脱身。"
+			"prose_content": "拍卖会暗流涌动，主角沉着以幻影符脱身。",
+			"dramatic_outcome": "残印到手却暴露行踪，引出杀局"
 		},
 		{
 			"scene_index": 2,
@@ -453,7 +454,8 @@ func TestOrchestrator_GenerateMatrixScenes(t *testing.T) {
 			"dramatic_goal": "突出重围，反杀追兵",
 			"conflict_barrier": "黑煞门三名筑基长老伏击",
 			"tension_level": 9,
-			"prose_content": "雨夜惊雷，主角初现剑意一剑荡平。"
+			"prose_content": "雨夜惊雷，主角初现剑意一剑荡平。",
+			"dramatic_outcome": "反杀成功但剑意透支，暗处还有更高手窥伺"
 		}
 	]`
 
@@ -478,6 +480,12 @@ func TestOrchestrator_GenerateMatrixScenes(t *testing.T) {
 	}
 	if scenes[1].Title != "雨夜袭杀" {
 		t.Errorf("expected scene title 雨夜袭杀, got %s", scenes[1].Title)
+	}
+	if scenes[0].DramaticOutcome != "残印到手却暴露行踪，引出杀局" {
+		t.Errorf("expected dramatic outcome 残印到手却暴露行踪，引出杀局, got %s", scenes[0].DramaticOutcome)
+	}
+	if scenes[1].DramaticOutcome != "反杀成功但剑意透支，暗处还有更高手窥伺" {
+		t.Errorf("expected dramatic outcome 反杀成功但剑意透支，暗处还有更高手窥伺, got %s", scenes[1].DramaticOutcome)
 	}
 }
 

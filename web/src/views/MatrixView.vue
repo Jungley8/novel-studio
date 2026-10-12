@@ -134,6 +134,9 @@
                   <div v-if="sc.conflict_barrier" class="line-clamp-1">
                     <span class="text-ink-400 font-medium">冲突:</span> {{ sc.conflict_barrier }}
                   </div>
+                  <div v-if="sc.dramatic_outcome" class="line-clamp-1">
+                    <span class="text-ink-400 font-medium">结果:</span> {{ sc.dramatic_outcome }}
+                  </div>
                 </div>
 
                 <div class="flex items-center justify-between text-[11px] text-ink-400 pt-2 border-t border-atelier-800">

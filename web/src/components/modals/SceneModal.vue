@@ -49,6 +49,15 @@
         </div>
 
         <div>
+          <label class="text-ink-300 font-medium">本场结果/代价 (Dramatic Outcome)：</label>
+          <textarea
+            v-model="form.dramatic_outcome"
+            rows="2"
+            class="w-full mt-1 bg-atelier-950 border border-atelier-750 rounded-lg p-2.5 text-xs text-ink-100 focus:outline-none focus:border-brand-amber/60 resize-none"
+            placeholder="结果往往是挫折，或引出下一场的新威胁"></textarea>
+        </div>
+
+        <div>
           <div class="flex justify-between items-center text-ink-300 mb-1">
             <span>戏剧张力 (1-10)：</span>
             <span class="font-bold font-mono text-brand-amber text-sm">{{ form.tension_level }} / 10</span>
@@ -89,6 +98,7 @@ const form = reactive({
   scene_index: 1,
   dramatic_goal: '',
   conflict_barrier: '',
+  dramatic_outcome: '',
   tension_level: 6,
 });
 
@@ -100,6 +110,7 @@ watch(() => state.showSceneModal, (open) => {
         scene_index: state.editingScene.scene_index || 1,
         dramatic_goal: state.editingScene.dramatic_goal || '',
         conflict_barrier: state.editingScene.conflict_barrier || '',
+        dramatic_outcome: state.editingScene.dramatic_outcome || '',
         tension_level: state.editingScene.tension_level || 6,
       });
     } else {
@@ -108,6 +119,7 @@ watch(() => state.showSceneModal, (open) => {
         scene_index: 1,
         dramatic_goal: '',
         conflict_barrier: '',
+        dramatic_outcome: '',
         tension_level: 6,
       });
     }

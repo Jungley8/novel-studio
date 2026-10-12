@@ -184,6 +184,14 @@
                 v-model="b.expectation_broken" 
                 class="w-full bg-atelier-850 border border-atelier-700 rounded px-2 py-1 text-[11px] text-ink-300 focus-ring" 
                 placeholder="读者的心理预期与反转...">
+              <input 
+                v-model="b.reader_emotion" 
+                class="w-full bg-atelier-850 border border-atelier-700 rounded px-2 py-1 text-[11px] text-ink-300 focus-ring" 
+                placeholder="期望读者情绪（紧张/解气/心疼…）">
+              <input 
+                v-model="b.info_gap" 
+                class="w-full bg-atelier-850 border border-atelier-700 rounded px-2 py-1 text-[11px] text-ink-300 focus-ring" 
+                placeholder="信息差（读者知角色不知 / 反之）">
             </div>
           </div>
 

@@ -41,7 +41,8 @@ type Scene struct {
 	LocationEntryID string        `json:"location_entry_id,omitempty"`
 	DramaticGoal    string        `json:"dramatic_goal"`
 	ConflictBarrier string        `json:"conflict_barrier"`
-	TensionLevel    int           `json:"tension_level"` // 1-10
+	DramaticOutcome string        `json:"dramatic_outcome,omitempty"` // 本场结果/代价：往往是一次挫折，或引出下一场行动的新目标/新威胁
+	TensionLevel    int           `json:"tension_level"`              // 1-10
 	Beats           []SceneBeat   `json:"beats,omitempty"`
 	StateMutation   StateMutation `json:"state_mutation,omitempty"`
 	ProseContent    string        `json:"prose_content"`

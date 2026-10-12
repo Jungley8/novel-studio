@@ -30,6 +30,7 @@ func (o *Orchestrator) GenerateMatrixScenes(
 	systemPrompt := `你是一名网络小说分镜头编剧大师。
 你的任务是将单章核心冲突拆解为 2 到 4 个紧凑的连续戏剧场次 (Scenes)。
 每个场次必须具备清晰的戏剧目标、冲突阻碍与张力曲线。
+「目标→阻碍→结果」必须形成因果链：每场的结果要能自然引出下一场的行动，最后一场的结局要为章末钩子服务。
 
 必须且仅输出 JSON 数组，格式如下：
 [
@@ -39,7 +40,8 @@ func (o *Orchestrator) GenerateMatrixScenes(
     "dramatic_goal": "本场核心角色想要达成的目标",
     "conflict_barrier": "阻碍该目标的现实或对手阻力",
     "tension_level": 1到10的整数张力评分,
-    "prose_content": "本场次的粗纲与看点扼要（50-100字）"
+    "prose_content": "本场次的粗纲与看点扼要（50-100字）",
+    "dramatic_outcome": "本场结果与代价（往往是一次挫折，或引出下一场行动的新威胁/新目标）"
   }
 ]`
 
