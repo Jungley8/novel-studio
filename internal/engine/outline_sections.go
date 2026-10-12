@@ -12,6 +12,12 @@ import (
 // VolumeSectionsMax defines the maximum allowed number of sections in a volume.
 const VolumeSectionsMax = 6
 
+// volumeSectionsGenerationAttempts bounds content-level regeneration for
+// volume section outlines: a single bad sample (unrepairable JSON, coverage
+// violation) is re-asked instead of halting the whole book, while persistent
+// failure still fails closed.
+const volumeSectionsGenerationAttempts = 3
+
 // validateVolumeSections validates that sections strictly and continuously cover the volume's chapter range.
 // Rules:
 // 1. Section count must be between 1 and VolumeSectionsMax (6).
@@ -150,26 +156,39 @@ func GenerateVolumeSections(
 	)
 
 	ctxRole := ContextWithRole(ctx, RoleReasoner)
-	resp, usage, err := SafeChatCompletionWithStreamFallback(ctxRole, client, model, systemPrompt, userPrompt, 0.4, nil)
-	if err != nil {
-		return nil, usage, fmt.Errorf("generate volume sections llm call failed: %w", err)
+
+	var (
+		totalUsage TokenUsage
+		lastErr    error
+	)
+	for attempt := 1; attempt <= volumeSectionsGenerationAttempts; attempt++ {
+		resp, usage, err := SafeChatCompletionWithStreamFallback(ctxRole, client, model, systemPrompt, userPrompt, 0.4, nil)
+		addTokenUsage(&totalUsage, usage)
+		if err != nil {
+			lastErr = fmt.Errorf("generate volume sections llm call failed: %w", err)
+			if !isRetryableLLMError(err) {
+				return nil, totalUsage, lastErr
+			}
+		} else {
+			cleanJSON, err := ExtractAndCleanJSON(resp)
+			if err != nil {
+				cleanJSON = extractJSON(resp)
+			}
+			sections, err := UnmarshalJSONArray[domain.VolumeSection](cleanJSON)
+			if err != nil {
+				lastErr = fmt.Errorf("unmarshal volume sections json failed: %w", err)
+			} else if err := validateVolumeSections(arc, sections); err != nil {
+				lastErr = fmt.Errorf("validate volume sections failed: %w", err)
+			} else {
+				return sections, totalUsage, nil
+			}
+		}
+		if attempt < volumeSectionsGenerationAttempts && !sleepRetryBackoff(ctx, attempt) {
+			break
+		}
 	}
 
-	cleanJSON, err := ExtractAndCleanJSON(resp)
-	if err != nil {
-		return nil, usage, fmt.Errorf("clean volume sections json failed: %w", err)
-	}
-
-	sections, err := UnmarshalJSONArray[domain.VolumeSection](cleanJSON)
-	if err != nil {
-		return nil, usage, fmt.Errorf("unmarshal volume sections json failed: %w", err)
-	}
-
-	if err := validateVolumeSections(arc, sections); err != nil {
-		return nil, usage, fmt.Errorf("validate volume sections failed: %w", err)
-	}
-
-	return sections, usage, nil
+	return nil, totalUsage, lastErr
 }
 
 // EnsureVolumeSections 确保指定分卷具备分节大纲，并返回生效的分节。

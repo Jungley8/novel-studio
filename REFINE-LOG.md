@@ -631,6 +631,21 @@ beats 等最大 JSON 载荷并留余量）；chat 协议行为不变。
 验证：新增 `TestResponsesRequestIncludesMaxOutputTokens`（断言请求体携带配额）；
 全量 `go test ./... -race` 全绿。
 
+
+### 第十四轮：分节生成有界重采样（2026-10-13 凌晨 · 全自动成书实战第八障碍）
+
+实战：第七轮主角归位成功（程穗 ✓）、14 张意图卡就绪，但章节前置校验「分卷分节生成」
+因一次坏样本提取失败而停线（`clean volume sections json failed`）；复现显示同一提示词
+再次调用即返回完整合法 JSON —— 属单次采样质量问题，而非系统缺陷。
+
+修复：`GenerateVolumeSections` 增加有界重采样（最多 3 次尝试）：
+- 内容级失败（不可修复 JSON / 覆盖校验不过）→ 2s/4s 退避后重新生成；
+- 传输级失败沿用客户端内建重试，仅可重试错误进入外层循环；
+- 持久失败仍 Fail-Closed 停线；清理路径补 `extractJSON` 兜底。
+
+验证：新增 `TestGenerateVolumeSections_RetriesBadSamples`（坏样本恢复 / 覆盖违规恢复 /
+耗尽预算 Fail-Closed）全绿；全量 `go test ./... -race` 全绿。
+
 ### 后续待办
 
 - （无）——已知互斥缺口全部闭环。
