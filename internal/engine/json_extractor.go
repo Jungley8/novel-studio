@@ -146,8 +146,17 @@ func attemptValidateAndSanitize(candidate string) string {
 		return candidate
 	}
 
+	// 0. Repair half-width quotes that ended up inside string literals without
+	// escaping (the common LLM failure mode when it quotes prose, e.g.
+	// "老冯口中的两处（"您猜怎么着——"）"). Every pass below tracks string
+	// state, which under-escaped input breaks, so repair quotes first.
+	quoted := repairUnescapedQuotes(candidate)
+	if json.Valid([]byte(quoted)) {
+		return quoted
+	}
+
 	// 1. Remove trailing commas before } or ] strictly outside string literals
-	sanitized := removeTrailingCommasAware(candidate)
+	sanitized := removeTrailingCommasAware(quoted)
 	if json.Valid([]byte(sanitized)) {
 		return sanitized
 	}
@@ -166,6 +175,63 @@ func attemptValidateAndSanitize(candidate string) string {
 	}
 
 	return ""
+}
+
+// repairUnescapedQuotes escapes half-width double quotes that appear inside a
+// JSON string literal without a backslash. A quote is treated as closing the
+// string only when the next non-whitespace byte is ',', '}', ']', ':' or
+// end-of-input; anything else (typically CJK text or punctuation following a
+// quoted phrase) means the quote was literal content and gets escaped. For
+// structurally valid JSON the function returns the input unchanged.
+func repairUnescapedQuotes(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s) + 16)
+	inString := false
+	escaped := false
+	n := len(s)
+
+	for i := 0; i < n; i++ {
+		c := s[i]
+		if !inString {
+			if c == '"' {
+				inString = true
+			}
+			sb.WriteByte(c)
+			continue
+		}
+
+		if escaped {
+			escaped = false
+			sb.WriteByte(c)
+			continue
+		}
+
+		switch c {
+		case '\\':
+			escaped = true
+			sb.WriteByte(c)
+		case '"':
+			j := i + 1
+			for j < n {
+				b := s[j]
+				if b == ' ' || b == '\t' || b == '\r' || b == '\n' {
+					j++
+					continue
+				}
+				break
+			}
+			if j >= n || s[j] == ',' || s[j] == '}' || s[j] == ']' || s[j] == ':' {
+				inString = false
+				sb.WriteByte(c)
+			} else {
+				sb.WriteString(`\"`)
+			}
+		default:
+			sb.WriteByte(c)
+		}
+	}
+
+	return sb.String()
 }
 
 // removeTrailingCommasAware removes trailing commas directly preceding '}' or ']'
