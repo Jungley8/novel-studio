@@ -63,7 +63,7 @@ func main() {
 	portFlag := flag.Int("port", 0, "HTTP 服务端口号 (生产默认 28980，开发模式默认 28981)")
 	devFlag := flag.Bool("dev", defaultIsDevBuild, "以开发模式运行 (服务端口默认 28981，避免与正式常驻服务 28980 冲突)")
 	dataDirFlag := flag.String("data-dir", defaultDataDir, "数据与状态机持久化目录")
-	noBrowserFlag := flag.Bool("no-browser", false, "启动后不自动唤起桌面浏览器 (适合服务器或无头模式)")
+	noBrowserFlag := flag.Bool("no-browser", false, "无头模式运行 (不启动原生桌面窗口，仅监听本地 HTTP 服务)")
 	serverFlag := flag.Bool("server", false, "以纯服务器模式运行 (不启动原生桌面窗口)")
 	versionFlag := flag.Bool("version", false, "显示版本号")
 	flag.Parse()
@@ -136,7 +136,7 @@ func main() {
 	fmt.Printf("  ● 配置文件:           %s\n", configPath)
 	fmt.Printf("  ● 本地接口与网络地址: %s\n", appURL)
 	if isDev {
-		fmt.Println("  ● 开发前端 Web 端口:  5173 (http://localhost:5173)")
+		fmt.Println("  ● 开发前端 Web 端口:  5183 (http://localhost:5183)")
 	}
 	if *serverFlag || *noBrowserFlag {
 		fmt.Println("  ● 运行模式:           服务器/无头守护模式")

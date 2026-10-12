@@ -27,7 +27,6 @@ type Config struct {
 	ReviewerProvider       *ProviderConfig `json:"reviewer_provider,omitempty"`
 	ReasonerProvider       *ProviderConfig `json:"reasoner_provider,omitempty"`
 	WriterProvider         *ProviderConfig `json:"writer_provider,omitempty"`
-	AutoOpenBrowser        bool            `json:"auto_open_browser"`
 	ContextBudgetTokens    int             `json:"context_budget_tokens"`
 	DefaultWordsTarget     int             `json:"default_words_target"`
 	DefaultNarrativeStyle  string          `json:"default_narrative_style"`
@@ -49,7 +48,6 @@ func DefaultConfig() *Config {
 		ReasoningModel:         "deepseek-reasoner",
 		WriterModel:            "deepseek-chat",
 		ReviewerModel:          "deepseek-reasoner",
-		AutoOpenBrowser:        false,
 		ContextBudgetTokens:    12000,
 		DefaultWordsTarget:     2000,
 		DefaultNarrativeStyle:  "",

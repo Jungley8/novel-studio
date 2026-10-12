@@ -58,7 +58,7 @@ dev_mode:
     - cmd: wails3 task common:dev:frontend
       type: background
       readiness:
-        http: "http://localhost:5173/"
+        http: "http://localhost:5183/"
         timeout: "60s"
         interval: "200ms"
     - cmd: wails3 task run
