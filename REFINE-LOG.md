@@ -375,8 +375,40 @@
    - `restoreCheckpoint` 拆分为 `applyCheckpoint` + 按章恢复；新增 `restoreLatestCheckpoint`，切换作品时恢复“最近推进的一章”（覆盖已归档章节重修稿场景）；
    - 回归测试新增第 4 例：latest 断点恢复断言。
 
+### 第三轮加固：前台编辑 ↔ 后台生产并发互斥（2026-10-12 续）
+
+背景：单二进制内，无人值守调度器与桌面 UI 共享进程。用户正在精修章节
+时，调度器可能对同一作品启动自动续产，二者对同章断点/正史并发写入为
+last-writer-wins，且 `CommitChapter` 的 `StateMutation` 结算非幂等。
+
+**方案（进程内协调器 + Fail-Closed 写入门禁）**：
+
+1. 新增 `internal/coord`：作品级「编辑租约（TTL/心跳续期）」+「生产锁（单生产者、代际隔离释放）」。
+   - `BeginProduction`：编辑租约未过期或已有生产任务 → `coord.ErrBusy`；
+   - `AcquireEdit`：生产期间仍可获取（仅表达“人工在场”，冲突在写入口裁决）。
+2. 调度器（`scheduler.RunOnce`）：`RunContinuation` 返回 `ErrBusy` 时跳过该作品，
+   **不记录 last_run**（双方收工后下一趟 tick 自动衔接重试），不告警、不暂停。
+3. 生产登记（`schedulerRuntime.RunContinuation`）：开工前持锁，逐章
+   `SetProductionChapter`（整卷模式从 VolumeEvent 跟随章节号）。
+4. 正史写入门禁（`handlers_*`）：生产锁生效期间，`定稿 / 撤回归档 / 删除章节 /
+   一键成章` 一律 409 并回传生产任务标签与章节号；断点自动保存保持放行
+   （正文不丢失，冲突在定稿处裁决）。
+5. 前端：`POST/DELETE /api/projects/:id/edit-lease` 心跳（TTL 120s / 40s 续期，
+   仅页面可见且在途稿存在时持有；切走/完工自动释放，关闭页面由 TTL 兜底）；
+   「一键成章」视为人工接管，先释放自身租约再登记生产锁。
+6. 复核结论：`CommitChapter` 覆盖式重定稿的“再次结算 StateMutation + 刷新快照”
+   语义经 `TestChapterHistory_Case2_DeduplicationAndOverwrite` 确认为**有意设计**
+   （每次定稿都是一次状态贡献，纠错走撤回归档），本轮**不改动**其语义，
+   并发正确性由上述互斥层保证。
+
+验证：`internal/coord` 单测 5 例；调度器忙跳过用例；白盒接线测试
+（4 个写入口 409 + 租约端点 + 生产结束后 201 恢复）；全量 `go test ./... -race` 全绿。
+
 ### 后续待办（已识别，未在本轮处理）
 
-- 排程器后台生产与前端编辑并发时的服务端互斥（应用内单机场景暂以编辑器侧门禁兜底；`CommitChapter` 为 upsert 语义，并发双写为 last-writer-wins）。
+- 跨进程场景（CLI `produce` 与守护服务同时运行）的互斥需要文件锁/DB 锁，
+  进程内协调器不覆盖；建议后续以 SQLite 锁表实现。
+- 排程器 `RunBook`（开书）在项目创建前无 ID，未登记生产锁；开书中的
+  新项目理论窗口极窄，后续可在 pipeline 事件携带 ProjectID 后补齐。
 
 

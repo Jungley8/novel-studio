@@ -69,6 +69,8 @@
 | 10 | **回归测试**（Node 原生测试 + resolve loader：切换重置/落盘/Fail-Closed 门禁/断点目标）| `web/test/project-switch.test.mjs`（`pnpm test`）| P0 | 🟢 已完成 |
 | 11 | **租户归属校验全量补齐**（伏笔/词条演进/关系/场次的跨作品 ID 借道写入一律拒绝；场次挂载章节校验归属）| `handlers_project.go` + `handlers_matrix.go` + `store`（`handlers_tenancy_scope_test.go`）| P1 | 🟢 已完成 |
 | 12 | **切换恢复“最近推进的一章”**（`checkpoint?latest=true`：兼顾下一章草稿与已归档章节重修稿，不再只看下一章）| `store` + `handlers_project.go` + `api/client.js` + `workbenchActions` | P1 | 🟢 已完成 |
+| 13 | **前台编辑 ↔ 后台生产并发互斥**（`internal/coord`：心跳编辑租约 + 生产锁；调度器遇忙跳过下趟重试；定稿/撤回/删除/一键成章均 409 Fail-Closed）| `internal/coord` + `scheduler` + `scheduler_runtime.go` + `handlers_*` + `appState` 心跳 | P0 | 🟢 已完成 |
+| 14 | **并发互斥回归测试**（coord 单测 5 例；调度器跳过且不记 last_run；白盒接线：4 个正史写入口 409 + 租约端点往返 + 生产结束后恢复写入）| `coord_test.go` + `scheduler_test.go` + `coord_wiring_test.go` | P0 | 🟢 已完成 |
 
 验证：`pnpm test`（3/3 通过）；`pnpm build` 通过；`go build ./... && go test ./... -race -count=1` 全绿（含新增 `TestCodexUpdate_RejectsForeignProjectEntry`）；`gofmt -w` 完成。
 
