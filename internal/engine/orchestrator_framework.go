@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Jungley8/novel-studio/internal/domain"
@@ -43,15 +44,23 @@ func (o *Orchestrator) BootstrapFramework(
 4. 关键人物谱系 (Key Characters)：设计 3-5 位与主角命运交织的关键角色（引路导师、宿敌死仇、亦正亦邪同盟、远古残魂），不含主角本人。
 5. 分卷宏观大纲 (Volume Arcs)：设计前 3-4 卷的大纲，每卷包含：卷序号(volume_index: 1..N)、卷名、卷主题、核心主线目标、终极大高潮情节、显式起止章(start_chapter, end_chapter)、状态(status: "DRAFT")、预估章数与核心回收伏笔。
 6. 开局种子伏笔 (Seed Hooks)：设计 3-5 个开局前 3 章埋下的长线伏笔（包含目标回收章节 10-60 章）。
+7. 一句话梗概 (Logline)：一句话概括：主角+核心冲突+致命危机（60字内）。
+8. 氛围锚点 (Atmosphere Anchor)：全书恒定的视觉/感官基调（如「高反差冷色调赛博空间」或「阴冷民俗废土」，30字内）。
+9. 全书计划总章数 (Total Planned Chapters)：正整数，参考分卷预估之和。
+10. 全书节拍里程碑 (Story Milestones)：3-7 条，key 用建议枚举（OPENING_HOOK/INCITING_INCIDENT/ACT1_TURN/MIDPOINT/DARK_NIGHT/CLIMAX/ENDING），target_chapter 落在总章数内且整体呈越过时间线递增，status 一律 "PENDING"，note 为该里程碑的事件要点。
 
 输出格式：必须且仅输出标准合法的纯 JSON 格式：
 {
   "theme_premise": "核心主旨一句话描述",
+  "logline": "一句话概括：主角+核心冲突+致命危机（60字内）",
+  "atmosphere_anchor": "全书恒定的视觉/感官基调（如「高反差冷色调赛博空间」或「阴冷民俗废土」，30字内）",
   "protagonist": {
     "name": "主角姓名（灵感已点名则必须沿用）",
     "identity": "职业/身份定位",
     "initial_realm": "初始境界或实力/职级阶段（题材自适应）",
-    "goal": "核心动机",
+    "want": "外在目标",
+    "need": "成长课题",
+    "ghost": "创伤执念",
     "voice_tone": "语言与行事风格",
     "inventory": ["初始随身物（题材自适应，可为空数组）"]
   },
@@ -78,7 +87,9 @@ func (o *Orchestrator) BootstrapFramework(
       "name": "姓名",
       "role": "领路人/宿敌/同盟",
       "realm": "初始境界",
-      "goal": "核心动机",
+      "want": "外在目标",
+      "need": "成长课题",
+      "ghost": "创伤执念",
       "fate_arc": "宿命悲剧或终局"
     }
   ],
@@ -94,6 +105,16 @@ func (o *Orchestrator) BootstrapFramework(
       "status": "DRAFT",
       "estimated_chapters": 40,
       "key_payoffs": ["本卷回收的伏笔1"]
+    }
+  ],
+  "total_planned_chapters": 120,
+  "story_milestones": [
+    {
+      "key": "MIDPOINT",
+      "name": "中点",
+      "target_chapter": 60,
+      "status": "PENDING",
+      "note": "主角首次遭遇全盘溃败并洞悉世界真相"
     }
   ],
   "seed_hooks": [
@@ -138,6 +159,7 @@ func (o *Orchestrator) BootstrapFramework(
 		}
 	}
 	fw.VolumeArcs = BackfillVolumeArcs(fw.VolumeArcs)
+	fw.StoryMilestones = BackfillStoryMilestones(fw.StoryMilestones)
 
 	return &fw, usage, nil
 }
@@ -178,4 +200,55 @@ func BackfillVolumeArcs(arcs []domain.VolumeArc) []domain.VolumeArc {
 		}
 	}
 	return res
+}
+
+// BackfillStoryMilestones 创世 LLM 输出的宽容归一化（纯函数）：
+// 丢弃 target<=0；按 target 升序排序；key 重复保留排序后首个；
+// Name 为空时用 MilestoneKeyNames 补中文名（未知 key 保留 key 原文）；Status 空补 PENDING（非法值归一为 PENDING）。
+func BackfillStoryMilestones(ms []domain.StoryMilestone) []domain.StoryMilestone {
+	if len(ms) == 0 {
+		return ms
+	}
+	var valid []domain.StoryMilestone
+	for _, m := range ms {
+		if m.TargetChapter > 0 {
+			valid = append(valid, m)
+		}
+	}
+	if len(valid) == 0 {
+		return valid
+	}
+
+	sort.SliceStable(valid, func(i, j int) bool {
+		return valid[i].TargetChapter < valid[j].TargetChapter
+	})
+
+	seenKeys := make(map[string]bool)
+	var deduped []domain.StoryMilestone
+	for _, m := range valid {
+		k := strings.TrimSpace(m.Key)
+		if seenKeys[k] {
+			continue
+		}
+		seenKeys[k] = true
+		deduped = append(deduped, m)
+	}
+
+	for i := range deduped {
+		m := &deduped[i]
+		m.Key = strings.TrimSpace(m.Key)
+		if strings.TrimSpace(m.Name) == "" {
+			if cnName, ok := domain.MilestoneKeyNames[m.Key]; ok {
+				m.Name = cnName
+			} else {
+				m.Name = m.Key
+			}
+		}
+		switch m.Status {
+		case domain.MilestoneStatusPending, domain.MilestoneStatusDone:
+		default:
+			m.Status = domain.MilestoneStatusPending
+		}
+	}
+	return deduped
 }

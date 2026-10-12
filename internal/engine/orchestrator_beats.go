@@ -214,10 +214,19 @@ func (o *Orchestrator) DeriveBeatsForChapterType(
 		}
 	}
 
+	var premiseBlock string
+	var milestoneBlock string
+	if horizon != nil && horizon.Project != nil {
+		premiseBlock = buildStoryPremiseBlock(horizon.Project)
+		milestoneBlock = buildMilestoneContextBlock(horizon.Project, targetChapter)
+	}
+
 	userPrompt := fmt.Sprintf(`【作品信息】
 书名：《%s》
 目标平台：%s
 当前章节序号：第 %d 章
+%s
+%s
 %s
 %s
 【世界公理与不可违背法则】
@@ -239,8 +248,10 @@ func (o *Orchestrator) DeriveBeatsForChapterType(
 
 请推演输出严格合法的 JSON。`,
 		projectTitle, targetPlatform, targetChapter,
+		premiseBlock,
 		typeGuidance,
 		rhythmForesight,
+		milestoneBlock,
 		worldRules, volumeContext, powerContext,
 		protNameLevel(protEntry), protInventory(protEntry), protGoal(protEntry), codexContext,
 		rollingCanon, callbacksText,
@@ -308,6 +319,108 @@ func buildVolumeContextBlock(arc *domain.VolumeArc, targetChapter int) string {
 	}
 	b.WriteString("本章必须严格服务于本卷主线因果推进与本节节目标。\n")
 	return b.String()
+}
+
+// buildStoryPremiseBlock 立意+梗概注入块。project/framework 为空或无内容 → ""。
+// 输出：【全书立意与梗概】\n立意：<theme_premise>\n梗概：<logline>（各自非空才输出该行）
+func buildStoryPremiseBlock(project *domain.Project) string {
+	if project == nil || project.Framework == nil {
+		return ""
+	}
+	premise := strings.TrimSpace(project.Framework.ThemePremise)
+	logline := strings.TrimSpace(project.Framework.Logline)
+	if premise == "" && logline == "" {
+		return ""
+	}
+
+	var lines []string
+	lines = append(lines, "【全书立意与梗概】")
+	if premise != "" {
+		lines = append(lines, "立意："+premise)
+	}
+	if logline != "" {
+		lines = append(lines, "梗概："+logline)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// buildMilestoneContextBlock 书级节拍定位块。无里程碑 → ""。
+// 输出（多行）：
+// 【全书宏观节拍定位】
+// - 全书计划：M 章（本章为第 N 章，约 P%）
+// - 本章里程碑：『名称』@第 N 章 —— 正文必须在本章兑现该里程碑事件与情绪高潮（仅 TargetChapter==N 时输出该行，否则输出：- 本章无里程碑锚点）
+// - 最近未兑现里程碑：『名称』@第 T 章（PENDING，已越过）（target<N 且 PENDING 的最大者）
+// - 下一里程碑：『名称』@第 T 章（间隔 K 章）（target>N 的最小者）
+func buildMilestoneContextBlock(project *domain.Project, chapterIndex int) string {
+	if project == nil || project.Framework == nil || len(project.Framework.StoryMilestones) == 0 {
+		return ""
+	}
+
+	var currMilestone *domain.StoryMilestone
+	var recentOverdue *domain.StoryMilestone
+	var nextMilestone *domain.StoryMilestone
+
+	for i := range project.Framework.StoryMilestones {
+		m := &project.Framework.StoryMilestones[i]
+		if m.TargetChapter == chapterIndex {
+			if currMilestone == nil {
+				currMilestone = m
+			}
+		}
+		if m.TargetChapter < chapterIndex {
+			isPending := (m.Status == domain.MilestoneStatusPending || m.Status == "")
+			if isPending {
+				if recentOverdue == nil || m.TargetChapter > recentOverdue.TargetChapter {
+					recentOverdue = m
+				}
+			}
+		}
+		if m.TargetChapter > chapterIndex {
+			if nextMilestone == nil || m.TargetChapter < nextMilestone.TargetChapter {
+				nextMilestone = m
+			}
+		}
+	}
+
+	var lines []string
+	lines = append(lines, "【全书宏观节拍定位】")
+
+	totalChapters := project.Framework.TotalPlannedChapters
+	if totalChapters > 0 {
+		pct := int(float64(chapterIndex) / float64(totalChapters) * 100)
+		lines = append(lines, fmt.Sprintf("- 全书计划：%d 章（本章为第 %d 章，约 %d%%）", totalChapters, chapterIndex, pct))
+	} else {
+		lines = append(lines, fmt.Sprintf("- 全书计划：未定（本章为第 %d 章）", chapterIndex))
+	}
+
+	if currMilestone != nil {
+		name := currMilestone.Name
+		if strings.TrimSpace(name) == "" {
+			name = currMilestone.Key
+		}
+		lines = append(lines, fmt.Sprintf("- 本章里程碑：『%s』@第 %d 章 —— 正文必须在本章兑现该里程碑事件与情绪高潮", name, chapterIndex))
+	} else {
+		lines = append(lines, "- 本章无里程碑锚点")
+	}
+
+	if recentOverdue != nil {
+		name := recentOverdue.Name
+		if strings.TrimSpace(name) == "" {
+			name = recentOverdue.Key
+		}
+		lines = append(lines, fmt.Sprintf("- 最近未兑现里程碑：『%s』@第 %d 章（PENDING，已越过）", name, recentOverdue.TargetChapter))
+	}
+
+	if nextMilestone != nil {
+		name := nextMilestone.Name
+		if strings.TrimSpace(name) == "" {
+			name = nextMilestone.Key
+		}
+		interval := nextMilestone.TargetChapter - chapterIndex
+		lines = append(lines, fmt.Sprintf("- 下一里程碑：『%s』@第 %d 章（间隔 %d 章）", name, nextMilestone.TargetChapter, interval))
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func buildPlanPromptBlock(planText string) string {

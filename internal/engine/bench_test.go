@@ -468,3 +468,64 @@ func TestRunBenchProbes_EchoProbes(t *testing.T) {
 		t.Errorf("expected clean ChaptersHit=0, got %d", cleanReport.Echo.ChaptersHit)
 	}
 }
+
+// ⑦ 书级里程碑达成度与逾期探针测试
+func TestRunBenchProbes_Milestones(t *testing.T) {
+	// Case 1: PENDING 且 target < maxChapter -> Overdue；DONE 不逾期
+	proj := &domain.Project{
+		ID:    "proj-milestones",
+		Title: "全书节拍体检测试",
+		Framework: &domain.ProjectFramework{
+			TotalPlannedChapters: 100,
+			StoryMilestones: []domain.StoryMilestone{
+				{Key: "OPENING_HOOK", Name: "开局钩子", TargetChapter: 5, Status: domain.MilestoneStatusDone},          // target < 30 但已 DONE，不逾期
+				{Key: "INCITING_INCIDENT", Name: "触发事件", TargetChapter: 15, Status: domain.MilestoneStatusPending}, // target < 30 且 PENDING，逾期！
+				{Key: "MIDPOINT", Name: "中点", TargetChapter: 30, Status: domain.MilestoneStatusPending},            // target == 30，未越过，不逾期
+				{Key: "CLIMAX", Name: "高潮", TargetChapter: 80, Status: domain.MilestoneStatusPending},              // target > 30，不逾期
+			},
+		},
+	}
+
+	chapters := []*domain.Chapter{
+		{ChapterIndex: 1, WordCount: 2000},
+		{ChapterIndex: 10, WordCount: 2000},
+		{ChapterIndex: 30, WordCount: 2000}, // maxChapterIndex = 30
+	}
+
+	report := RunBenchProbes(proj, chapters, nil, nil, false, nil)
+
+	if report.Milestones.Total != 4 {
+		t.Errorf("expected Total=4, got %d", report.Milestones.Total)
+	}
+	if report.Milestones.Done != 1 {
+		t.Errorf("expected Done=1, got %d", report.Milestones.Done)
+	}
+	if report.Milestones.Pending != 3 {
+		t.Errorf("expected Pending=3, got %d", report.Milestones.Pending)
+	}
+	if len(report.Milestones.Overdue) != 1 {
+		t.Fatalf("expected 1 overdue milestone, got %d", len(report.Milestones.Overdue))
+	}
+	if report.Milestones.Overdue[0].Key != "INCITING_INCIDENT" || report.Milestones.Overdue[0].TargetChapter != 15 {
+		t.Errorf("unexpected overdue milestone: %+v", report.Milestones.Overdue[0])
+	}
+
+	// Case 2: 无 framework -> 零值
+	projNoFw := &domain.Project{ID: "proj-no-fw", Title: "无框架工程"}
+	reportNoFw := RunBenchProbes(projNoFw, chapters, nil, nil, false, nil)
+	if reportNoFw.Milestones.Total != 0 || reportNoFw.Milestones.Pending != 0 || reportNoFw.Milestones.Done != 0 {
+		t.Errorf("expected zero values for no framework, got %+v", reportNoFw.Milestones)
+	}
+	if len(reportNoFw.Milestones.Overdue) != 0 {
+		t.Errorf("expected 0 overdue for no framework, got %d", len(reportNoFw.Milestones.Overdue))
+	}
+
+	// Case 3: Overdue 序列化非 nil（空数组序列化为 [] 而非 null）
+	data, err := json.Marshal(reportNoFw.Milestones)
+	if err != nil {
+		t.Fatalf("marshal reportNoFw.Milestones failed: %v", err)
+	}
+	if !strings.Contains(string(data), `"overdue":[]`) {
+		t.Errorf("expected JSON to contain '\"overdue\":[]', got %s", string(data))
+	}
+}

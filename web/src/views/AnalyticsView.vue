@@ -277,6 +277,73 @@
             </div>
           </div>
 
+          <!-- 卡片: 全书节拍 -->
+          <div class="bg-atelier-900 border border-atelier-750 rounded-xl p-5 shadow-atelier-md flex flex-col justify-between space-y-4 hover:border-brand-amber/30 transition">
+            <div>
+              <div class="flex items-center justify-between pb-3 border-b border-atelier-800">
+                <div class="flex items-center gap-2">
+                  <div class="w-7 h-7 rounded-lg bg-brand-amber/10 border border-brand-amber/25 flex items-center justify-center text-brand-amber">
+                    <Compass class="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <h4 class="text-xs font-serif font-bold text-ink-100">全书节拍</h4>
+                    <span class="text-[10px] text-ink-400">宏观里程碑达成度与逾期审计</span>
+                  </div>
+                </div>
+                <span 
+                  :class="benchReport.milestones && benchReport.milestones.overdue && benchReport.milestones.overdue.length > 0 ? 'bg-rose-500/15 text-rose-400 border-rose-500/30' : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'" 
+                  class="text-[10px] font-mono px-2 py-0.5 rounded border font-bold">
+                  逾期: {{ benchReport.milestones && benchReport.milestones.overdue ? benchReport.milestones.overdue.length : 0 }}
+                </span>
+              </div>
+
+              <!-- 空态 -->
+              <div v-if="!benchReport.milestones || benchReport.milestones.total === 0" class="pt-6 pb-4 text-center">
+                <span class="text-xs text-ink-500 font-serif">未规划书级里程碑</span>
+              </div>
+
+              <div v-else class="space-y-3 pt-3">
+                <!-- 计数 -->
+                <div class="grid grid-cols-3 gap-1.5 text-center">
+                  <div class="bg-atelier-950/60 p-2 rounded-lg border border-atelier-800/80">
+                    <span class="text-[10px] text-ink-400 block mb-0.5">总规划</span>
+                    <span class="text-xs font-mono font-bold text-ink-200">{{ benchReport.milestones.total }}</span>
+                  </div>
+                  <div class="bg-atelier-950/60 p-2 rounded-lg border border-atelier-800/80">
+                    <span class="text-[10px] text-ink-400 block mb-0.5">待兑现</span>
+                    <span class="text-xs font-mono font-bold text-brand-amber">{{ benchReport.milestones.pending }}</span>
+                  </div>
+                  <div class="bg-atelier-950/60 p-2 rounded-lg border border-atelier-800/80">
+                    <span class="text-[10px] text-ink-400 block mb-0.5">已兑现</span>
+                    <span class="text-xs font-mono font-bold text-emerald-400">{{ benchReport.milestones.done }}</span>
+                  </div>
+                </div>
+
+                <!-- 逾期列表 -->
+                <div class="mt-2.5">
+                  <span class="text-[10px] text-ink-400 block mb-1">逾期里程碑列表 (overdue):</span>
+                  <div v-if="benchReport.milestones.overdue && benchReport.milestones.overdue.length > 0" class="max-h-24 overflow-y-auto space-y-1">
+                    <div 
+                      v-for="m in benchReport.milestones.overdue" 
+                      :key="m.key"
+                      class="flex items-center justify-between text-[11px] p-1.5 rounded bg-rose-500/10 border border-rose-500/20 text-rose-300">
+                      <span class="truncate max-w-[140px] font-medium">{{ m.name || m.key }}</span>
+                      <span class="font-mono text-[10px] shrink-0 text-rose-400">@第{{ m.target_chapter }}章</span>
+                    </div>
+                  </div>
+                  <div v-else class="text-[11px] text-emerald-400/80 flex items-center gap-1.5 bg-emerald-500/10 p-1.5 rounded border border-emerald-500/20">
+                    <CheckCircle2 class="w-3 h-3 shrink-0" />
+                    <span>暂无逾期未兑现里程碑</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="pt-2 border-t border-atelier-800/60 text-[11px] text-ink-400 font-mono">
+              <span>达成率: {{ (benchReport.milestones && benchReport.milestones.total > 0) ? Math.round((benchReport.milestones.done / benchReport.milestones.total) * 100) : 0 }}%</span>
+            </div>
+          </div>
+
           <!-- 卡片 4: 账本重放 -->
           <div class="bg-atelier-900 border border-atelier-750 rounded-xl p-5 shadow-atelier-md flex flex-col justify-between space-y-4 hover:border-brand-amber/30 transition">
             <div>
@@ -561,7 +628,8 @@ import {
   ChevronDown, 
   ChevronUp, 
   CheckCircle2, 
-  AlertTriangle 
+  AlertTriangle,
+  Compass
 } from 'lucide-vue-next';
 
 const subTab = ref('bench');

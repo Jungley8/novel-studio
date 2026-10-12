@@ -253,6 +253,11 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 		}
 		fw.Motifs = sanitizedMotifs
 
+		if err := domain.ValidateStoryMilestones(fw.StoryMilestones, fw.TotalPlannedChapters); err != nil {
+			errorResponse(w, http.StatusBadRequest, "invalid story milestones: "+err.Error())
+			return
+		}
+
 		// 保存前快照旧卷定义与框架级前提
 		var (
 			oldArcs    []domain.VolumeArc

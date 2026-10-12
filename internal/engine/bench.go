@@ -53,6 +53,22 @@ type BenchHooks struct {
 	Overdue    []OverdueHook `json:"overdue"`
 }
 
+// OverdueMilestone 逾期未兑现的书级里程碑。
+type OverdueMilestone struct {
+	Key           string `json:"key"`
+	Name          string `json:"name"`
+	TargetChapter int    `json:"target_chapter"`
+	Status        string `json:"status"`
+}
+
+// BenchMilestones 书级里程碑达成度。
+type BenchMilestones struct {
+	Total   int                `json:"total"`
+	Pending int                `json:"pending"`
+	Done    int                `json:"done"`
+	Overdue []OverdueMilestone `json:"overdue"`
+}
+
 // BenchLedgerReplay holds state machine replay audit results and detected drifts.
 type BenchLedgerReplay struct {
 	Clean  bool     `json:"clean"`
@@ -85,6 +101,7 @@ type BenchReport struct {
 	WordCount        BenchWordCount    `json:"word_count"`
 	ChapterTypes     BenchChapterTypes `json:"chapter_types"`
 	Hooks            BenchHooks        `json:"hooks"`
+	Milestones       BenchMilestones   `json:"milestones"`
 	LedgerReplay     BenchLedgerReplay `json:"ledger_replay"`
 	Echo             BenchEcho         `json:"echo"`
 	Lint             BenchLint         `json:"lint"`
@@ -140,6 +157,9 @@ func RunBenchProbes(
 		},
 		Hooks: BenchHooks{
 			Overdue: make([]OverdueHook, 0),
+		},
+		Milestones: BenchMilestones{
+			Overdue: make([]OverdueMilestone, 0),
 		},
 		LedgerReplay: BenchLedgerReplay{
 			Clean:  true,
@@ -276,6 +296,37 @@ func RunBenchProbes(
 				TargetChapter: h.TargetChapter,
 				Status:        h.Status,
 			})
+		}
+	}
+
+	// 3.5. Milestones: 书级里程碑达成度与逾期审计 (TargetChapter < 最大已归档章号)
+	if project != nil && project.Framework != nil {
+		for _, m := range project.Framework.StoryMilestones {
+			report.Milestones.Total++
+			switch m.Status {
+			case domain.MilestoneStatusDone:
+				report.Milestones.Done++
+			default:
+				report.Milestones.Pending++
+			}
+
+			if (m.Status == domain.MilestoneStatusPending || m.Status == "") &&
+				m.TargetChapter < maxChapterIndex {
+				name := m.Name
+				if name == "" {
+					name = m.Key
+				}
+				status := m.Status
+				if status == "" {
+					status = domain.MilestoneStatusPending
+				}
+				report.Milestones.Overdue = append(report.Milestones.Overdue, OverdueMilestone{
+					Key:           m.Key,
+					Name:          name,
+					TargetChapter: m.TargetChapter,
+					Status:        status,
+				})
+			}
 		}
 	}
 

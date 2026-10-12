@@ -83,6 +83,7 @@ func (o *Orchestrator) RenderSceneStream(
 	chapterIndex := horizon.TargetChapter
 
 	toneDirective := buildNarrativeTonePrompt(horizon.NarrativeTone)
+	atmosphereDirective := buildAtmosphereAnchorPrompt(project)
 	tensionDirective := buildTensionCurvePrompt(beats)
 	if tensionDirective == "" {
 		tensionDirective = "- 节奏平稳，长短交替推进"
@@ -92,6 +93,8 @@ func (o *Orchestrator) RenderSceneStream(
 	wordBudgetDirective := buildBeatWordBudgetPrompt(beats, wordsTarget)
 
 	systemPrompt := fmt.Sprintf(`你是一名专业成熟、文笔深厚扎实的小说名家。
+
+%s
 
 %s
 
@@ -147,6 +150,7 @@ func (o *Orchestrator) RenderSceneStream(
 9. 严禁出现以下AI模式化废词：
    不由得、仿佛、宛若、嘴角勾起、眼神复杂、一时间、殊不知、与此同时、冷哼一声、倒吸一口凉气、暗自思忖、死寂一片、冷汗涔涔、说白了、说穿了。`,
 		toneDirective,
+		atmosphereDirective,
 		tensionDirective,
 		platformDirective,
 		dialogueRatioDirective,
@@ -233,6 +237,19 @@ func buildMotifConceptPrompt(project *domain.Project) string {
 	}
 	return "【有意母题与符号（RC 精修锚点）】\n" + strings.Join(lines, "\n") +
 		"\n规则：在恰当时机自然复现以上母题，强化主题回响；严禁机械复读、标签化重复，严禁为复现母题破坏场景因果。"
+}
+
+// buildAtmosphereAnchorPrompt 全书氛围锚点指令。project/framework/锚点为空 → ""。
+// 输出：【视觉与氛围锚点（全书恒定基调，严禁漂移）】\n<anchor>\n所有场景的环境、光影、色彩与声音渲染必须贴合此基调，严禁氛围漂移。
+func buildAtmosphereAnchorPrompt(project *domain.Project) string {
+	if project == nil || project.Framework == nil {
+		return ""
+	}
+	anchor := strings.TrimSpace(project.Framework.AtmosphereAnchor)
+	if anchor == "" {
+		return ""
+	}
+	return fmt.Sprintf("【视觉与氛围锚点（全书恒定基调，严禁漂移）】\n%s\n所有场景的环境、光影、色彩与声音渲染必须贴合此基调，严禁氛围漂移。", anchor)
 }
 
 // buildNarrativeTonePrompt returns tailored tone instructions for 5 common web novel narrative voices.

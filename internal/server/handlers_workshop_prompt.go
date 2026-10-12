@@ -64,8 +64,16 @@ func (s *Server) handlePromptPreview(w http.ResponseWriter, r *http.Request, pro
 	}
 
 	frameworkContent := fmt.Sprintf("【世界观与公理】\n%s\n\n【目标平台调性】\n%s", p.WorldRules, p.TargetPlatform)
-	if p.Framework != nil && p.Framework.ThemePremise != "" {
-		frameworkContent += fmt.Sprintf("\n\n【核心立意与主线】\n%s", p.Framework.ThemePremise)
+	if p.Framework != nil {
+		if strings.TrimSpace(p.Framework.ThemePremise) != "" {
+			frameworkContent += fmt.Sprintf("\n\n【核心立意与主线】\n%s", strings.TrimSpace(p.Framework.ThemePremise))
+		}
+		if strings.TrimSpace(p.Framework.Logline) != "" {
+			frameworkContent += fmt.Sprintf("\n\n【一句话梗概】\n%s", strings.TrimSpace(p.Framework.Logline))
+		}
+		if strings.TrimSpace(p.Framework.AtmosphereAnchor) != "" {
+			frameworkContent += fmt.Sprintf("\n\n【视觉与氛围锚点】\n%s", strings.TrimSpace(p.Framework.AtmosphereAnchor))
+		}
 	}
 
 	canonContent := fmt.Sprintf("【前序章节剧情记忆】\n%s", horizon.RollingCanonText)

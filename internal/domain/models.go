@@ -125,15 +125,19 @@ type ProtagonistProfile struct {
 }
 
 type ProjectFramework struct {
-	ThemePremise  string              `json:"theme_premise"`
-	Protagonist   *ProtagonistProfile `json:"protagonist"`
-	WorldAxioms   []string            `json:"world_axioms"`
-	PowerLadder   []PowerLadderTier   `json:"power_ladder"`
-	Factions      []Faction           `json:"factions"`
-	KeyCharacters []CharacterProfile  `json:"key_characters"`
-	VolumeArcs    []VolumeArc         `json:"volume_arcs"`
-	SeedHooks     []PlotHook          `json:"seed_hooks,omitempty"`
-	Motifs        []string            `json:"motifs,omitempty"` // 有意母题与符号清单（RC 精修锚点；写入前经 domain.SanitizeMotifs 清洗）
+	ThemePremise         string              `json:"theme_premise"`
+	Protagonist          *ProtagonistProfile `json:"protagonist"`
+	WorldAxioms          []string            `json:"world_axioms"`
+	PowerLadder          []PowerLadderTier   `json:"power_ladder"`
+	Factions             []Faction           `json:"factions"`
+	KeyCharacters        []CharacterProfile  `json:"key_characters"`
+	VolumeArcs           []VolumeArc         `json:"volume_arcs"`
+	Logline              string              `json:"logline,omitempty"`                // 一句话梗概：主角+冲突+核心危机
+	AtmosphereAnchor     string              `json:"atmosphere_anchor,omitempty"`      // 视觉与氛围锚点：全书恒定感官基调
+	TotalPlannedChapters int                 `json:"total_planned_chapters,omitempty"` // 全书计划总章数（0=未定）
+	StoryMilestones      []StoryMilestone    `json:"story_milestones,omitempty"`
+	SeedHooks            []PlotHook          `json:"seed_hooks,omitempty"`
+	Motifs               []string            `json:"motifs,omitempty"` // 有意母题与符号清单（RC 精修锚点；写入前经 domain.SanitizeMotifs 清洗）
 }
 
 // Project represents a novel book project.

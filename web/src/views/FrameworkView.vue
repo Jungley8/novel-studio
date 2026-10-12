@@ -27,7 +27,7 @@
           <span>{{ state.isLoading ? '推演中...' : 'AI 推演' }}</span>
         </button>
         <button 
-          @click="actions.saveFramework" 
+          @click="handleSaveFramework" 
           class="flex items-center gap-1.5 px-4 py-2 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-md shadow-amber-glow transition cursor-pointer">
           <Save class="w-3.5 h-3.5" />
           <span>保存设定</span>
@@ -88,6 +88,19 @@
             </button>
           </div>
         </div>
+
+        <!-- 视觉与氛围锚点 -->
+        <div v-if="state.currentProject.framework" class="p-3 bg-atelier-950 rounded-lg border border-atelier-800 space-y-1.5 md:col-span-2">
+          <div class="flex items-center justify-between">
+            <label class="block text-xs font-medium text-ink-300">视觉与氛围锚点：</label>
+            <span class="text-[10px] text-ink-400">全书恒定感官基调，渲染时强制约束</span>
+          </div>
+          <textarea 
+            v-model="state.currentProject.framework.atmosphere_anchor" 
+            rows="2" 
+            class="w-full bg-atelier-900 border border-atelier-750 rounded-md p-2 text-xs text-ink-100 font-serif focus:outline-none focus:border-brand-amber/60 leading-relaxed resize-none" 
+            placeholder="例如：高反差冷色调 / 破败废土 / 阴冷民俗..."></textarea>
+        </div>
       </div>
     </div>
 
@@ -125,9 +138,17 @@
           <p class="text-[10px] text-ink-400">一句话概括全书主线与核心看点。</p>
           <textarea 
             v-model="state.currentProject.framework.theme_premise" 
-            rows="6" 
+            rows="4" 
             class="w-full bg-atelier-950 border border-atelier-750 rounded-lg p-2.5 text-xs text-ink-100 font-serif focus:outline-none focus:border-brand-amber/60 leading-relaxed resize-none" 
             placeholder="输入全书核心设定与立意..."></textarea>
+          <div class="pt-2 border-t border-atelier-800 space-y-1">
+            <label class="block text-[11px] font-medium text-ink-300">一句话梗概 (Logline)：</label>
+            <textarea 
+              v-model="state.currentProject.framework.logline" 
+              rows="2" 
+              class="w-full bg-atelier-950 border border-atelier-750 rounded-lg p-2 text-xs text-ink-100 font-serif focus:outline-none focus:border-brand-amber/60 leading-relaxed resize-none" 
+              placeholder="一句话概括：主角+冲突+危机..."></textarea>
+          </div>
         </div>
 
         <!-- 主角档案 -->
@@ -317,6 +338,84 @@
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- 全书节拍 -->
+      <div class="p-4 bg-atelier-900 border border-atelier-750 rounded-xl space-y-3 shadow-atelier-sm">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="flex items-center gap-2 text-xs font-serif font-bold text-brand-amber">
+              <Compass class="w-3.5 h-3.5" />
+              <span>全书节拍</span>
+            </div>
+            <p class="text-[11px] text-ink-400 mt-0.5">全书宏观三幕/救猫咪节拍锚点与章节跨度定位。</p>
+          </div>
+          <button 
+            @click="addFrameworkMilestone" 
+            class="text-xs text-brand-amber hover:text-brand-amber-hover font-medium flex items-center gap-1 cursor-pointer">
+            <Plus class="w-3 h-3" />
+            <span>添加里程碑</span>
+          </button>
+        </div>
+
+        <div class="flex items-center gap-3 bg-atelier-950 p-2.5 rounded-lg border border-atelier-800 text-xs">
+          <label class="text-ink-300 font-medium shrink-0">全书计划总章数：</label>
+          <input 
+            type="number" 
+            min="1" 
+            v-model.number="state.currentProject.framework.total_planned_chapters" 
+            class="w-24 bg-atelier-900 border border-atelier-750 rounded px-2.5 py-1 text-xs text-brand-amber font-mono font-bold focus:outline-none focus:border-brand-amber/60"
+            placeholder="如 120">
+          <span class="text-[10px] text-ink-500">章（0 为未定）</span>
+        </div>
+
+        <!-- 空态提示 -->
+        <div 
+          v-if="!(state.currentProject.framework.story_milestones && state.currentProject.framework.story_milestones.length > 0)"
+          class="p-6 text-center bg-atelier-950 rounded-lg border border-dashed border-atelier-800 text-xs text-ink-400">
+          尚未规划全书节拍，可让 AI 创世推演或手动添加
+        </div>
+
+        <!-- 列表 -->
+        <div v-else class="space-y-2">
+          <div 
+            v-for="(ms, mIdx) in (state.currentProject.framework.story_milestones || [])" 
+            :key="ms.key || mIdx"
+            class="flex items-center gap-2.5 p-2.5 bg-atelier-950 border border-atelier-800 rounded-lg text-xs">
+            <div class="flex-1 min-w-0 flex items-center gap-2">
+              <span class="text-[10px] font-mono text-ink-500 shrink-0">#{{ mIdx + 1 }}</span>
+              <input 
+                v-model="ms.name" 
+                placeholder="里程碑名称（如：触发事件、中点）"
+                class="flex-1 bg-atelier-900 border border-atelier-750 rounded px-2 py-1 text-xs text-ink-100 font-serif focus:outline-none focus:border-brand-amber/60">
+            </div>
+
+            <div class="flex items-center gap-1.5 shrink-0">
+              <span class="text-ink-400 text-[11px]">第</span>
+              <input 
+                type="number" 
+                min="1" 
+                v-model.number="ms.target_chapter" 
+                placeholder="目标章"
+                class="w-16 bg-atelier-900 border border-atelier-750 rounded px-2 py-1 text-xs text-brand-amber font-mono font-bold text-center focus:outline-none focus:border-brand-amber/60">
+              <span class="text-ink-400 text-[11px]">章</span>
+            </div>
+
+            <button 
+              @click="toggleFrameworkMilestoneStatus(ms)"
+              class="px-2 py-1 rounded text-[11px] font-medium border transition cursor-pointer shrink-0"
+              :class="ms.status === 'DONE' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-brand-amber/15 text-brand-amber border-brand-amber/30'">
+              {{ ms.status === 'DONE' ? '已兑现' : '待兑现' }}
+            </button>
+
+            <button 
+              @click="removeFrameworkMilestone(mIdx)" 
+              class="text-ink-500 hover:text-rose-400 text-xs px-1 transition cursor-pointer shrink-0"
+              title="删除">
+              ✕
+            </button>
+          </div>
         </div>
       </div>
 
@@ -639,6 +738,43 @@ function addFrameworkVolume() {
 
 function removeFrameworkVolume(idx) {
   state.currentProject.framework.volume_arcs.splice(idx, 1);
+}
+
+function addFrameworkMilestone() {
+  if (!state.currentProject?.framework) return;
+  state.currentProject.framework.story_milestones = state.currentProject.framework.story_milestones || [];
+  const milestones = state.currentProject.framework.story_milestones;
+  const existingKeys = new Set(milestones.map(m => m.key));
+  let counter = milestones.length + 1;
+  let customKey = `CUSTOM_${counter}`;
+  while (existingKeys.has(customKey)) {
+    counter++;
+    customKey = `CUSTOM_${counter}`;
+  }
+  milestones.push({
+    key: customKey,
+    name: '',
+    target_chapter: 1,
+    status: 'PENDING',
+    note: '',
+  });
+}
+
+function removeFrameworkMilestone(idx) {
+  if (!state.currentProject?.framework?.story_milestones) return;
+  state.currentProject.framework.story_milestones.splice(idx, 1);
+}
+
+function toggleFrameworkMilestoneStatus(ms) {
+  if (!ms) return;
+  ms.status = ms.status === 'DONE' ? 'PENDING' : 'DONE';
+}
+
+function handleSaveFramework() {
+  if (state.currentProject?.framework) {
+    state.currentProject.framework.story_milestones = state.currentProject.framework.story_milestones || [];
+  }
+  actions.saveFramework();
 }
 
 const factionEntries = computed(() => {

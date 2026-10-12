@@ -1307,11 +1307,15 @@ func (c *HTTPLLMClient) generateMockResponse(model, systemPrompt, userPrompt str
 		cTokens := 600
 		resp := `{
   "theme_premise": "凡人无灵根，天道被不可名状的神明寄生；修士飞升实为祭品；主角掌凡骨铁印隐忍弑神",
+  "logline": "边荒无灵根少年顾渊手握凡骨铁印，在天道被神明寄生的绝境下隐忍弑神破局",
+  "atmosphere_anchor": "压抑阴冷的暗黑修仙废土，青铜锈迹与腥黑神血交织的窒息感",
   "protagonist": {
     "name": "顾渊",
     "identity": "边荒无灵根凡人",
     "initial_realm": "凡胎境",
-    "goal": "查明宗门覆灭真相，隐忍弑神",
+    "want": "查明宗门覆灭真相，隐忍弑神",
+    "need": "放下对仙道力量的盲从，以纯粹凡人之骨勘破神明虚妄",
+    "ghost": "目睹宗门上下被所谓飞升金光化作神明血食的无力与恐惧",
     "voice_tone": "内敛隐忍，遇死地杀伐果决",
     "inventory": ["凡骨铁印", "粗布短褐", "引路符"]
   },
@@ -1347,14 +1351,18 @@ func (c *HTTPLLMClient) generateMockResponse(model, systemPrompt, userPrompt str
       "name": "楚掌柜",
       "role": "宿敌暗哨",
       "realm": "化龙境魔修",
-      "goal": "截杀凡人异数向魔尊邀功",
+      "want": "截杀凡人异数向魔尊邀功",
+      "need": "认清自己不过是魔尊随时可弃的血食走狗",
+      "ghost": "寿元将尽时对化龙天劫的极度贪婪与恐惧",
       "fate_arc": "第一章被断右臂遁走，沦为通天阁追杀棋子"
     },
     {
       "name": "柳依依",
       "role": "关键搭档",
       "realm": "筑基境圆满",
-      "goal": "借各方势力暗查灭门真相，求生自保",
+      "want": "借各方势力暗查灭门真相，求生自保",
+      "need": "打破对魔门庇护的幻想，重拾修士尊严与顾渊同盟",
+      "ghost": "家族覆灭当夜独自躲入地窖苟活的愧疚",
       "fate_arc": "目睹凡骨神印，由试探结盟转为敬畏相随"
     }
   ],
@@ -1367,6 +1375,37 @@ func (c *HTTPLLMClient) generateMockResponse(model, systemPrompt, userPrompt str
       "climax": "聚仙楼血战，主角以凡人之躯斩魔门化龙暗哨",
       "estimated_chapters": 30,
       "key_payoffs": ["百年寒铁令真相"]
+    }
+  ],
+  "total_planned_chapters": 120,
+  "story_milestones": [
+    {
+      "key": "OPENING_HOOK",
+      "name": "开局钩子",
+      "target_chapter": 1,
+      "status": "PENDING",
+      "note": "风雪夜聚仙楼断臂斩杀魔修暗哨，凡骨铁印初露锋芒"
+    },
+    {
+      "key": "INCITING_INCIDENT",
+      "name": "触发事件",
+      "target_chapter": 10,
+      "status": "PENDING",
+      "note": "发现通天阁魔网与神明飞升祭坛的因果铁证"
+    },
+    {
+      "key": "MIDPOINT",
+      "name": "中点",
+      "target_chapter": 60,
+      "status": "PENDING",
+      "note": "天下正魔两道联合设伏，顾渊凡骨尽碎堕入神渊洞悉天道真相"
+    },
+    {
+      "key": "CLIMAX",
+      "name": "全书高潮",
+      "target_chapter": 110,
+      "status": "PENDING",
+      "note": "凡骨重铸登临通天台，以人间凡火焚灭寄生天道的神明"
     }
   ],
   "seed_hooks": [
