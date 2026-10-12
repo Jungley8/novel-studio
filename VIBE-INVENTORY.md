@@ -67,6 +67,8 @@
 | 8 | **域操作 this 绑定系统修复**（裸引用调用 `actions.foo` 不再因 `this` undefined 崩溃；一键成章/去机械壳等修复）| `appState.bindActions` | P1 | 🟢 已完成 |
 | 9 | **`actionHelpers` ReferenceError + 矩阵拆场 payload 修复**（框架推演后 Codex 刷新失效；AI 拆场 400）| `projectActions` + `MatrixView` | P1 | 🟢 已完成 |
 | 10 | **回归测试**（Node 原生测试 + resolve loader：切换重置/落盘/Fail-Closed 门禁/断点目标）| `web/test/project-switch.test.mjs`（`pnpm test`）| P0 | 🟢 已完成 |
+| 11 | **租户归属校验全量补齐**（伏笔/词条演进/关系/场次的跨作品 ID 借道写入一律拒绝；场次挂载章节校验归属）| `handlers_project.go` + `handlers_matrix.go` + `store`（`handlers_tenancy_scope_test.go`）| P1 | 🟢 已完成 |
+| 12 | **切换恢复“最近推进的一章”**（`checkpoint?latest=true`：兼顾下一章草稿与已归档章节重修稿，不再只看下一章）| `store` + `handlers_project.go` + `api/client.js` + `workbenchActions` | P1 | 🟢 已完成 |
 
 验证：`pnpm test`（3/3 通过）；`pnpm build` 通过；`go build ./... && go test ./... -race -count=1` 全绿（含新增 `TestCodexUpdate_RejectsForeignProjectEntry`）；`gofmt -w` 完成。
 

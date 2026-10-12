@@ -363,9 +363,20 @@
 - `go test ./... -race -count=1`：全绿（含新增 `TestCodexUpdate_RejectsForeignProjectEntry`）；
 - `pnpm build` + `gofmt -w`：通过。
 
+### 第二轮加固（2026-10-12 续）
+
+1. `fix(server,store): enforce cross-project ownership and add latest-checkpoint endpoint`
+   - 伏笔 POST 更新：`PlotHookProjectID` 归属校验，越权 409（upsert 不再借道覆盖）；
+   - 词条演进 `progressions`：`CodexEntryProjectID` 校验，越权 404；
+   - 关系创建：两端词条必须归属本作品，跨作品引用 400；
+   - 场次：GET/PUT/DELETE 校验 `scene.project_id`，越权 404；创建/更新时挂载的已归档章节必须归属本作品；
+   - 新增 `GET /api/projects/:id/checkpoint?latest=true`（`GetLatestCheckpoint`，按 `updated_at DESC`）。
+2. `feat(web): restore latest in-flight draft on project switch`
+   - `restoreCheckpoint` 拆分为 `applyCheckpoint` + 按章恢复；新增 `restoreLatestCheckpoint`，切换作品时恢复“最近推进的一章”（覆盖已归档章节重修稿场景）；
+   - 回归测试新增第 4 例：latest 断点恢复断言。
+
 ### 后续待办（已识别，未在本轮处理）
 
-- 后端场景/标记/进度等 id 优先路由建议统一补作品归属校验（本轮已处理风险最高的 codex upsert 覆盖路径）；
-- 排程器后台生产与前端编辑并发时的服务端互斥（应用内单机场景暂以编辑器侧门禁兜底）。
+- 排程器后台生产与前端编辑并发时的服务端互斥（应用内单机场景暂以编辑器侧门禁兜底；`CommitChapter` 为 upsert 语义，并发双写为 last-writer-wins）。
 
 
