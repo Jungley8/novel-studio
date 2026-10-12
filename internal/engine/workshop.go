@@ -652,7 +652,17 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 	// 4. Audit via Quality Gate (with plot hooks resolution awareness)
 	if auditReport == nil {
 		emit(WorkshopEvent{Phase: PhaseAuditing, Message: "正在执行 QualityGate 算法质检与主审综合审校..."})
-		audit, usage, aErr := w.qualityGate.AuditWithHooks(ctx, req.ReviewerModel, horizon.Project, horizon.ProtagonistEntry, req.ChapterIndex, beatsOut.Beats, horizon.AllActiveHooks, draftText)
+
+		// 审校增强不得阻断生产：读取角色条目失败则降级为空字符串继续
+		charCtx := ""
+		if charEntries, err := w.store.ListCodexEntries(ctx, req.ProjectID, domain.CategoryCharacter); err == nil {
+			charCtx = BuildCharacterMotivationContext(charEntries, draftText)
+		}
+
+		audit, usage, aErr := w.qualityGate.AuditWithHooks(ctx, req.ReviewerModel, horizon.Project, horizon.ProtagonistEntry, req.ChapterIndex, beatsOut.Beats, horizon.AllActiveHooks, draftText, ChiefJudgeOptions{
+			TailAnchor:       horizon.TailAnchor,
+			CharacterContext: charCtx,
+		})
 		if aErr != nil {
 			return nil, fmt.Errorf("quality gate audit failed: %w", aErr)
 		}
@@ -748,7 +758,16 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		addUsage(usage)
 
 		// Re-audit revised draft
-		newAudit, auditUsage, aerr := w.qualityGate.AuditWithHooks(ctx, req.ReviewerModel, horizon.Project, horizon.ProtagonistEntry, req.ChapterIndex, beatsOut.Beats, horizon.AllActiveHooks, currentDraft)
+		// 审校增强不得阻断生产：读取角色条目失败则降级为空字符串继续
+		rewriteCharCtx := ""
+		if charEntries, err := w.store.ListCodexEntries(ctx, req.ProjectID, domain.CategoryCharacter); err == nil {
+			rewriteCharCtx = BuildCharacterMotivationContext(charEntries, currentDraft)
+		}
+
+		newAudit, auditUsage, aerr := w.qualityGate.AuditWithHooks(ctx, req.ReviewerModel, horizon.Project, horizon.ProtagonistEntry, req.ChapterIndex, beatsOut.Beats, horizon.AllActiveHooks, currentDraft, ChiefJudgeOptions{
+			TailAnchor:       horizon.TailAnchor,
+			CharacterContext: rewriteCharCtx,
+		})
 		if aerr == nil {
 			auditReport = newAudit
 			addUsage(auditUsage)

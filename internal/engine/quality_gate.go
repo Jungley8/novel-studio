@@ -43,8 +43,9 @@ func (q *QualityGate) Audit(
 	chapterIndex int,
 	beats []domain.SceneBeat,
 	draftText string,
+	opts ...ChiefJudgeOptions,
 ) (*domain.AuditReport, TokenUsage, error) {
-	return q.AuditWithHooks(ctx, reviewerModel, project, protagonist, chapterIndex, beats, nil, draftText)
+	return q.AuditWithHooks(ctx, reviewerModel, project, protagonist, chapterIndex, beats, nil, draftText, opts...)
 }
 
 // AuditWithHooks extends Audit with open plot hook awareness to verify hook payoffs and resolutions,
@@ -58,8 +59,9 @@ func (q *QualityGate) AuditWithHooks(
 	beats []domain.SceneBeat,
 	activeHooks []*domain.PlotHook,
 	draftText string,
+	opts ...ChiefJudgeOptions,
 ) (*domain.AuditReport, TokenUsage, error) {
-	courtReport, usage, err := q.court.ChiefJudge(ctx, reviewerModel, project, protagonist, chapterIndex, beats, activeHooks, draftText)
+	courtReport, usage, err := q.court.ChiefJudge(ctx, reviewerModel, project, protagonist, chapterIndex, beats, activeHooks, draftText, opts...)
 	if err != nil {
 		return nil, usage, err
 	}

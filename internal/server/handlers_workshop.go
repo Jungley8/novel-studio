@@ -276,7 +276,15 @@ func (s *Server) handleReviewDraft(w http.ResponseWriter, r *http.Request, proje
 		}
 	}
 
-	audit, _, err := s.qualityGate.AuditWithHooks(r.Context(), reviewerModel, p, prot, req.ChapterIndex, req.Beats, activeHooks, req.DraftText)
+	// 审校增强不得阻断生产/审阅：读取角色条目失败则降级为空字符串继续
+	charCtx := ""
+	if charEntries, err := s.store.ListCodexEntries(r.Context(), projectID, domain.CategoryCharacter); err == nil {
+		charCtx = engine.BuildCharacterMotivationContext(charEntries, req.DraftText)
+	}
+
+	audit, _, err := s.qualityGate.AuditWithHooks(r.Context(), reviewerModel, p, prot, req.ChapterIndex, req.Beats, activeHooks, req.DraftText, engine.ChiefJudgeOptions{
+		CharacterContext: charCtx,
+	})
 	if err != nil {
 		errStr := err.Error()
 		if strings.Contains(errStr, "Model is unavailable") {

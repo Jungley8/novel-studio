@@ -332,7 +332,7 @@ func TestReviewCourt_IndividualDivisions(t *testing.T) {
 	}
 
 	// ContinuityDivision
-	cRes, cUsage, err := court.ContinuityDivision(ctx, "mock", "前文摘要", "草稿文本...")
+	cRes, cUsage, err := court.ContinuityDivision(ctx, "mock", "前文摘要", "", "草稿文本...")
 	if err != nil {
 		t.Fatalf("ContinuityDivision failed: %v", err)
 	}

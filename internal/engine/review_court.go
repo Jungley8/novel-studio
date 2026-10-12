@@ -303,6 +303,7 @@ func (c *ReviewCourt) ContinuityDivision(
 	ctx context.Context,
 	model string,
 	horizonSummary string,
+	characterContext string,
 	draftText string,
 ) (*DivisionResult, TokenUsage, error) {
 	systemPrompt := `你是一名极其严苛的网络小说连续性与状态机分庭总审编（ReviewCourt ContinuityDivision）。
@@ -310,7 +311,8 @@ func (c *ReviewCourt) ContinuityDivision(
 1. 跨卷回调一致性：正文与前序历史脉络、宏观大纲、人物命运走向、主线目标是否保持一致？有无背离核心设定？
 2. TailAnchor 文风与腔调漂移：若提供了上一章末尾文风锚定（TailAnchor），正文开头与视角是否顺畅承接？文风与叙事腔调是否发生突兀断裂或漂移？
 3. 状态机不变量：主角状态、势力关系、重要信物与因果线是否维持合法转移，无空降物品或凭空遗忘？
-4. 引文规范：字符串值内引用正文原文一律使用中文引号「」或『』，严禁出现未转义的半角双引号（会破坏 JSON 解析）。
+4. 角色动机一致性：出场行为必须符合 Want/Need/Ghost 张力；反派必须按其自我正当逻辑行动（自认正义/自洽），不得沦为纯粹工具人；每个判定引用正文原文（≥8 字）作证据；明显矛盾或反派动机崩坏写入 issues。
+5. 引文规范：字符串值内引用正文原文一律使用中文引号「」或『』，严禁出现未转义的半角双引号（会破坏 JSON 解析）。
 
 必须且仅输出标准 JSON 格式：
 {
@@ -324,8 +326,16 @@ func (c *ReviewCourt) ContinuityDivision(
 		horizonSummary = "无特定正史视界摘要"
 	}
 
+	charCtx := strings.TrimSpace(characterContext)
+	if charCtx == "" {
+		charCtx = "（本章未匹配到角色动机卡）"
+	}
+
 	userPrompt := fmt.Sprintf(`【审查分庭】连续性庭 (ContinuityDivision)
 【正史视界摘要与锚定设定】
+%s
+
+【出场角色内在引擎（动机卡）】
 %s
 
 【待审正文草稿】
@@ -333,6 +343,7 @@ func (c *ReviewCourt) ContinuityDivision(
 
 请给出连续性庭审阅判决。`,
 		horizonSummary,
+		charCtx,
 		draftText,
 	)
 
@@ -368,8 +379,9 @@ func (c *ReviewCourt) ContinuityDivision(
 
 // ChiefJudgeOptions provides optional contextual parameters for ChiefJudge deliberation.
 type ChiefJudgeOptions struct {
-	HorizonSummary string
-	TailAnchor     string
+	HorizonSummary   string
+	TailAnchor       string
+	CharacterContext string
 }
 
 // ChiefJudge executes concurrent three-division review under an errgroup with per-division timeouts.
@@ -392,6 +404,7 @@ func (c *ReviewCourt) ChiefJudge(
 
 	// 2. Synthesize horizon summary for ContinuityDivision
 	var horizonSummary string
+	var charContext string
 	if len(opts) > 0 && opts[0].HorizonSummary != "" {
 		horizonSummary = opts[0].HorizonSummary
 	} else {
@@ -399,6 +412,9 @@ func (c *ReviewCourt) ChiefJudge(
 	}
 	if len(opts) > 0 && opts[0].TailAnchor != "" {
 		horizonSummary += fmt.Sprintf("\n【上章末尾文风锚定 (TailAnchor)】\n%s", opts[0].TailAnchor)
+	}
+	if len(opts) > 0 && opts[0].CharacterContext != "" {
+		charContext = opts[0].CharacterContext
 	}
 
 	// 3. Concurrently invoke three divisions via errGroup with independent timeouts
@@ -455,7 +471,7 @@ func (c *ReviewCourt) ChiefJudge(
 	g.Go(func() error {
 		divCtx, cancel := context.WithTimeout(gCtx, timeout)
 		defer cancel()
-		res, usage, err := c.ContinuityDivision(divCtx, reviewerModel, horizonSummary, draftText)
+		res, usage, err := c.ContinuityDivision(divCtx, reviewerModel, horizonSummary, charContext, draftText)
 		if err != nil {
 			return fmt.Errorf("continuity division failed: %w", err)
 		}
