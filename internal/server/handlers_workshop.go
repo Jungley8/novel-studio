@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -346,8 +345,7 @@ func (s *Server) handleWorkshopProduce(w http.ResponseWriter, r *http.Request, p
 	// 调度器/CLI 在此期间会因锁在位而拒绝/跳过同一作品。
 	ctx := r.Context()
 	_ = s.store.DeleteEditLease(ctx, projectID)
-	holder := fmt.Sprintf("ui-%d", time.Now().UnixNano())
-	blocking, err := s.store.AcquireProductionLease(ctx, projectID, holder, "一键成章", req.ChapterIndex, coord.ProductionLeaseTTL)
+	production, blocking, err := coord.AcquireProduction(ctx, s.store, projectID, "一键成章", req.ChapterIndex)
 	if err != nil {
 		if errors.Is(err, coord.ErrBusy) {
 			switch {
@@ -365,23 +363,7 @@ func (s *Server) handleWorkshopProduce(w http.ResponseWriter, r *http.Request, p
 		}
 		return
 	}
-	defer func() { _ = s.store.ReleaseProductionLease(context.Background(), projectID, holder) }()
-
-	// 生产锁心跳：SSE 长连接可能持续数分钟，按固定间隔续期并跟随章节号。
-	hbCtx, hbCancel := context.WithCancel(ctx)
-	defer hbCancel()
-	go func() {
-		ticker := time.NewTicker(coord.ProductionHeartbeatInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-hbCtx.Done():
-				return
-			case <-ticker.C:
-				_, _ = s.store.HeartbeatProductionLease(hbCtx, projectID, holder, req.ChapterIndex, coord.ProductionLeaseTTL)
-			}
-		}
-	}()
+	defer production.Release()
 
 	isSSE := strings.Contains(r.Header.Get("Accept"), "text/event-stream") || r.URL.Query().Get("stream") == "true"
 	if isSSE {

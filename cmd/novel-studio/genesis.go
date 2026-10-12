@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Jungley8/novel-studio/internal/config"
+	"github.com/Jungley8/novel-studio/internal/coord"
 	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/engine"
 	"github.com/Jungley8/novel-studio/internal/store"
@@ -91,6 +93,19 @@ func runGenesisCLI(argv []string, defaultDataDir string) int {
 		fmt.Fprintf(os.Stderr, "✗ 保存作品失败: %v\n", err)
 		return 1
 	}
+
+	// Fail-Closed：创世写路径持生产锁——种子注入期间其它进程/窗口不得并发写同一作品；
+	// 此时其它进程尚不知晓新作品 ID，因此正常不会冲突，锁提供的是后续数秒写入的排他保护。
+	production, blocking, err := coord.AcquireProduction(ctx, s, projectID, "CLI 创世", 0)
+	if err != nil {
+		if errors.Is(err, coord.ErrBusy) && blocking != nil {
+			fmt.Fprintf(os.Stderr, "✗ 新作品已存在在途任务（%s），已拒绝创世写入（作品 ID: %s）\n", blocking.Label, projectID)
+		} else {
+			fmt.Fprintf(os.Stderr, "✗ 获取生产锁失败: %v\n", err)
+		}
+		return 1
+	}
+	defer production.Release()
 
 	if err := engine.SeedGenesisArtifacts(ctx, s, proj, fw); err != nil {
 		fmt.Fprintf(os.Stderr, "✗ 注入种子失败: %v\n", err)

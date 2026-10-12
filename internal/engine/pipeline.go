@@ -21,6 +21,10 @@ type PipelineRequest struct {
 	ChapterFrom                                    int
 	RunID                                          string
 	OnProgress                                     func(PipelineEvent)
+	// OnProjectCreated 可选：项目创世入库后立即同步调用（携带 ProjectID，早于任何项目内写入）。
+	// 返回错误将中止流水线（Fail-Closed）；此时项目已入库但未注入种子。
+	// 用于调用方在最早可知时点登记生产锁（如开书流水线）。
+	OnProjectCreated func(ctx context.Context, projectID string) error
 }
 
 type PipelineEvent struct {
@@ -138,6 +142,12 @@ func (p *StudioPipeline) Run(ctx context.Context, req PipelineRequest) (*Pipelin
 
 	if err := p.store.SaveProject(ctx, proj); err != nil {
 		return nil, fmt.Errorf("pipeline save project: %w", err)
+	}
+
+	if req.OnProjectCreated != nil {
+		if err := req.OnProjectCreated(ctx, projectID); err != nil {
+			return nil, fmt.Errorf("pipeline project created hook: %w", err)
+		}
 	}
 
 	if err := SeedGenesisArtifacts(ctx, p.store, proj, fw); err != nil {

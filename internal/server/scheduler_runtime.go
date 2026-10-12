@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync/atomic"
-	"time"
 
 	"github.com/Jungley8/novel-studio/internal/coord"
 	"github.com/Jungley8/novel-studio/internal/domain"
@@ -76,32 +74,14 @@ func (r *schedulerRuntime) RunContinuation(
 
 	// Fail-Closed：跨进程生产锁。存在有效编辑租约（守护 UI/CLI）或已有生产任务时
 	// 返回 coord.ErrBusy；调度器据此跳过本轮并在下一趟自动重试。
-	holder := fmt.Sprintf("scheduler-%d", time.Now().UnixNano())
-	blocking, err := r.srv.store.AcquireProductionLease(ctx, projectID, holder, "排程自动续产", 0, coord.ProductionLeaseTTL)
+	production, blocking, err := coord.AcquireProduction(ctx, r.srv.store, projectID, "排程自动续产", 0)
 	if err != nil {
 		if errors.Is(err, coord.ErrBusy) && blocking != nil {
 			return false, "", fmt.Errorf("%w（%s）", err, blocking.Label)
 		}
 		return false, "", err
 	}
-	defer func() { _ = r.srv.store.ReleaseProductionLease(context.Background(), projectID, holder) }()
-
-	// 生产锁心跳：长卷批产可达数小时，按固定间隔续期并跟随当前章节号。
-	var currentChapter atomic.Int64
-	hbCtx, hbCancel := context.WithCancel(ctx)
-	defer hbCancel()
-	go func() {
-		ticker := time.NewTicker(coord.ProductionHeartbeatInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-hbCtx.Done():
-				return
-			case <-ticker.C:
-				_, _ = r.srv.store.HeartbeatProductionLease(hbCtx, projectID, holder, int(currentChapter.Load()), coord.ProductionLeaseTTL)
-			}
-		}
-	}()
+	defer production.Release()
 
 	words, loops, style, reasoningModel, writerModel, reviewerModel := r.resolveDefaults()
 
@@ -113,7 +93,7 @@ func (r *schedulerRuntime) RunContinuation(
 				return false, "", fmt.Errorf("list chapters for project %s: %w", projectID, err)
 			}
 			next := nextChapterIndex(chapters)
-			currentChapter.Store(int64(next))
+			production.SetChapter(next)
 
 			var onProg engine.ProgressCallback
 			if progress != nil {
@@ -162,7 +142,6 @@ func (r *schedulerRuntime) RunContinuation(
 				return false, "", fmt.Errorf("list chapters for project %s: %w", projectID, err)
 			}
 			next := nextChapterIndex(chapters)
-			currentChapter.Store(0)
 
 			arcs := engine.BackfillVolumeArcs(project.Framework.VolumeArcs)
 			arc := findArcForChapter(arcs, next)
@@ -173,9 +152,7 @@ func (r *schedulerRuntime) RunContinuation(
 			var onProg func(engine.VolumeEvent)
 			if progress != nil {
 				onProg = func(ev engine.VolumeEvent) {
-					if ev.ChapterIndex > 0 {
-						currentChapter.Store(int64(ev.ChapterIndex))
-					}
+					production.SetChapter(ev.ChapterIndex)
 					progress(ev.Message)
 				}
 			}
@@ -225,25 +202,31 @@ func (r *schedulerRuntime) RunBook(
 
 	words, loops, style, reasoningModel, _, _ := r.resolveDefaults()
 
-	var onProg func(engine.PipelineEvent)
-	if progress != nil {
-		onProg = func(ev engine.PipelineEvent) {
+	// Fail-Closed：开书流水线在项目创世入库时点（ProjectID 首次可知）登记生产锁；
+	// 锁在位期间：调度器续产跳过、UI 正史写入口 409、CLI produce 拒绝。
+	bookHook, trackChapter, releaseProduction := coord.BindProduction(r.srv.store, "排程开书")
+	defer releaseProduction()
+
+	onProg := func(ev engine.PipelineEvent) {
+		trackChapter(ev.ChapterIndex)
+		if progress != nil {
 			progress(ev.Message)
 		}
 	}
 
 	pipeline := engine.NewStudioPipeline(r.srv.orch, engine.NewVolumeBatch(r.srv.workshop, r.srv.store), r.srv.store)
 	req := engine.PipelineRequest{
-		Title:           item.Title,
-		Concept:         item.Concept,
-		TargetPlatform:  item.Platform,
-		ReasoningModel:  reasoningModel,
-		Volumes:         item.Volumes,
-		AutoLockIntents: item.AutoLock,
-		WordsTarget:     words,
-		MaxRewriteLoops: loops,
-		NarrativeStyle:  style,
-		OnProgress:      onProg,
+		Title:            item.Title,
+		Concept:          item.Concept,
+		TargetPlatform:   item.Platform,
+		ReasoningModel:   reasoningModel,
+		Volumes:          item.Volumes,
+		AutoLockIntents:  item.AutoLock,
+		WordsTarget:      words,
+		MaxRewriteLoops:  loops,
+		NarrativeStyle:   style,
+		OnProgress:       onProg,
+		OnProjectCreated: bookHook,
 	}
 
 	res, err := pipeline.Run(ctx, req)

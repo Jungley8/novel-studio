@@ -15,9 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"syscall"
-	"time"
 
 	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/config"
@@ -79,10 +77,8 @@ func runProduceCLI(argv []string, defaultDataDir string) int {
 	}
 
 	// Fail-Closed：跨进程生产锁。守护服务（浏览器编辑租约 / 排程生产）或其它 CLI
-	// 正在写同一作品时拒绝并发生产；租约存于共享 SQLite，进程崩溃由 TTL 自动清理。
-	leaseHolder := fmt.Sprintf("cli-produce-%d", time.Now().UnixNano())
-	var currentChapter atomic.Int64
-	blocking, err := s.AcquireProductionLease(ctx, projectID, leaseHolder, "CLI 无头生产", 0, coord.ProductionLeaseTTL)
+	// 正在写同一作品时拒绝并发生产；进程崩溃由租约 TTL 自动清理。
+	production, blocking, err := coord.AcquireProduction(ctx, s, projectID, "CLI 无头生产", 0)
 	if err != nil {
 		if errors.Is(err, coord.ErrBusy) && blocking != nil {
 			if blocking.Kind == coord.KindEdit {
@@ -95,19 +91,7 @@ func runProduceCLI(argv []string, defaultDataDir string) int {
 		}
 		return 1
 	}
-	defer func() { _ = s.ReleaseProductionLease(context.Background(), projectID, leaseHolder) }()
-	go func() {
-		ticker := time.NewTicker(coord.ProductionHeartbeatInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				_, _ = s.HeartbeatProductionLease(ctx, projectID, leaseHolder, int(currentChapter.Load()), coord.ProductionLeaseTTL)
-			}
-		}
-	}()
+	defer production.Release()
 
 	if *volumeIdxFlag > 0 {
 		llmClient := engine.NewHTTPLLMClient(cfg.APIBase, cfg.APIKey)
@@ -128,9 +112,7 @@ func runProduceCLI(argv []string, defaultDataDir string) int {
 			WordsTarget:     2000,
 			MaxRewriteLoops: 3,
 			OnProgress: func(ev engine.VolumeEvent) {
-				if ev.ChapterIndex > 0 {
-					currentChapter.Store(int64(ev.ChapterIndex))
-				}
+				production.SetChapter(ev.ChapterIndex)
 				if ev.Phase == "CHAPTER_DONE" {
 					fmt.Printf("第 %d 章 → %s/%d/%v\n", ev.ChapterIndex, ev.Verdict, ev.Score, ev.Committed)
 				}
@@ -152,7 +134,7 @@ func runProduceCLI(argv []string, defaultDataDir string) int {
 		chapters, _ := s.ListChapters(ctx, projectID)
 		chapterIdx = len(chapters) + 1
 	}
-	currentChapter.Store(int64(chapterIdx))
+	production.SetChapter(chapterIdx)
 
 	fmt.Println("==================================================================")
 	fmt.Printf("  NovelStudio Autonomous Pipeline (自主创作生产引擎)\n")

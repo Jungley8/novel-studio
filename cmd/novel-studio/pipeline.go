@@ -19,6 +19,7 @@ import (
 
 	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/config"
+	"github.com/Jungley8/novel-studio/internal/coord"
 	"github.com/Jungley8/novel-studio/internal/engine"
 	"github.com/Jungley8/novel-studio/internal/store"
 )
@@ -248,9 +249,16 @@ func runPipeline(argv []string, defaultDataDir string, stdout, stderr io.Writer)
 	batch := engine.NewVolumeBatch(workshop, s)
 	pipeline := engine.NewStudioPipeline(orch, batch, s)
 
+	// Fail-Closed：开书流水线在项目创世入库时点（ProjectID 首次可知）登记生产锁；
+	// 锁在位期间守护服务的正史写入口 409、其它生产进程拒绝/跳过。
+	bookHook, trackChapter, releaseProduction := coord.BindProduction(s, "CLI 开书")
+	defer releaseProduction()
+
 	req := buildPipelineRequest(opts, cfg, cfg.ReasoningModel, func(ev engine.PipelineEvent) {
+		trackChapter(ev.ChapterIndex)
 		fmt.Fprintln(stdout, formatPipelineEvent(ev))
 	})
+	req.OnProjectCreated = bookHook
 
 	fmt.Fprintln(stdout, "==================================================================")
 	fmt.Fprintln(stdout, "  NovelStudio Autonomous Pipeline (全自动全流程创作管道)")

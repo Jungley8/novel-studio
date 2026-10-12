@@ -10,6 +10,7 @@ import (
 
 	"github.com/Jungley8/novel-studio/internal/activity"
 	"github.com/Jungley8/novel-studio/internal/config"
+	"github.com/Jungley8/novel-studio/internal/coord"
 	"github.com/Jungley8/novel-studio/internal/engine"
 )
 
@@ -104,6 +105,11 @@ func (s *Server) handlePipeline(w http.ResponseWriter, r *http.Request) {
 	batch := engine.NewVolumeBatch(s.workshop, s.store)
 	pipeline := engine.NewStudioPipeline(s.orch, batch, s.store)
 
+	// Fail-Closed：开书流水线在项目创世入库时点（ProjectID 首次可知）登记生产锁；
+	// 锁在位期间调度器续产跳过、正史写入口 409、CLI produce 拒绝。
+	bookHook, trackChapter, releaseProduction := coord.BindProduction(s.store, "浏览器开书")
+	defer releaseProduction()
+
 	isSSE := strings.Contains(r.Header.Get("Accept"), "text/event-stream") || r.URL.Query().Get("stream") == "true"
 	if isSSE {
 		rc := http.NewResponseController(w)
@@ -146,18 +152,20 @@ func (s *Server) handlePipeline(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		req := engine.PipelineRequest{
-			Title:           reqBody.Title,
-			TargetPlatform:  reqBody.TargetPlatform,
-			Concept:         reqBody.Concept,
-			ReasoningModel:  reasoningModel,
-			Volumes:         reqBody.Volumes,
-			AutoLockIntents: autoLock,
-			WordsTarget:     words,
-			MaxRewriteLoops: loops,
-			NarrativeStyle:  style,
-			ChapterFrom:     reqBody.ChapterFrom,
-			RunID:           runID,
+			Title:            reqBody.Title,
+			TargetPlatform:   reqBody.TargetPlatform,
+			Concept:          reqBody.Concept,
+			ReasoningModel:   reasoningModel,
+			Volumes:          reqBody.Volumes,
+			AutoLockIntents:  autoLock,
+			WordsTarget:      words,
+			MaxRewriteLoops:  loops,
+			NarrativeStyle:   style,
+			ChapterFrom:      reqBody.ChapterFrom,
+			RunID:            runID,
+			OnProjectCreated: bookHook,
 			OnProgress: func(ev engine.PipelineEvent) {
+				trackChapter(ev.ChapterIndex)
 				evBytes, _ := json.Marshal(ev)
 				safeWrite(fmt.Sprintf("data: %s\n\n", string(evBytes)))
 			},
@@ -182,17 +190,21 @@ func (s *Server) handlePipeline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := engine.PipelineRequest{
-		Title:           reqBody.Title,
-		TargetPlatform:  reqBody.TargetPlatform,
-		Concept:         reqBody.Concept,
-		ReasoningModel:  reasoningModel,
-		Volumes:         reqBody.Volumes,
-		AutoLockIntents: autoLock,
-		WordsTarget:     words,
-		MaxRewriteLoops: loops,
-		NarrativeStyle:  style,
-		ChapterFrom:     reqBody.ChapterFrom,
-		RunID:           runID,
+		Title:            reqBody.Title,
+		TargetPlatform:   reqBody.TargetPlatform,
+		Concept:          reqBody.Concept,
+		ReasoningModel:   reasoningModel,
+		Volumes:          reqBody.Volumes,
+		AutoLockIntents:  autoLock,
+		WordsTarget:      words,
+		MaxRewriteLoops:  loops,
+		NarrativeStyle:   style,
+		ChapterFrom:      reqBody.ChapterFrom,
+		RunID:            runID,
+		OnProjectCreated: bookHook,
+		OnProgress: func(ev engine.PipelineEvent) {
+			trackChapter(ev.ChapterIndex)
+		},
 	}
 
 	res, err := pipeline.Run(r.Context(), req)
