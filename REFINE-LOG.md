@@ -404,11 +404,36 @@ last-writer-wins，且 `CommitChapter` 的 `StateMutation` 结算非幂等。
 验证：`internal/coord` 单测 5 例；调度器忙跳过用例；白盒接线测试
 （4 个写入口 409 + 租约端点 + 生产结束后 201 恢复）；全量 `go test ./... -race` 全绿。
 
+### 第四轮加固：协调层升级为 SQLite 单一事实源（跨进程互斥，2026-10-12 续）
+
+第三轮的编辑租约/生产锁存于**进程内存**，只覆盖守护服务内的调度器与 UI；
+CLI 无头生产（`novel-studio produce`）是独立进程，仍是互斥盲区。
+本轮按“单一事实源、无双轨”原则完成升级：
+
+1. **契约收窄**（`internal/coord`）：只保留租约类型（edit/production）、
+   `ErrBusy` 哨兵与 TTL/心跳常量；内存实现整体移除。
+2. **存储层**（`internal/store/sqlite_store_locks.go` + 迁移 `coordination_leases` 表）：
+   - `UpsertEditLease` / `DeleteEditLease` / `GetLiveLease`（过期即不可见）；
+   - `AcquireProductionLease`：`BEGIN IMMEDIATE` 事务内清理过期行 + 查在途租约
+     （任意存活租约 → 返回阻塞租约 + `ErrBusy`）→ 写入带 holder token 的生产锁；
+   - `HeartbeatProductionLease`（holder 隔离续期 + 章节号跟随）、
+     `ReleaseProductionLease`（仅 holder 匹配可释放，代际隔离）、
+     `CleanupExpiredLeases`（守护服务启动期清理崩溃残留）。
+3. **三方接线**：守护调度器（RunContinuation）、UI 一键成章（handleWorkshopProduce）、
+   CLI produce 全部改为“持锁生产 + 心跳续期 + defer 释放”；失败路径
+   （编辑租约在场 / 已有生产）一律拒绝并展示对方标签与章节号。
+   - UI 一键成章视为人工接管：先释放本窗口编辑租约再取生产锁；
+   - 浏览器心跳租约写入同一张表，因此 CLI 也能看见“人工在场”并拒绝。
+4. **进程崩溃兜底**：租约带 TTL（编辑 120s / 生产 120s，30s 心跳），
+   崩溃进程的锁自动过期，不再需要人工清理。
+
+验证：store 双实例（模拟守护/CLI）5 例跨进程测试；CLI 忙碌路径 2 例
+（编辑租约/生产锁在场 → 退出码 1 + 文案 + 无残留锁）；全量
+`go test ./... -race` 全绿。
+
 ### 后续待办（已识别，未在本轮处理）
 
-- 跨进程场景（CLI `produce` 与守护服务同时运行）的互斥需要文件锁/DB 锁，
-  进程内协调器不覆盖；建议后续以 SQLite 锁表实现。
 - 排程器 `RunBook`（开书）在项目创建前无 ID，未登记生产锁；开书中的
-  新项目理论窗口极窄，后续可在 pipeline 事件携带 ProjectID 后补齐。
+  新项目窗口极窄，后续可在 pipeline 事件携带 ProjectID 后补齐。
 
 

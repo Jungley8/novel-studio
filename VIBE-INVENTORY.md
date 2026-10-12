@@ -71,6 +71,8 @@
 | 12 | **切换恢复“最近推进的一章”**（`checkpoint?latest=true`：兼顾下一章草稿与已归档章节重修稿，不再只看下一章）| `store` + `handlers_project.go` + `api/client.js` + `workbenchActions` | P1 | 🟢 已完成 |
 | 13 | **前台编辑 ↔ 后台生产并发互斥**（`internal/coord`：心跳编辑租约 + 生产锁；调度器遇忙跳过下趟重试；定稿/撤回/删除/一键成章均 409 Fail-Closed）| `internal/coord` + `scheduler` + `scheduler_runtime.go` + `handlers_*` + `appState` 心跳 | P0 | 🟢 已完成 |
 | 14 | **并发互斥回归测试**（coord 单测 5 例；调度器跳过且不记 last_run；白盒接线：4 个正史写入口 409 + 租约端点往返 + 生产结束后恢复写入）| `coord_test.go` + `scheduler_test.go` + `coord_wiring_test.go` | P0 | 🟢 已完成 |
+| 15 | **跨进程协调升级**（内存租约 → SQLite `coordination_leases` 单一事实源：edit/production 双租约 + holder token + TTL 心跳；CLI `produce` 接入排斥门禁；调度器/SSE/CLI 三方互斥）| `domain/coordination.go` + `store` 租约方法 + `cmd/novel-studio/produce.go` | P0 | 🟢 已完成 |
+| 16 | **跨进程回归测试**（双 store 实例模拟守护/CLI：租约可见性、双向排斥、holder 隔离、过期接管与清理；CLI 忙碌路径退出码 1 + 忙碌文案 + 无残留锁）| `sqlite_store_locks_test.go` + `cmd/.../produce_test.go` | P0 | 🟢 已完成 |
 
 验证：`pnpm test`（3/3 通过）；`pnpm build` 通过；`go build ./... && go test ./... -race -count=1` 全绿（含新增 `TestCodexUpdate_RejectsForeignProjectEntry`）；`gofmt -w` 完成。
 
