@@ -19,7 +19,9 @@ import (
 //     节奏 buildTensionCurvePrompt ← beats；平台 buildPlatformStylePrompt；
 //     对话比 buildDialogueRatioPrompt ← beats；去AI味铁律硬编码。
 //     LOCKED 意图卡可改写 POV 行。
-//   - user：书名/章节/字数 + 世界法则 WorldRules + 主角 protNameLevel/protInventory
+//   - user：书名/章节/字数 + 世界法则 WorldRules（标题【世界法则与公理】
+//     render.go:184）+ 主角【主角状态参考】`%s | 携带物品：%s`（render.go:187-188，
+//     protNameLevel/protInventory，见 orchestrator_codex.go:226-238）
 //     + anchorSection（StyleVaultAnchor 主锚 + TailAnchor 辅锚 +
 //     BuildMotifConceptPrompt 母题）+ CodexContextText + wordBudget
 //     buildBeatWordBudgetPrompt ← beats + beatsJSON；LOCKED 意图追加
@@ -31,17 +33,25 @@ import (
 //   - system：章型定位 typeGuidance（5 章型之一）+ phaseGuidance + hookRule。
 //   - user：作品信息 + premise buildStoryPremiseBlock + typeGuidance +
 //     rhythmForesight（domain.PlanVolumeRhythm）+ milestone
-//     BuildMilestoneContextBlock + 世界公理（WorldRules + buildVolumeContextBlock
-//     + ActivePowerTier 内联）+ 主角机 protNameLevel/protInventory/protGoal +
-//     codex + RollingCanon + HistoricalCallbacks + hooksSummary +
+//     BuildMilestoneContextBlock + 世界公理（标题【世界公理与不可违背法则】
+//     beats.go:232；WorldRules + buildVolumeContextBlock
+//     + ActivePowerTier 内联）+ 主角【主角当前状态机】三行（beats.go:235-238，
+//     protNameLevel/protInventory/protGoal，见 orchestrator_codex.go:226-251）+
+//     codex + RollingCanon + HistoricalCallbacks + hooksSummary（beats.go:138-154，
+//     条目行 `- %s[%s] %s (目标回收: 第 %d 章)`半角括号 + 【🔥近期临期】前缀）+
 //     coreConflict + plan buildPlanPromptBlock ← SelectedPlanText + intent
 //     buildChapterIntentPromptBlock ← LOCKED ConsumedIntent。
+//     内容源 fallback 链（beats.go:202-215）：title/platform/worldRules/protEntry
+//     全部取自 horizon（horizon.Project.Title/TargetPlatform），无回退；
+//     预览同样 horizon-first，p 仅作 horizon 缺失时的防御备份。
 //   - 有里程碑块，无母题块/氛围块/文风锚。
 //
 // 预览复用原则：只嵌入生产侧已导出的块构造器（BuildMotifConceptPrompt、
-// BuildMilestoneContextBlock）或做只读展示拼接（raw 字段原文展示，不含任何
+// BuildMilestoneContextBlock、PreviewProtNameLevel/PreviewProtInventory/
+// PreviewProtGoal 透传）或做只读展示拼接（raw 字段原文展示，不含任何
 // 定位/清洗/匹配逻辑）；调不到生产块的只做原文展示并标注来源，绝不手写第
-// 三份定位逻辑。为空则整块省略，不输出占位。
+// 三份定位逻辑。为空则整块省略，不输出占位（主角块除外：生产 helper 自带
+// 未知/无/暂无回退，恒有输出，预览逐字调用故同样恒有输出）。
 
 // 预览双路受众标识。
 const (
@@ -166,45 +176,48 @@ func newPromptAssembly(audience, systemPrompt string, parts []previewAssemblyPar
 	}
 }
 
-// ---- 两路共有块（同一字符串两路复用，保证共有块一致） ----
+// ---- 分路世界法则块（标题各从生产，内容源不变：horizon.WorldRules） ----
 
-// previewSharedWorldRulesBlock 世界法则原文展示。
-// 渲染生产 user 段标题为【世界法则与公理】，节拍生产 user 段标题为
-// 【世界公理与不可违背法则】，内容同源（horizon.WorldRules）。预览取渲染侧
-// 标题，两路字符串完全一致，便于排障对齐。
-func previewSharedWorldRulesBlock(worldRules string) string {
+// previewRenderWorldRulesBlock 渲染路世界法则块，标题逐字取自生产
+// orchestrator_render.go:184【世界法则与公理】。源空则整块省略。
+func previewRenderWorldRulesBlock(worldRules string) string {
 	if strings.TrimSpace(worldRules) == "" {
 		return ""
 	}
 	return fmt.Sprintf("【世界法则与公理】\n%s", strings.TrimSpace(worldRules))
 }
 
-// previewSharedProtagonistBlock 主角状态原文展示（domain 只读方法，无引擎逻辑）。
-// 渲染生产用姓名/物品两项，节拍生产另加隐秘目标；预览取三项并集，两路一致。
-func previewSharedProtagonistBlock(entry *domain.CodexEntry) string {
-	if entry == nil {
+// previewBeatsWorldRulesBlock 节拍路世界公理块，标题逐字取自生产
+// orchestrator_beats.go:232【世界公理与不可违背法则】。源空则整块省略。
+// 生产同段另有 volumeContext + powerContext（本预览拆为独立组件）。
+func previewBeatsWorldRulesBlock(worldRules string) string {
+	if strings.TrimSpace(worldRules) == "" {
 		return ""
 	}
-	nameLevel := strings.TrimSpace(entry.NameAndLevel())
-	inventory := strings.TrimSpace(entry.Inventory)
-	goal := strings.TrimSpace(entry.Want)
-	if goal == "" {
-		goal = strings.TrimSpace(entry.Summary)
-	}
-	if nameLevel == "" && inventory == "" && goal == "" {
-		return ""
-	}
-	if nameLevel == "" {
-		nameLevel = "未知"
-	}
-	if inventory == "" {
-		inventory = "无"
-	}
-	if goal == "" {
-		goal = "暂无"
-	}
-	return fmt.Sprintf("【主角状态参考】\n%s | 携带物品：%s\n当前隐秘目标：%s", nameLevel, inventory, goal)
+	return fmt.Sprintf("【世界公理与不可违背法则】\n%s", strings.TrimSpace(worldRules))
 }
+
+// ---- 分路主角块（逐字调用生产 helper，删掉三项并集手写实现） ----
+
+// previewRenderProtagonistBlock 渲染路主角块，行文逐字对齐生产
+// orchestrator_render.go:187-188：【主角状态参考】\n%s | 携带物品：%s。
+// 两项均经 engine.PreviewProt* 透传生产 helper（含未知/无回退），故恒有输出。
+func previewRenderProtagonistBlock(entry *domain.CodexEntry) string {
+	return fmt.Sprintf("【主角状态参考】\n%s | 携带物品：%s",
+		engine.PreviewProtNameLevel(entry), engine.PreviewProtInventory(entry))
+}
+
+// previewBeatsProtagonistBlock 节拍路主角块，行文逐字对齐生产
+// orchestrator_beats.go:235-238：【主角当前状态机】\n姓名与等级：%s\n
+// 随身物品栏：%s\n当前隐秘目标：%s。三项均经 engine.PreviewProt* 透传生产
+// helper（含未知/无/暂无回退），故恒有输出。生产同段另有 codexContext
+// （本预览拆为独立组件）。
+func previewBeatsProtagonistBlock(entry *domain.CodexEntry) string {
+	return fmt.Sprintf("【主角当前状态机】\n姓名与等级：%s\n随身物品栏：%s\n当前隐秘目标：%s",
+		engine.PreviewProtNameLevel(entry), engine.PreviewProtInventory(entry), engine.PreviewProtGoal(entry))
+}
+
+// ---- 唯一共有块：全域百科（同一字符串两路复用，保证一致） ----
 
 // previewSharedCodexBlock 全域百科原文展示（horizon.CodexContextText 自带
 // 【出场世界观实体与时空状态】表头，预览不另加包装）。为空则整块省略。
@@ -389,15 +402,19 @@ func previewBeatsCanonBlock(rollingCanon, historicalCallbacks string) string {
 	return b.String()
 }
 
-// previewBeatsHooksBlock 开放伏笔原文罗列。临期（🔥）判定为生产推演逻辑，
-// 预览不做标记，仅罗列状态与目标章节原文。
+// previewBeatsHooksBlock 开放伏笔原文罗列，条目行格式逐字取自生产
+// orchestrator_beats.go:151：`- %s[%s] %s (目标回收: 第 %d 章)`（半角括号）。
+// 生产另有【🔥近期临期】前缀（beats.go:142-151，以 UrgentHooks ID 匹配判定，
+// 内联于 DeriveBeatsForChapterType，预览不复写该判定逻辑，仅逐字镜像非临期
+// 行；临期条目生产行首含前缀，预览行首无前缀，特此标注）。无伏笔则整块省略
+// （生产缺省为 "无"，见 beats.go:138；预览循 C3 定式省略空块）。
 func previewBeatsHooksBlock(hooks []*domain.PlotHook) string {
 	var lines []string
 	for _, h := range hooks {
 		if h == nil {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("- [%s] %s（目标回收：第 %d 章）",
+		lines = append(lines, fmt.Sprintf("- [%s] %s (目标回收: 第 %d 章)",
 			strings.TrimSpace(string(h.Status)), strings.TrimSpace(h.Title), h.TargetChapter))
 	}
 	if len(lines) == 0 {
@@ -463,6 +480,9 @@ const beatsSystemPrompt = `你是一名网络小说架构与读者心理学总�
 （生产节拍 system 另含本章节奏定位 typeGuidance 与节拍 JSON schema；章型判定为生产运行时逻辑，预览不预判。详见 orchestrator_beats.go DeriveBeatsForChapterType）`
 
 func buildRenderAssembly(p *domain.Project, horizon *engine.CanonHorizon, req PromptPreviewRequest) PromptAssemblyPreview {
+	// 内容源 fallback 链：渲染生产 project := horizon.Project（render.go:82），
+	// 预览同样 horizon-first，p 仅作 horizon 缺失时的防御备份。
+	proj := p
 	var worldRules, styleVault, tailAnchor, codexText string
 	var protEntry *domain.CodexEntry
 	if horizon != nil {
@@ -471,21 +491,24 @@ func buildRenderAssembly(p *domain.Project, horizon *engine.CanonHorizon, req Pr
 		tailAnchor = horizon.TailAnchor
 		codexText = horizon.CodexContextText
 		protEntry = horizon.ProtagonistEntry
+		if horizon.Project != nil {
+			proj = horizon.Project
+		}
 	}
-	if strings.TrimSpace(worldRules) == "" && p != nil {
-		worldRules = p.WorldRules
+	if strings.TrimSpace(worldRules) == "" && proj != nil {
+		worldRules = proj.WorldRules
 	}
 	var platform string
-	if p != nil {
-		platform = p.TargetPlatform
+	if proj != nil {
+		platform = proj.TargetPlatform
 	}
 	parts := []previewAssemblyPart{
-		{"世界法则与公理 (Render)", "渲染提示词 user 段：世界法则原文（与节拍路共有块一致）", previewSharedWorldRulesBlock(worldRules)},
+		{"世界法则与公理 (Render)", "渲染提示词 user 段：世界法则原文，标题取自生产 render.go:184", previewRenderWorldRulesBlock(worldRules)},
 		{"目标平台调性 (Render)", "渲染提示词 system 段来源：平台原文（生产包装见 buildPlatformStylePrompt）", previewRenderPlatformBlock(platform)},
-		{"视觉与氛围锚点 (Render)", "渲染提示词 system 段来源：氛围锚点原文，渲染路独有", previewRenderAtmosphereBlock(p)},
-		{"有意母题与符号 (Render)", "渲染提示词注入块：生产块逐字同源，渲染路独有", previewMotifBlock(p)},
+		{"视觉与氛围锚点 (Render)", "渲染提示词 system 段来源：氛围锚点原文，渲染路独有", previewRenderAtmosphereBlock(proj)},
+		{"有意母题与符号 (Render)", "渲染提示词注入块：生产块逐字同源，渲染路独有", previewMotifBlock(proj)},
 		{"文风锚定 (Render)", "渲染提示词 user 段：主文风锚 + 上章收尾腔调锚原文，渲染路独有", previewRenderStyleAnchors(styleVault, tailAnchor)},
-		{"主角状态参考 (Render)", "渲染提示词 user 段：主角状态原文（与节拍路共有块一致）", previewSharedProtagonistBlock(protEntry)},
+		{"主角状态参考 (Render)", "渲染提示词 user 段：逐字对齐生产 render.go:187-188（透传生产 helper）", previewRenderProtagonistBlock(protEntry)},
 		{"全域百科与关联 (Render)", "渲染提示词 user 段：Codex 原文（与节拍路共有块一致），为空整块省略", previewSharedCodexBlock(codexText)},
 		{"场景戏剧规格 (Render)", "渲染场景输入：老请求字段展示，全空则省略", previewRenderSceneSpec(req)},
 		{"节拍输入与篇幅 (Render)", "渲染提示词 user 段输入：节拍 JSON 原文与目标字数", previewRenderBeatsInput(req.Beats, req.WordsTarget)},
@@ -494,20 +517,18 @@ func buildRenderAssembly(p *domain.Project, horizon *engine.CanonHorizon, req Pr
 }
 
 func buildBeatsAssembly(p *domain.Project, horizon *engine.CanonHorizon, req PromptPreviewRequest, planText string, intent *domain.ChapterIntent) PromptAssemblyPreview {
-	var title, platform, worldRules, rollingCanon, callbacks, codexText string
+	// 内容源 fallback 链对齐生产 beats.go:202-215：title/platform/worldRules/
+	// protEntry 全部取自 horizon（title/platform 只取 horizon.Project），生产无
+	// 回退；预览同样 horizon-first，p 仅作 horizon 缺失时的防御备份。
+	// premise/milestone 生产取 horizon.Project（beats.go:219-221），故同样用 proj。
+	proj := p
+	var worldRules, rollingCanon, callbacks, codexText string
 	var volume *domain.VolumeArc
 	var powerTier *domain.PowerLadderTier
 	var hooks []*domain.PlotHook
 	var protEntry *domain.CodexEntry
-	if p != nil {
-		title = p.Title
-		platform = p.TargetPlatform
-		worldRules = p.WorldRules
-	}
 	if horizon != nil {
-		if strings.TrimSpace(horizon.WorldRules) != "" {
-			worldRules = horizon.WorldRules
-		}
+		worldRules = horizon.WorldRules
 		volume = horizon.CurrentVolume
 		powerTier = horizon.ActivePowerTier
 		rollingCanon = horizon.RollingCanonText
@@ -516,22 +537,25 @@ func buildBeatsAssembly(p *domain.Project, horizon *engine.CanonHorizon, req Pro
 		codexText = horizon.CodexContextText
 		protEntry = horizon.ProtagonistEntry
 		if horizon.Project != nil {
-			if strings.TrimSpace(title) == "" {
-				title = horizon.Project.Title
-			}
-			if strings.TrimSpace(platform) == "" {
-				platform = horizon.Project.TargetPlatform
-			}
+			proj = horizon.Project
 		}
+	}
+	if strings.TrimSpace(worldRules) == "" && proj != nil {
+		worldRules = proj.WorldRules
+	}
+	var title, platform string
+	if proj != nil {
+		title = proj.Title
+		platform = proj.TargetPlatform
 	}
 	parts := []previewAssemblyPart{
 		{"作品信息 (Beats)", "节拍提示词 user 段：书名/平台/章节原文", previewBeatsWorkInfoBlock(title, platform, req.ChapterIndex)},
-		{"全书立意与梗概 (Beats)", "节拍提示词 user 段：立意梗概原文，节拍路独有", previewBeatsPremiseBlock(p)},
-		{"全书宏观节拍定位 (Beats)", "节拍提示词 user 段：生产定位块逐字同源 + 里程碑一览补充，节拍路独有", previewMilestoneBlock(p, req.ChapterIndex)},
+		{"全书立意与梗概 (Beats)", "节拍提示词 user 段：立意梗概原文，节拍路独有", previewBeatsPremiseBlock(proj)},
+		{"全书宏观节拍定位 (Beats)", "节拍提示词 user 段：生产定位块逐字同源 + 里程碑一览补充，节拍路独有", previewMilestoneBlock(proj, req.ChapterIndex)},
 		{"分卷主线任务 (Beats)", "节拍提示词 user 段：分卷原文罗列，节拍路独有", previewBeatsVolumeBlock(volume)},
 		{"战力境界法则 (Beats)", "节拍提示词 user 段：当前境界原文，节拍路独有", previewBeatsPowerBlock(powerTier)},
-		{"世界公理 (Beats)", "节拍提示词 user 段：世界法则原文（与渲染路共有块一致）", previewSharedWorldRulesBlock(worldRules)},
-		{"主角状态机 (Beats)", "节拍提示词 user 段：主角状态原文（与渲染路共有块一致）", previewSharedProtagonistBlock(protEntry)},
+		{"世界公理 (Beats)", "节拍提示词 user 段：世界公理原文，标题取自生产 beats.go:232", previewBeatsWorldRulesBlock(worldRules)},
+		{"主角状态机 (Beats)", "节拍提示词 user 段：逐字对齐生产 beats.go:235-238（透传生产 helper）", previewBeatsProtagonistBlock(protEntry)},
 		{"全域百科与关联 (Beats)", "节拍提示词 user 段：Codex 原文（与渲染路共有块一致），为空整块省略", previewSharedCodexBlock(codexText)},
 		{"前序正史视界 (Beats)", "节拍提示词 user 段：滚动正史与历史回调原文，节拍路独有", previewBeatsCanonBlock(rollingCanon, callbacks)},
 		{"开放伏笔 (Beats)", "节拍提示词 user 段：伏笔台账原文罗列，节拍路独有", previewBeatsHooksBlock(hooks)},
