@@ -1,8 +1,80 @@
-// 作品作用域状态：单一事实源。
+// 作品作用域与全局作用域划分：单一事实源。
 //
-// 所有“作品级”瞬态状态（在途手稿、审校结论、停线信息、弹窗调制基质…）
-// 都属于一个作品的上下文。切换作品时必须整体清空，严禁把上一个作品
-// 的内容/断点/实体 id 串入新作品（Fail-Closed：宁可清空重来，不可串稿）。
+// 全局域（Studio 全局管理与统筹）：
+// 多作品总览、灵感 Inbox、全局对话、全自动流水线、停线待办、自动化排程、系统设置。
+//
+// 作品域（单部小说的创作生命周期工序）：
+// 准备构思（作品设定、设定集、全书大纲、章节意图）、
+// 动笔写作（写正文、人物状态、伏笔簿、剧情树）、
+// 成果阅览（章节目录、动态时间线、关系图谱、全书体检、质量指标）。
+
+export const GLOBAL_TABS = [
+  'studio-library',
+  'studio-ideas',
+  'studio-chat',
+  'pipeline',
+  'studio-todos',
+  'studio-automation',
+  'config',
+];
+
+export const PROJECT_TABS = [
+  // 准备构思
+  'framework',
+  'codex',
+  'matrix',
+  'intents',
+  // 动笔写作
+  'workbench',
+  'statemachine',
+  'hooks',
+  'forecast',
+  // 成果阅览
+  'chapters',
+  'activity',
+  'graph',
+  'analytics',
+  'metrics',
+];
+
+export function isGlobalTab(tabId) {
+  return GLOBAL_TABS.includes(tabId);
+}
+
+export function isProjectTab(tabId) {
+  return PROJECT_TABS.includes(tabId);
+}
+
+export function getTabScope(tabId) {
+  return isGlobalTab(tabId) ? 'global' : 'project';
+}
+
+export const TAB_META = {
+  'studio-library': { label: '多作品总览', scope: 'global', group: 'Studio 中枢', desc: '全库小说创作进度、伏笔债务与多作品健康度全景' },
+  'studio-ideas': { label: '灵感 Inbox', scope: 'global', group: 'Studio 中枢', desc: '轻量随笔记录故事脑洞与核心冲突，一键跃迁至创世推演' },
+  'studio-chat': { label: '全局对话', scope: 'global', group: 'Studio 中枢', desc: '跨项目闲聊与宏观设定头脑风暴' },
+  'pipeline': { label: '全自动流水线', scope: 'global', group: 'Studio 中枢', desc: '从核心脑洞一键自动化串通创世、设定推演与批量成章' },
+  'studio-todos': { label: '停线待办', scope: 'global', group: 'Studio 中枢', desc: '全自动流水线中因质检不达标或冲突而需人工介入的章节' },
+  'studio-automation': { label: '自动化排程', scope: 'global', group: 'Studio 中枢', desc: '全书定时续产与开书队列，无人值守流水线排程' },
+  'config': { label: 'AI 系统设置', scope: 'global', group: '系统设置', desc: '接入的大语言模型、API 密钥与模型路由管理' },
+
+  'framework': { label: '作品设定', scope: 'project', group: '准备构思', desc: '作品世界观底层规则、偏好基调与宏观三幕走向' },
+  'codex': { label: '设定集', scope: 'project', group: '准备构思', desc: '人物、势力与世界观档案' },
+  'matrix': { label: '全书大纲', scope: 'project', group: '准备构思', desc: '全书章节结构、分卷分幕与剧情场景路线' },
+  'intents': { label: '章节意图', scope: 'project', group: '准备构思', desc: '按章提炼核心冲突、视角与情绪张力' },
+
+  'workbench': { label: '写正文', scope: 'project', group: '动笔写作', desc: '文学手稿双视界画布、六步闭环工序与四拍推演' },
+  'statemachine': { label: '人物状态', scope: 'project', group: '动笔写作', desc: '主角境界、战力数值与物品变动轨迹' },
+  'hooks': { label: '伏笔簿', scope: 'project', group: '动笔写作', desc: '暗线布设与回收进度追踪' },
+  'forecast': { label: '剧情树', scope: 'project', group: '动笔写作', desc: '多分支剧情前瞻推演与计划路线' },
+
+  'chapters': { label: '章节目录', scope: 'project', group: '成果阅览', desc: '已完稿章节的归档、浏览与版本对比' },
+  'activity': { label: '动态时间线', scope: 'project', group: '成果阅览', desc: '内容生产与变更留痕，全文详情审计' },
+  'graph': { label: '关系图谱', scope: 'project', group: '成果阅览', desc: '实体与势力错综关联图网络' },
+  'analytics': { label: '全书体检', scope: 'project', group: '成果阅览', desc: '全书篇幅节奏、字数分布与情绪走势' },
+  'metrics': { label: '质量指标', scope: 'project', group: '成果阅览', desc: '章节终态、达标率与返工走势看板' },
+};
+
 
 // 默认四拍分段（新章起始状态）。
 export function defaultBeats() {

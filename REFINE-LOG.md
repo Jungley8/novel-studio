@@ -826,6 +826,66 @@ Wave 1 与 Wave 2 之后的第三波闭环升级（P1/P2/P3），各自独立 wo
 - `pnpm build` 纯净构建通过并更新 `web/dist`；
 - `go build ./...` 验证单二进制内嵌 web 打包完全正常。
 
+---
+
+### Wave 5: 全局菜单与作品级菜单完全隔离与页面区分 (Round 19)
+
+#### 1. 作用域单一事实源与元数据设计 (`web/src/stores/domain/projectScope.js`)
+- **全局域 (Global Scope / 7 模块)**：
+  - `studio-library`: 多作品总览（全库进度、健康度、伏笔债务全景）
+  - `studio-ideas`: 灵感 Inbox（轻量随笔、故事脑洞记录与转创世推演）
+  - `studio-chat`: 全局对话（跨项目闲聊与宏观设定头脑风暴）
+  - `pipeline`: 全自动流水线（创世到批量成章自主推演流水线）
+  - `studio-todos`: 停线待办（全自动流水线中需人工介入的质量卡点）
+  - `studio-automation`: 自动化排程（全书定时续产与无人值守排程）
+  - `config`: AI 系统设置（大语言模型接入、API 密钥与模型路由）
+- **作品域 (Project Scope / 13 模块，三部曲生命周期)**：
+  - 准备构思：`framework`（作品设定）、`codex`（设定集）、`matrix`（全书大纲）、`intents`（章节意图）
+  - 动笔写作：`workbench`（写正文）、`statemachine`（人物状态）、`hooks`（伏笔簿）、`forecast`（剧情树）
+  - 成果阅览：`chapters`（章节目录）、`activity`（动态时间线）、`graph`（关系图谱）、`analytics`（全书体检）、`metrics`（质量指标）
+- **作用域工具函数与全量元数据字典**：
+  - `isGlobalTab(tabId)`、`isProjectTab(tabId)`、`getTabScope(tabId)`；
+  - `TAB_META` 字典集中统一全系统 20 个模块的名称、描述、作用域与分组，杜绝零散硬编码。
+
+#### 2. 状态机跨域导航与记忆管理 (`web/src/stores/appState.js` & `projectActions.js`)
+- **双向断点记忆**：
+  - `state.lastGlobalTab`（默认 `studio-library`）与 `state.lastProjectTab`（默认 `workbench`）各自独立追踪用户在两域中的最近停留点；
+  - `actions.switchToGlobal(tab?)` 与 `actions.switchToProject(pid?, tab?)` 互通时自动恢复对应域的上一次工作页面；
+- **Fail-Closed 保护与平滑回退**：
+  - 作品库为空时，调用 `switchToProject` 严格拒绝进入作品模式，引导弹出新建作品对话框；
+  - 当作品在 `deleteProject` 中被全量删除时，系统自动切回全局 `studio-library`，防止用户卡在空白作品页面。
+
+#### 3. 侧边栏物理完全隔离 (`web/src/components/layout/AppSidebar.vue`)
+- **全局 Studio 模式 (`isGlobalMode === true`)**：
+  - 顶栏展示墨 Logo 与 `STUDIO 全局中枢` 标识，附带金黄 `STUDIO` 徽章；
+  - 呈现「活跃作品通道」卡片：显示当前聚焦作品书名、平台，支持快速切换作品，并提供醒目 `进入创作空间 →` 高亮快捷按钮；
+  - 导航区严格只渲染 Studio 6 模块 + AI 系统配置，**绝对不混入任何作品级菜单**；
+  - 底栏显示全库多作品架构状态与离线安全运行标识（隐藏单作品导出备份按钮）。
+- **作品创作模式 (`isGlobalMode === false`)**：
+  - 顶栏置顶提供醒目精致的 `← 返回 Studio 全局` 胶囊返回按钮，一键切回多作品总览；
+  - 展示单作品切换下拉框、新建作品、以及危险操作二次确认彻底删除当前作品按钮；
+  - 导航区严格只渲染作品三部曲工序（准备构思 4 模块、动笔写作 4 模块、成果阅览 5 模块），**绝对不混入任何 Studio 全局菜单**；
+  - 底栏专属提供针对当前作品的「导出 JSON 备份」和「导出 Markdown 全书」下载按钮。
+
+#### 4. 顶部 Header 与页面容器隔离 (`AppHeader.vue` & `App.vue`)
+- **AppHeader 区分**：
+  - 全局模式：展示 `STUDIO 全局` 状态微章、当前功能名称与描述副标；右侧提供直达 `创作《书名》 →` 快捷按钮，**完全隐藏写正文视界切换、专注模式、角色对戏与单作品一键成章**；
+  - 作品模式：展示 `作品创作` 空间徽标、当前作品标题、平台、分卷名及当前工序名称；右侧完整保留正文工作台工具链、角色对戏与单作品一键成章。
+- **App.vue 容器层零状态兜底**：
+  - 当用户处于作品空间但作品库暂无作品或未选中时，统一呈现优雅的引导卡片（提供「返回多作品总览」与「新建小说作品」双入口），彻底杜绝白屏。
+
+#### 5. 专项测试覆盖与全链路验证
+- **`web/test/nav-scope-isolation.test.mjs`**：新增 4 项专项回归测试：
+  - 作用域严格互斥且全覆盖（20 个 Tab 严格归属，元数据齐备）；
+  - `computedState.navScope / isGlobalScope / isProjectScope` 响应式正确性；
+  - 双域记忆跳转与断点恢复；
+  - 作品库为空时 Fail-Closed 拒绝进入并保持在全局模式。
+- **验证结果**：
+  - `pnpm --dir web test` 11/11 测试全绿通过；
+  - `pnpm --dir web build` 生产构建成功；
+  - `go test ./internal/server/... ./internal/store/... -race -count=1` 全部通过。
+
+
 
 
 

@@ -355,8 +355,7 @@ async function handleDeleteProject(item) {
 
 async function openProject(projectId) {
   try {
-    await actions.selectProject(projectId);
-    state.activeTab = 'workbench';
+    await actions.switchToProject(projectId, 'workbench');
   } catch (e) {
     console.error('Failed to open project:', e);
   }

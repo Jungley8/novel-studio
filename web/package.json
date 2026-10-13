@@ -8,7 +8,7 @@
     "build": "vite build",
     "build:dev": "vite build --minify false --mode development",
     "preview": "vite preview --no-open",
-    "test": "node --import ./test/register-loader.mjs --test test/project-switch.test.mjs"
+    "test": "node --import ./test/register-loader.mjs --test test/project-switch.test.mjs test/nav-scope-isolation.test.mjs"
   },
   "dependencies": {
     "lucide-vue-next": "^0.475.0",

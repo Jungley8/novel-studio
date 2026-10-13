@@ -21,7 +21,13 @@
           <span>新建作品</span>
         </button>
         <button 
-          @click="state.activeTab = 'config'"
+          @click="actions.switchToGlobal('studio-library')"
+          class="w-full py-2 px-4 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer">
+          <Library class="w-3.5 h-3.5 text-brand-amber" />
+          <span>前往 Studio 多作品总览</span>
+        </button>
+        <button 
+          @click="actions.setActiveTab('config')"
           class="w-full py-2 px-4 bg-atelier-850 hover:bg-atelier-800 text-ink-200 border border-atelier-700 rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer">
           <Settings class="w-3.5 h-3.5 text-ink-400" />
           <span>配置 AI</span>
@@ -71,7 +77,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { state, computedState, actions, notify } from '../stores/appState';
 import { api } from '../api/client';
-import { Plus, Settings, Minimize2 } from 'lucide-vue-next';
+import { Plus, Settings, Minimize2, Library } from 'lucide-vue-next';
 import WorkbenchStepsPanel from '../components/workbench/WorkbenchStepsPanel.vue';
 import WorkbenchCanvasPanel from '../components/workbench/WorkbenchCanvasPanel.vue';
 

@@ -97,15 +97,32 @@
 
 ---
 
+## 全局菜单与作品级菜单完全物理隔离专项（Wave 5 / Round 25）
+
+目标：将 Studio 全局菜单（总览、灵感、对话、流水线、待办、排程、配置）与单作品创作生命周期菜单（构思 4 模块、写作 4 模块、成果 5 模块）彻底物理隔离，顶部 Header 与侧边栏 AppSidebar 完全区分，提供清晰醒目的模式切换与返回机制。
+
+| # | 交付 | 模块 / Spec | 优先级 | 状态 |
+|---|------|------------|--------|------|
+| 1 | **作用域单一事实源与元数据字典**（`GLOBAL_TABS` 7 模块 + `PROJECT_TABS` 13 模块严格互斥无交集、`TAB_META` 全元数据字典） | `web/src/stores/domain/projectScope.js` | **P0** | 🟢 已完成 |
+| 2 | **全局与作品双域状态记忆与切换动作**（`lastGlobalTab`/`lastProjectTab` 独立断点追踪，`switchToGlobal`/`switchToProject` 平滑互通与 Fail-Closed 保护） | `web/src/stores/appState.js` + `projectActions.js` | **P0** | 🟢 已完成 |
+| 3 | **侧边栏物理完全隔离**（全局模式：仅 Studio + 配置，带活跃作品通道直达卡片；作品模式：置顶返回 Studio 胶囊按钮，仅三部曲 13 模块，无任何混杂） | `web/src/components/layout/AppSidebar.vue` | **P0** | 🟢 已完成 |
+| 4 | **顶部 Header 页面状态完全区分**（全局模式：Studio 空间微章 + 页面功能描述 + 直达当前书创作胶囊；作品模式：作品名 + 平台 + 当前工序 + 完整正文工具链） | `web/src/components/layout/AppHeader.vue` | **P0** | 🟢 已完成 |
+| 5 | **主视图容器与作品级零状态兜底**（作品创作空间无有效作品时，优雅引导卡片返回总览或新建作品，杜绝白屏） | `web/src/App.vue` + `WorkbenchView.vue` + `StudioLibraryView.vue` | **P1** | 🟢 已完成 |
+| 6 | **作用域物理隔离专项回归测试**（互斥与全覆盖断言、响应式计算属性验证、双域记忆断点恢复、空作品库保护） | `web/test/nav-scope-isolation.test.mjs` | **P0** | 🟢 已完成 |
+
+---
+
 ## 精炼成果与总进度
 
 - 🟢 **已精炼完成**: 5/5 核心双轨制与割裂架构缺陷（主角、势力阵营、世界公理、关键人物影子、种子伏笔冗余）
 - 🟢 **AI-First 改造**: 10/10 交付完成（编排器引擎/CLI/API、框架级级联、对话持久化全栈、成本面板、默认批产参数、停线待办中心、pipeline 控制台、排程/无人值守）
 - 🟢 **God File 拆分**: 5/5 完成（sqlite_store 14 文件 / WorkbenchView 3 文件 / orchestrator 7 文件 / GraphView 3 文件 / handlers_workshop 5 文件）
 - 🟢 **作品删除与各模块 UX 专项 (Wave 4)**: 9/9 交付完成（后端全级联擦除、409 生产互斥门禁、前端状态切换闭环、7/7 回归单测、全场景危险确认与各模块 UX 增强）
+- 🟢 **全局与作品级菜单完全隔离 (Wave 5)**: 6/6 交付完成（双域单一事实源、Sidebar/Header 物理隔离、视图零状态兜底、11/11 回归单测全绿）
 - 🟡 **进行中**: 0
 - 🔴 **待排期**: 无
 - **Go 测试**: `go test ./... -race -count=1` 全绿通过
-- **前端测试**: `pnpm test`（7/7 通过）
+- **前端测试**: `pnpm test`（11/11 通过）
 - **前端构建**: `pnpm --dir web build` 纯净构建通过
+
 

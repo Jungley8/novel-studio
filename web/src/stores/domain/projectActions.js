@@ -393,6 +393,11 @@ export function createProjectActions(state, notify, helpers, dialogs) {
             state.chapters = [];
             state.hooks = [];
             state.codexEntries = [];
+            if (helpers?.switchToGlobal) {
+              helpers.switchToGlobal('studio-library');
+            } else {
+              state.activeTab = 'studio-library';
+            }
           }
         }
 

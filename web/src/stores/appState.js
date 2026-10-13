@@ -5,7 +5,17 @@ import { createProjectActions } from './domain/projectActions';
 import { createWorkbenchActions } from './domain/workbenchActions';
 import { createMatrixActions } from './domain/matrixActions';
 import { createCodexActions } from './domain/codexActions';
-import { createDefaultWorkbench, createDefaultLinterReport, createDefaultPipelineState } from './domain/projectScope';
+import { 
+  createDefaultWorkbench, 
+  createDefaultLinterReport, 
+  createDefaultPipelineState,
+  GLOBAL_TABS,
+  PROJECT_TABS,
+  isGlobalTab,
+  isProjectTab,
+  getTabScope,
+  TAB_META,
+} from './domain/projectScope';
 
 function loadStoredMessages() {
   if (typeof window === 'undefined') return [];
@@ -22,6 +32,8 @@ function loadStoredMessages() {
 export const state = reactive({
   // Navigation & View
   activeTab: 'workbench',
+  lastGlobalTab: 'studio-library',
+  lastProjectTab: 'workbench',
   isLoading: false,
   globalLoadingMessage: '',
   showWorkflowPanel: true,
@@ -144,6 +156,10 @@ export const state = reactive({
 });
 
 export const computedState = {
+  navScope: computed(() => getTabScope(state.activeTab)),
+  isGlobalScope: computed(() => isGlobalTab(state.activeTab)),
+  isProjectScope: computed(() => isProjectTab(state.activeTab)),
+  activeTabMeta: computed(() => TAB_META[state.activeTab] || { label: state.activeTab, desc: '', scope: getTabScope(state.activeTab), group: '' }),
   nextChapterIndex: computed(() => state.chapters.length + 1),
   currentWorkingChapterIndex: computed(() => state.editingChapterIndex || (state.chapters.length + 1)),
   activeHooksList: computed(() => state.hooks.filter(h => h.status !== 'RESOLVED')),
@@ -483,6 +499,43 @@ export const actions = {
   alert: dialogs.alert,
   prompt: dialogs.prompt,
   requestNotificationPermission,
+  setActiveTab(tabId) {
+    if (!tabId) return;
+    state.activeTab = tabId;
+    if (isGlobalTab(tabId)) {
+      state.lastGlobalTab = tabId;
+    } else if (isProjectTab(tabId)) {
+      state.lastProjectTab = tabId;
+    }
+
+    if (tabId === 'matrix') matrixActs.loadMatrixOverview();
+    if (tabId === 'codex') codexActs.loadCodexEntries();
+    if (tabId === 'graph') {
+      codexActs.loadCodexEntries();
+      codexActs.loadCodexRelations();
+    }
+    if (tabId === 'analytics') matrixActs.loadAnalytics();
+  },
+  switchToGlobal(targetTab = null) {
+    const tab = targetTab || state.lastGlobalTab || 'studio-library';
+    this.setActiveTab(tab);
+  },
+  async switchToProject(projectId = null, targetTab = null) {
+    if (projectId && projectId !== state.selectedProjectId) {
+      const ok = await projectActs.selectProject(projectId);
+      if (!ok) return false;
+    } else if (!state.selectedProjectId && state.projects.length > 0) {
+      const ok = await projectActs.selectProject(state.projects[0].id);
+      if (!ok) return false;
+    } else if (state.projects.length === 0) {
+      notify('暂无小说作品', '请先新建一部作品后再进入创作空间', 'info');
+      state.showNewProjectModal = true;
+      return false;
+    }
+    const tab = targetTab || state.lastProjectTab || 'workbench';
+    this.setActiveTab(tab);
+    return true;
+  },
   markAllMessagesRead() {
     state.messages.forEach(m => { m.read = true; });
     try {
@@ -511,4 +564,9 @@ export const actions = {
     } catch (_) {}
   },
 };
+
+actionHelpers.switchToGlobal = (tab) => actions.switchToGlobal(tab);
+actionHelpers.switchToProject = (pid, tab) => actions.switchToProject(pid, tab);
+actionHelpers.setActiveTab = (tab) => actions.setActiveTab(tab);
+
 
