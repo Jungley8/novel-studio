@@ -94,6 +94,7 @@ export function createDefaultWorkbench() {
       power_delta: '',
     },
     content: '',
+    originalDraftBeforeRewrite: null,
   };
 }
 

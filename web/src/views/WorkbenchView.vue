@@ -175,6 +175,8 @@ async function handleRewriteDraft() {
   }, 1000);
 
   const targetIndex = computedState.currentWorkingChapterIndex.value;
+  const originalDraft = state.workbench.content;
+  state.workbench.originalDraftBeforeRewrite = originalDraft;
   notify(
     '精修已启动',
     `正在依照修改意见优化第 ${targetIndex} 章手稿`,

@@ -409,3 +409,36 @@ func TestReconcileNarrativeInventoryDelta(t *testing.T) {
 		t.Fatalf("expected warning for unowned unevidenced consume")
 	}
 }
+
+func TestReconcileNarrativeInventoryDelta_MultiPartAndSystemPrefix(t *testing.T) {
+	prot := &CodexEntry{
+		Name:      "林尘",
+		Inventory: "随身物品待起草",
+	}
+
+	// 真实报错复现用例：
+	// 正文写的是林天傲画押认罪并扔下《弟子引资入局协议》霸王条款副本
+	// 状态机为：-林天傲画押的, -系统录入《弟子引资入局协议》霸王条款副本
+	content := "林天傲脸色惨白，颤抖着在血书上画押认罪，并将那份《弟子引资入局协议》霸王条款副本狠狠甩在案几之上。"
+	mutation := StateMutation{
+		InventoryDelta: "-林天傲画押的, -系统录入《弟子引资入局协议》霸王条款副本",
+	}
+
+	reconciled := ReconcileNarrativeInventoryDelta(prot, content, 1, mutation)
+	if !strings.Contains(reconciled.InventoryDelta, "+林天傲画押") {
+		t.Fatalf("expected reconciled delta to contain '+林天傲画押', got: %s", reconciled.InventoryDelta)
+	}
+	if !strings.Contains(reconciled.InventoryDelta, "+《弟子引资入局协议》霸王条款副本") {
+		t.Fatalf("expected reconciled delta to contain '+《弟子引资入局协议》霸王条款副本', got: %s", reconciled.InventoryDelta)
+	}
+
+	trail, err := DryRunStateMutation(prot, reconciled)
+	if err != nil {
+		t.Fatalf("DryRunStateMutation failed: %v", err)
+	}
+	for _, tr := range trail {
+		if strings.Contains(tr, "[Ledger Warning]") {
+			t.Fatalf("unexpected warning in multi-part reconciled trail: %s", tr)
+		}
+	}
+}

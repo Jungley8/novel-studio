@@ -542,6 +542,75 @@
             保存至章节目录，记录剧情变化，开启下一章。
           </p>
 
+          <!-- 状态机变更与实体账本核对 (State Mutation Ledger) -->
+          <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 text-xs space-y-2.5">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-brand-amber flex items-center gap-1.5">
+                <ShieldCheck class="w-3.5 h-3.5" />
+                <span>本章状态机结算</span>
+              </span>
+              <div class="flex items-center gap-2 text-[10px]">
+                <button 
+                  type="button"
+                  @click="autoExtractStateFromContent"
+                  class="text-brand-amber hover:underline cursor-pointer"
+                  title="自动从正文中提取剧情物品并补充持有">
+                  正文提取
+                </button>
+                <span class="text-atelier-700">|</span>
+                <button 
+                  type="button"
+                  v-if="state.workbench.stateMutation?.inventory_delta || state.workbench.stateMutation?.power_delta"
+                  @click="clearStateMutation"
+                  class="text-ink-400 hover:text-brand-rose transition cursor-pointer"
+                  title="清空本章状态变更，避免定稿拦截">
+                  清空变更
+                </button>
+              </div>
+            </div>
+            
+            <div class="space-y-2">
+              <div>
+                <label class="text-[10px] text-ink-400">战力变更 (Power Delta)：</label>
+                <input 
+                  v-model="state.workbench.stateMutation.power_delta" 
+                  type="text" 
+                  placeholder="例如：炼气三层 (留空表示无突破)" 
+                  class="w-full mt-0.5 px-2.5 py-1.5 bg-atelier-900 border border-atelier-800 rounded text-[11px] text-ink-100 placeholder-ink-600 focus:outline-none focus:border-brand-amber/50" />
+              </div>
+              <div>
+                <label class="text-[10px] text-ink-400">物品变动 (Inventory Delta)：</label>
+                <input 
+                  v-model="state.workbench.stateMutation.inventory_delta" 
+                  type="text" 
+                  placeholder="例如：+洗髓丹, -辟毒珠 (留空表示无变动)" 
+                  class="w-full mt-0.5 px-2.5 py-1.5 bg-atelier-900 border border-atelier-800 rounded text-[11px] text-ink-100 placeholder-ink-600 focus:outline-none focus:border-brand-amber/50" />
+              </div>
+            </div>
+            <p class="text-[10px] text-ink-500 leading-normal">
+              定稿时系统自动核验正文叙事证据；若包含未持有的背景旧物消耗，接口已自动追溯补全。
+            </p>
+          </div>
+
+          <!-- 定稿异常/告警安全兜底横幅 -->
+          <div v-if="commitError" class="p-3 rounded-lg bg-red-950/90 border border-red-500/50 text-[11px] space-y-2 animate-fade-in shadow-md">
+            <div class="text-red-300 font-bold flex items-center justify-between">
+              <span class="flex items-center gap-1.5">
+                <AlertTriangle class="w-3.5 h-3.5 text-red-400 shrink-0" />
+                <span>定稿状态机校验拦截</span>
+              </span>
+              <button @click="commitError = null" class="text-ink-400 hover:text-ink-200 text-xs cursor-pointer">✕</button>
+            </div>
+            <p class="text-red-200/90 leading-relaxed break-words font-mono text-[10px]">{{ commitError }}</p>
+            <div class="flex items-center gap-2 pt-1 border-t border-red-500/20">
+              <button 
+                @click="clearMutationAndCommit" 
+                class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded text-xs transition cursor-pointer flex-1 text-center shadow-sm">
+                一键清空状态变更并强制定稿
+              </button>
+            </div>
+          </div>
+
           <button 
             @click="handleCommitChapter"
             :disabled="state.isCommitting || !state.workbench.content.trim()"
@@ -639,6 +708,7 @@ import {
   PenTool,
   Loader2,
   ShieldAlert,
+  AlertTriangle,
   RotateCcw,
   RefreshCw,
   CheckCircle2,
@@ -849,10 +919,48 @@ async function handleReviewDraft() {
   }
 }
 
+const commitError = ref(null);
+
+function clearStateMutation() {
+  state.workbench.stateMutation = {
+    inventory_delta: '',
+    power_delta: '',
+  };
+  commitError.value = null;
+  notify('已清空状态变更', '本章将不携带任何属性变动直接定稿', 'info');
+}
+
+async function clearMutationAndCommit() {
+  clearStateMutation();
+  await handleCommitChapter();
+}
+
+function autoExtractStateFromContent() {
+  const content = state.workbench.content || '';
+  if (!content.trim()) return notify('正文为空', '请先完成正文起草后再执行提取', 'info');
+  
+  const bookMatches = content.match(/《([^》]+)》/g) || [];
+  const uniqueBooks = [...new Set(bookMatches)];
+  
+  if (uniqueBooks.length > 0) {
+    const existing = state.workbench.stateMutation?.inventory_delta || '';
+    const toAdd = uniqueBooks.map(b => `+${b}`).join(', ');
+    state.workbench.stateMutation = {
+      ...(state.workbench.stateMutation || {}),
+      inventory_delta: existing ? `${existing}, ${toAdd}` : toAdd,
+    };
+    commitError.value = null;
+    notify('已自动提取剧情物品', `从正文中发现 ${uniqueBooks.length} 处剧情实体并填入状态机`, 'success');
+  } else {
+    notify('未发现特殊物品', '正文中未提取到书名号或显著宝物，建议手动输入变动', 'info');
+  }
+}
+
 // 保存定稿
 async function handleCommitChapter() {
   if (!state.currentProject || !state.workbench.content.trim()) return;
   state.isCommitting = true;
+  commitError.value = null;
   const targetIndex = computedState.currentWorkingChapterIndex.value;
   try {
     const titleMatch = state.workbench.coreConflict.match(/^[^\n，。！？]+/);
@@ -876,6 +984,7 @@ async function handleCommitChapter() {
       4500,
       { taskType: 'commit', chapterIndex: targetIndex, status: 'completed' }
     );
+    commitError.value = null;
     state.editingChapterIndex = null;
     state.pipelineState.halted = false;
     state.pipelineState.haltInfo = null;
@@ -885,6 +994,7 @@ async function handleCommitChapter() {
     state.activeStep = 1;
   } catch (e) {
     console.error('handleCommitChapter error:', e);
+    commitError.value = e.message || '保存章节发生异常';
     notify('保存失败', e.message || '保存章节发生异常', 'error', 5000, { taskType: 'commit', chapterIndex: targetIndex, status: 'failed' });
   } finally {
     state.isCommitting = false;

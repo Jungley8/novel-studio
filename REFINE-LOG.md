@@ -1010,6 +1010,56 @@ Wave 1 与 Wave 2 之后的第三波闭环升级（P1/P2/P3），各自独立 wo
   - `pnpm --dir web build`：生产打包成功；
   - `go test ./...`：cmd, activity, config, coord, desktop, domain, engine, metrics, notify, scheduler, server, service, store 全库测试全部通过！
 
+### Wave 9: 改写 VSCode 风格 Diff 对比 · 复合实体叙事证据调解 · 定稿状态机安全兜底 (Round 23)
+
+#### 1. 问题定位与设计目标
+1. **改写结果与原文 Diff 对比 (VSCode Diff)**：
+   - **痛点**：全篇精修或划词改写后，界面只替换正文或展示改后文本，作者无法直观感知改动了多少字、哪些语句被删改增补，缺乏控制感与对比审计能力。
+   - **目标**：打造轻量工业级 Diff 算法引擎，支持 VSCode 风格的双栏并排 (Split) 与统一流 (Unified) 视图，精确到行级与中文字/词级高亮（红删绿增、删除线），提供字数增减统计与一键「采用改写」/「还原原文」。
+2. **定稿再次报错：状态机不一致拒绝未持有物品扣减**：
+   - **痛点**：正文生成提到了 `林天傲画押的`、`系统录入《弟子引资入局协议》霸王条款副本` 等背景契约物证，AI 生成的 delta 包含这些物品的扣减；上一轮的全字匹配因 AI 提示词噪声前缀（`系统录入`）或定语助词（`的`）导致 `strings.Contains` 判定失败；手动定稿接口在入库前强制执行 `DryRunStateMutation` 并对 `[Ledger Warning]` 抛 400 阻断，导致作者无法保存。
+   - **目标**：增强叙事证据检测引擎（剥离元提示词噪声、提取书名号实体、复合主谓/动宾关键词对齐），对有正文证据的背景物品自动前置补全调解；在 Step 6 界面提供状态机变更可视化与编辑入口，并提供安全兜底，绝不因状态机警告阻塞作者正常定稿。
+3. **排查自动与手动渠道的逻辑差异**：
+   - **痛点**：用户疑惑为何全自动流水线成章时不报错，而手动在工作台定稿却报错。
+   - **分析**：自动渠道在底层直接调 `store.CommitChapter`（`ApplyStateMutation` 仅将未持有扣减记入账本警告，不返回 error 阻断），且自动流水线经过了 `SettleFromDraft` 正文事实验收与对账；而手动接口 `POST /api/projects/:id/chapters` 额外挂载了严格的 `DryRunStateMutation` 检查，把所有 `[Ledger Warning]` 拦截为 400 错误。
+
+#### 2. 技术实现与架构改进
+- **轻量 Diff 算法引擎 (`web/src/utils/diff.js` & `RewriteDiffViewer.vue`)**：
+  - `tokenizeWords`：中文逐字、英数按单词、保留标点与空白切分；
+  - `computeWordDiff`：公共前后缀修剪 + 细粒度 LCS 动态规划，生成带 `same`/`add`/`del`（兼容 `eq` 别名）的词级标记流；
+  - `computeLineDiff`：行级 LCS 算法，生成新旧行号，相邻紧贴的增删行自动挂载内部词级 diff；
+  - `computeDiffStats`：计算原字数、新字数、净增减（`netDiff`）、增删行数；
+  - `RewriteDiffViewer.vue`：VSCode 经典暗黑配色，顶部统计条、Split/Unified 切换器、行号区、采用/还原/关闭操作区。
+- **工作台画布与划词改写全线整合 (`WorkbenchCanvasPanel.vue` & `WorkbenchView.vue`)**：
+  - `WorkbenchView.vue`：在 `handleRewriteDraft` 启动时暂存 `state.workbench.originalDraftBeforeRewrite`；
+  - `WorkbenchCanvasPanel.vue`：
+    - 工具栏显式挂载 `[改写对比 (VSCode Diff) +N字]` 按钮，有改写差异时高亮提示，点击切换查看 Diff 视图；
+    - 划词改写（`showInlineDiff`）：升级为词级红删绿增高亮对照卡片，展示原字数 ➔ 新字数及净增减，支持「词级对比」与「纯改后文」视图切换。
+- **复合实体叙事证据提纯与自动调解 (`internal/domain/ledger.go`)**：
+  - 逗号与连词拼接：`splitDeltaTokens` 增加 `、` 顿号切分，并针对以「的」「之」结尾的断裂修饰短语自动与后续 token 粘合；
+  - 品名清洗：`cleanNarrativeItemName` 剥离「系统录入」「随身携带」「作为物证」等 Prompt 噪声前缀与末尾「的」；
+  - 深度叙事证据识别 `hasNarrativeEvidence`：
+    - 直接字面全匹配；
+    - 去括号注释匹配；
+    - 书名号《...》提取：只要正文包含书名号或书名内容（如《弟子引资入局协议》）即认定具备证据；
+    - 复合关键词匹配：提取词元，当主谓关键词（如「林天傲」与「画押」）同时出现在正文时，或出现 >=3 字核心名词时，认定具备叙事证据；
+  - 实体库存智能对齐 `findInventoryItemIndex`：支持去注释匹配、归一化品名匹配、书名号核心匹配与非占位字词匹配；
+  - 自动调解注入 `ReconcileNarrativeInventoryDelta`：正文有证据的未登记背景物品自动注入 `+品名` 前置补全，使后续 `REMOVE` 指令在状态机中合法结算，实现定稿零告警。
+- **定稿步骤状态机结算卡片与安全兜底 (`WorkbenchStepsPanel.vue`)**：
+  - Step 6 增加「本章状态机结算 (State Mutation Ledger)」卡片，展示战力变更与物品变动，提供手动编辑输入框、清空变更与「从正文提取」功能；
+  - 遇到 `Ledger Warning` 拦截时，Step 6 展示红色警告横幅，并提供「一键清空状态变更并强制定稿」操作，作者一键即可脱困。
+
+#### 3. 测试与验证全链路
+- **前端测试 (`web/test/diff-engine.test.mjs`)**：
+  - 覆盖 `computeWordDiff`、`computeLineDiff`、`computeDiffStats`，16/16 前端单测全绿；
+  - `pnpm --dir web build` 生产打包成功。
+- **后端测试 (`internal/domain/ledger_test.go` & `internal/server/server_test.go`)**：
+  - `TestReconcileNarrativeInventoryDelta_MultiPartAndSystemPrefix`：测试复现真实报错载荷（`-林天傲画押的, -系统录入《弟子引资入局协议》霸王条款副本`），验证正文包含证据时自动调解且演练结算零告警；
+  - `TestPostChapters_MultiPartEvidenceGatePasses`：服务端真实 HTTP 端点全流程测试，验证 201 Created 成功定稿入库；
+  - `TestPostChapters_EvidenceGateRejectsUnownedConsume`：无正文证据的恶意扣减依然严格被证据门拦截（Fail-Closed 守卫坚固）；
+  - `go test ./...`：全库测试 100% 绿灯通过！
+
+
 
 
 

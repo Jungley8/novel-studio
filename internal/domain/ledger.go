@@ -15,7 +15,20 @@ var (
 	qtyChineseUnitRegex = regexp.MustCompile(`(\d+)\s*(个|颗|块|枚|把|瓶|张|本|支|道|条|粒|盒|株|坛|份|斤|件)$`)
 	qtyTrailingNumRegex = regexp.MustCompile(`\s+(\d+)$`)
 	noteSuffixRegex     = regexp.MustCompile(`[\(（【\[]([^\)）】\]]+)[\)）】\]]\s*$`)
+	bookTitleRegex      = regexp.MustCompile(`《([^》]+)》`)
+	chineseQuoteRegex   = regexp.MustCompile(`[“「]([^”」]+)[”」]`)
 )
+
+var narrativeItemPrefixes = []string{
+	"系统录入", "系统提示",
+	"随身携带的", "随身携带", "随身的", "随身",
+	"怀中的", "怀中",
+	"袖中的", "袖中",
+	"从储物袋取出的", "储物袋中的",
+	"作为物证提交天道销毁的", "作为物证提交天道销毁",
+	"作为物证的", "作为物证",
+	"暗藏的", "暗中备好的", "私藏的",
+}
 
 func cleanItemNote(s string) string {
 	s = strings.TrimSpace(s)
@@ -23,6 +36,20 @@ func cleanItemNote(s string) string {
 		return strings.TrimSpace(s[:len(s)-len(m[0])])
 	}
 	return s
+}
+
+func cleanNarrativeItemName(s string) string {
+	s = cleanItemNote(strings.TrimSpace(s))
+	for _, p := range narrativeItemPrefixes {
+		s = strings.TrimPrefix(s, p)
+		s = strings.TrimSpace(s)
+	}
+	// Strip trailing particles like "的" or "之" when preceded by substantive text
+	runes := []rune(s)
+	if len(runes) > 2 && (runes[len(runes)-1] == '的' || runes[len(runes)-1] == '之') {
+		s = string(runes[:len(runes)-1])
+	}
+	return strings.TrimSpace(s)
 }
 
 // ApplyStateMutation executes a structured transition on a character's state machine (such as the protagonist),
@@ -252,14 +279,28 @@ func parseInventoryItems(inv string) []string {
 }
 
 func splitDeltaTokens(delta string) []string {
-	replacer := strings.NewReplacer("，", ",", ";", ",", "；", ",", "\n", ",")
+	replacer := strings.NewReplacer("，", ",", ";", ",", "；", ",", "\n", ",", "、", ",")
 	raw := replacer.Replace(delta)
-	var tokens []string
+	var rawTokens []string
 	for _, t := range strings.Split(raw, ",") {
 		ct := strings.TrimSpace(t)
 		if ct != "" {
-			tokens = append(tokens, ct)
+			rawTokens = append(rawTokens, ct)
 		}
+	}
+	// Stitch modifier phrases broken by punctuation (e.g. "林天傲画押的" + "《弟子引资入局协议》")
+	var tokens []string
+	for i := 0; i < len(rawTokens); i++ {
+		curr := rawTokens[i]
+		if (strings.HasSuffix(curr, "的") || strings.HasSuffix(curr, "之")) && i+1 < len(rawTokens) {
+			next := rawTokens[i+1]
+			nextAction, _ := detectItemAction(next)
+			if nextAction == "DEFAULT" {
+				curr = curr + next
+				i++
+			}
+		}
+		tokens = append(tokens, curr)
 	}
 	return tokens
 }
@@ -312,13 +353,13 @@ func parseItemAndQuantity(raw string) (name string, qty int) {
 		return "", 1
 	}
 
-	// 0. Pre-clean trailing parenthetical/bracket narrative notes
-	s = cleanItemNote(s)
+	// 0. Pre-clean trailing parenthetical/bracket narrative notes and system prefixes
+	s = cleanNarrativeItemName(s)
 
 	// 1. Check multiplier suffix like "洗髓丹x3", "灵石*10"
 	if m := qtyMultiplierRegex.FindStringSubmatch(s); len(m) == 2 {
 		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
-			cleanName := cleanItemNote(strings.TrimSpace(s[:len(s)-len(m[0])]))
+			cleanName := cleanNarrativeItemName(strings.TrimSpace(s[:len(s)-len(m[0])]))
 			if cleanName != "" {
 				return cleanName, n
 			}
@@ -328,7 +369,7 @@ func parseItemAndQuantity(raw string) (name string, qty int) {
 	// 2. Check Chinese unit suffix like "洗髓丹3颗", "灵石 100块"
 	if m := qtyChineseUnitRegex.FindStringSubmatch(s); len(m) == 3 {
 		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
-			cleanName := cleanItemNote(strings.TrimSpace(s[:len(s)-len(m[0])]))
+			cleanName := cleanNarrativeItemName(strings.TrimSpace(s[:len(s)-len(m[0])]))
 			if cleanName != "" {
 				return cleanName, n
 			}
@@ -338,14 +379,14 @@ func parseItemAndQuantity(raw string) (name string, qty int) {
 	// 3. Check trailing number after whitespace like "灵石 10"
 	if m := qtyTrailingNumRegex.FindStringSubmatch(s); len(m) == 2 {
 		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
-			cleanName := cleanItemNote(strings.TrimSpace(s[:len(s)-len(m[0])]))
+			cleanName := cleanNarrativeItemName(strings.TrimSpace(s[:len(s)-len(m[0])]))
 			if cleanName != "" {
 				return cleanName, n
 			}
 		}
 	}
 
-	return cleanItemNote(s), 1
+	return cleanNarrativeItemName(s), 1
 }
 
 func initInventoryItems(e *CodexEntry) []InventoryItem {
@@ -384,13 +425,184 @@ func initInventoryItems(e *CodexEntry) []InventoryItem {
 	return items
 }
 
+func isPlaceholderItem(name string) bool {
+	clean := strings.TrimSpace(name)
+	return clean == "" || clean == "无" || clean == "暂无" || clean == "待定" || clean == "随身物品待起草" || strings.Contains(clean, "待起草")
+}
+
+func extractNarrativeKeywords(text string) []string {
+	clean := strings.Map(func(r rune) rune {
+		switch r {
+		case '，', '。', '、', '！', '？', '：', '；', '（', '）', '【', '】', '“', '”', '《', '》', '「', '」', ',', '.', '!', '?', ':', ';', '(', ')', '[', ']', '+', '-', '*', '/', '\n', '\r', '\t', ' ':
+			return ' '
+		default:
+			return r
+		}
+	}, text)
+
+	fields := strings.Fields(clean)
+	var keywords []string
+	seen := make(map[string]bool)
+	stopWords := map[string]bool{
+		"系统录入": true, "系统提示": true, "随身携带": true, "作为物证": true, "提交天道": true,
+	}
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		if len([]rune(f)) >= 2 && !seen[f] && !stopWords[f] {
+			seen[f] = true
+			keywords = append(keywords, f)
+		}
+	}
+	return keywords
+}
+
+func hasNarrativeEvidence(content, rawItem, parsedItem string) bool {
+	if strings.TrimSpace(content) == "" {
+		return false
+	}
+
+	// 1. Direct exact match
+	if strings.Contains(content, rawItem) {
+		return true
+	}
+
+	// 2. Bracket-cleaned note match
+	cleanNote := cleanItemNote(rawItem)
+	if cleanNote != "" && strings.Contains(content, cleanNote) {
+		return true
+	}
+
+	// 3. Parsed / normalized item match
+	if parsedItem != "" && strings.Contains(content, parsedItem) {
+		return true
+	}
+
+	// 4. Quoted entity or book title match
+	for _, raw := range []string{rawItem, parsedItem} {
+		if m := bookTitleRegex.FindStringSubmatch(raw); len(m) == 2 {
+			if strings.Contains(content, m[0]) || strings.Contains(content, m[1]) {
+				return true
+			}
+		}
+		if m := chineseQuoteRegex.FindStringSubmatch(raw); len(m) == 2 {
+			if strings.Contains(content, m[0]) || strings.Contains(content, m[1]) {
+				return true
+			}
+		}
+	}
+
+	// 5. Keyword decomposition & narrative presence
+	target := parsedItem
+	if target == "" {
+		target = cleanNote
+	}
+	if target == "" {
+		target = rawItem
+	}
+
+	keywords := extractNarrativeKeywords(target)
+	if len(keywords) > 0 {
+		// A. If a significant keyword of length >= 3 appears in content
+		for _, kw := range keywords {
+			if len([]rune(kw)) >= 3 && strings.Contains(content, kw) {
+				return true
+			}
+		}
+
+		// B. If multiple keywords exist and all appear in content
+		if len(keywords) >= 2 {
+			allFound := true
+			for _, kw := range keywords {
+				if !strings.Contains(content, kw) {
+					allFound = false
+					break
+				}
+			}
+			if allFound {
+				return true
+			}
+		}
+	}
+
+	// C. Sub-string checks for composite phrases like "林天傲画押"
+	runes := []rune(target)
+	if len(runes) >= 4 {
+		prefixPart := string(runes[:3])
+		suffixPart := string(runes[3:])
+		if strings.Contains(content, prefixPart) && strings.Contains(content, suffixPart) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func findInventoryItemIndex(items []InventoryItem, targetName string) int {
 	cleanTarget := strings.TrimSpace(targetName)
+	if cleanTarget == "" {
+		return -1
+	}
+
+	// 1. Exact match
 	for i, itm := range items {
 		if itm.Name == cleanTarget {
 			return i
 		}
 	}
+
+	// 2. Stripped note match
+	targetCleanNote := cleanItemNote(cleanTarget)
+	for i, itm := range items {
+		if !isPlaceholderItem(itm.Name) && cleanItemNote(itm.Name) == targetCleanNote {
+			return i
+		}
+	}
+
+	// 3. Normalized narrative name match (strip prefixes, trailing '的')
+	targetNorm := cleanNarrativeItemName(cleanTarget)
+	if targetNorm != "" {
+		for i, itm := range items {
+			if !isPlaceholderItem(itm.Name) && cleanNarrativeItemName(itm.Name) == targetNorm {
+				return i
+			}
+		}
+	}
+
+	// 4. Quoted entity / book title match
+	if m := bookTitleRegex.FindStringSubmatch(cleanTarget); len(m) == 2 {
+		targetBook := m[1]
+		for i, itm := range items {
+			if isPlaceholderItem(itm.Name) {
+				continue
+			}
+			if bm := bookTitleRegex.FindStringSubmatch(itm.Name); len(bm) == 2 && bm[1] == targetBook {
+				return i
+			}
+			if strings.Contains(itm.Name, targetBook) {
+				return i
+			}
+		}
+	}
+
+	// 5. Containment match (for non-placeholder substantive names with >= 2 runes)
+	targetRunes := []rune(cleanTarget)
+	if len(targetRunes) >= 2 {
+		for i, itm := range items {
+			if isPlaceholderItem(itm.Name) {
+				continue
+			}
+			itemRunes := []rune(itm.Name)
+			if len(itemRunes) >= 2 {
+				if strings.Contains(cleanTarget, itm.Name) || strings.Contains(itm.Name, cleanTarget) {
+					return i
+				}
+				if targetNorm != "" && strings.Contains(itm.Name, targetNorm) {
+					return i
+				}
+			}
+		}
+	}
+
 	return -1
 }
 
@@ -429,15 +641,16 @@ func ReconcileNarrativeInventoryDelta(prot *CodexEntry, content string, chapterI
 		}
 
 		// 检查主角当前是否已持有该物品
-		if ContainsInventoryItem(prot, itemName) {
+		if ContainsInventoryItem(prot, itemName) || ContainsInventoryItem(prot, rawItem) {
 			continue
 		}
 
-		// 证据门判定：正文内容显式提及该物品名称（有明确正文叙事证据支撑）
-		hasTextEvidence := strings.Contains(content, itemName)
+		// 证据门判定：正文内容显式提及该物品或有明确正文叙事证据支撑
+		hasEvidence := hasNarrativeEvidence(content, rawItem, itemName)
 
-		if hasTextEvidence {
+		if hasEvidence {
 			reconciledSet[itemName] = true
+			reconciledSet[rawItem] = true
 			qtyStr := ""
 			if deltaQty > 1 {
 				qtyStr = fmt.Sprintf("x%d", deltaQty)

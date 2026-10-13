@@ -1231,6 +1231,40 @@ func TestPostChapters_AutoReconcileEvidencedItemInChapter1(t *testing.T) {
 	}
 }
 
+func TestPostChapters_MultiPartEvidenceGatePasses(t *testing.T) {
+	srv, s, _ := setupTestServer(t)
+	ctx := context.Background()
+
+	p := &domain.Project{
+		ID:             "proj-multipart-pass",
+		Title:          "多部分背景物证自动调解测试",
+		TargetPlatform: "起点仙侠",
+	}
+	if err := s.SaveProject(ctx, p); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+	if err := s.SaveCodexEntry(ctx, &domain.CodexEntry{
+		ID:        "codex_proj-multipart-pass_pro",
+		ProjectID: p.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "林尘",
+		Realm:     "凡人",
+		Inventory: "随身物品待起草",
+	}); err != nil {
+		t.Fatalf("SaveCodexEntry failed: %v", err)
+	}
+
+	bodyJSON := `{"chapter_index":1,"title":"第一章 撕毁契约","content":"林天傲在威逼之下咬牙画押认罪，将那份《弟子引资入局协议》霸王条款副本交了出来。","state_mutation":{"inventory_delta":"-林天傲画押的, -系统录入《弟子引资入局协议》霸王条款副本"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+p.ID+"/chapters", strings.NewReader(bodyJSON))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created for multipart evidenced chapter 1 commit, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestPostChapters_EvidenceGatePassesClean(t *testing.T) {
 	srv, s, _ := setupTestServer(t)
 	ctx := context.Background()

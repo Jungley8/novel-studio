@@ -169,6 +169,22 @@
             <Zap v-else class="w-3 h-3 fill-current" />
             <span>{{ state.pipelineState.active ? (state.pipelineState.message || '正在成章...') : '一键成章' }}</span>
           </button>
+
+          <!-- VSCode 风格 Diff 对比模式开关 -->
+          <button 
+            v-if="hasRewriteDiff"
+            @click="showDiffViewer = !showDiffViewer"
+            class="ml-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm border"
+            :class="showDiffViewer 
+              ? 'bg-brand-cyan text-atelier-950 border-brand-cyan shadow-cyan-glow' 
+              : 'bg-brand-cyan/15 hover:bg-brand-cyan/25 text-brand-cyan border-brand-cyan/40'"
+            title="对比改写前后差异 (VSCode 风格行与词级 Diff)">
+            <GitCompare class="w-3.5 h-3.5" />
+            <span>{{ showDiffViewer ? '返回编辑' : '改写对比' }}</span>
+            <span class="text-[10px] font-mono px-1 py-0.2 rounded" :class="showDiffViewer ? 'bg-atelier-950/20 text-atelier-950' : 'bg-brand-cyan/25 text-brand-cyan'">
+              {{ diffWordDeltaStr }}
+            </span>
+          </button>
         </div>
 
         <!-- 风格与字数预算快速选择 (单章微调，继承作品级设定) -->
@@ -330,29 +346,72 @@
         </div>
       </div>
 
-      <!-- 划词 AI 结果差分对比横幅 -->
-      <div v-if="showInlineDiff && inlineActionResult" class="p-3.5 bg-atelier-900/90 border-b border-brand-amber/30 space-y-2 shrink-0">
+      <!-- 划词 AI 结果差分对比横幅 (VSCode 词级 Diff 增强) -->
+      <div v-if="showInlineDiff && inlineActionResult" class="p-3.5 bg-atelier-900/95 border-b border-brand-amber/30 space-y-2 shrink-0 animate-fade-in shadow-md">
         <div class="flex items-center justify-between text-xs">
-          <span class="font-bold text-brand-amber flex items-center gap-1.5">
-            <Sparkles class="w-3.5 h-3.5" />
-            <span>改写结果 ({{ inlineActionResult.action }})</span>
-          </span>
-          <div class="flex gap-2">
-            <button @click="applyInlineResult" class="px-2.5 py-1 bg-brand-emerald hover:bg-emerald-500 text-atelier-950 font-bold rounded text-xs transition cursor-pointer">
-              ✓ 采用
+          <div class="flex items-center gap-2">
+            <span class="font-bold text-brand-amber flex items-center gap-1.5">
+              <Sparkles class="w-3.5 h-3.5" />
+              <span>改写结果 ({{ inlineActionResult.action }})</span>
+            </span>
+            <span v-if="inlineDiffStats" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-brand-amber/15 text-brand-amber border border-brand-amber/30">
+              原 {{ inlineDiffStats.oldWordCount }} 字 ➔ 新 {{ inlineDiffStats.newWordCount }} 字 ({{ inlineDiffStats.netDiff >= 0 ? '+' + inlineDiffStats.netDiff : inlineDiffStats.netDiff }}字)
+            </span>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="flex items-center bg-atelier-950 rounded border border-atelier-750 p-0.5 text-[10px]">
+              <button 
+                type="button" 
+                @click="inlineDiffViewMode = 'diff'" 
+                class="px-2 py-0.5 rounded transition cursor-pointer"
+                :class="inlineDiffViewMode === 'diff' ? 'bg-brand-amber text-atelier-950 font-bold' : 'text-ink-400 hover:text-ink-200'">
+                词级对比
+              </button>
+              <button 
+                type="button" 
+                @click="inlineDiffViewMode = 'result'" 
+                class="px-2 py-0.5 rounded transition cursor-pointer"
+                :class="inlineDiffViewMode === 'result' ? 'bg-brand-amber text-atelier-950 font-bold' : 'text-ink-400 hover:text-ink-200'">
+                纯改后文
+              </button>
+            </div>
+            <button @click="applyInlineResult" class="px-2.5 py-1 bg-brand-emerald hover:bg-emerald-500 text-atelier-950 font-bold rounded text-xs transition cursor-pointer flex items-center gap-1">
+              <Check class="w-3 h-3" />
+              <span>采用</span>
             </button>
             <button @click="discardInlineResult" class="px-2.5 py-1 bg-atelier-800 hover:bg-atelier-750 text-ink-300 rounded text-xs transition cursor-pointer">
               ✕ 放弃
             </button>
           </div>
         </div>
-        <div class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 text-xs text-ink-100 leading-relaxed font-serif max-h-36 overflow-y-auto whitespace-pre-wrap">
+
+        <!-- 词级对比视图 -->
+        <div v-if="inlineDiffViewMode === 'diff'" class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 text-xs text-ink-100 leading-relaxed font-serif max-h-40 overflow-y-auto whitespace-pre-wrap select-text">
+          <template v-for="(token, i) in inlineWordDiff" :key="i">
+            <span v-if="token.type === 'del'" class="bg-red-500/25 text-red-300 line-through decoration-red-500/70 decoration-1 mx-0.5 px-0.5 rounded">{{ token.text }}</span>
+            <span v-else-if="token.type === 'add'" class="bg-emerald-500/25 text-emerald-300 underline decoration-emerald-500/70 decoration-1 mx-0.5 px-0.5 rounded">{{ token.text }}</span>
+            <span v-else class="text-ink-200">{{ token.text }}</span>
+          </template>
+        </div>
+        <!-- 纯文本视图 -->
+        <div v-else class="p-3 bg-atelier-950 rounded-lg border border-atelier-750 text-xs text-ink-100 leading-relaxed font-serif max-h-40 overflow-y-auto whitespace-pre-wrap select-text">
           {{ inlineActionResult.result }}
         </div>
       </div>
 
+      <!-- 全篇改写 VSCode Diff 对比面板 -->
+      <div v-if="showDiffViewer && hasRewriteDiff" class="flex-1 min-h-0 flex flex-col p-2 md:p-4 overflow-hidden">
+        <RewriteDiffViewer 
+          :old-text="state.workbench.originalDraftBeforeRewrite" 
+          :new-text="state.workbench.content" 
+          @apply="handleApplyWholeRewrite" 
+          @revert="handleRevertWholeRewrite" 
+          @close="showDiffViewer = false" 
+        />
+      </div>
+
       <!-- 纯净排版正文文本框 (呼吸感居中稿纸) -->
-      <div class="flex-1 min-h-0 flex overflow-y-auto p-4 md:p-8 justify-center">
+      <div v-else class="flex-1 min-h-0 flex overflow-y-auto p-4 md:p-8 justify-center">
         <div class="w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl flex flex-col h-full bg-atelier-900/20 rounded-xl p-4 md:p-8 border border-atelier-800/40 shadow-inner transition-all relative">
           
           <!-- 异常报错通知横幅 -->
@@ -475,6 +534,8 @@ import { ref, computed, watch, onUnmounted } from 'vue';
 import { state, computedState, actions, notify, dialogs } from '../../stores/appState';
 import { createDefaultWorkbench } from '../../stores/domain/projectScope';
 import { api } from '../../api/client';
+import RewriteDiffViewer from './RewriteDiffViewer.vue';
+import { computeWordDiff, computeDiffStats } from '../../utils/diff.js';
 import {
   AlertCircle,
   AlertTriangle,
@@ -493,7 +554,9 @@ import {
   Maximize2,
   Minimize2,
   Eye,
-  MessageSquare
+  MessageSquare,
+  GitCompare,
+  Check
 } from 'lucide-vue-next';
 
 const props = defineProps({
@@ -600,11 +663,62 @@ async function resetToNewChapter() {
   notify('已切换', '已重置画布为创作最新章节', 'info');
 }
 
+// 全篇改写 VSCode Diff 状态
+const showDiffViewer = ref(false);
+const inlineDiffViewMode = ref('diff');
+
+const hasRewriteDiff = computed(() => {
+  return Boolean(
+    state.workbench?.originalDraftBeforeRewrite &&
+    state.workbench.originalDraftBeforeRewrite.trim() !== state.workbench.content.trim()
+  );
+});
+
+const diffStats = computed(() => {
+  if (!hasRewriteDiff.value) return null;
+  return computeDiffStats(state.workbench.originalDraftBeforeRewrite, state.workbench.content);
+});
+
+const diffWordDeltaStr = computed(() => {
+  if (!diffStats.value) return '';
+  const d = diffStats.value.netDiff;
+  return d >= 0 ? `+${d}字` : `${d}字`;
+});
+
+function handleApplyWholeRewrite() {
+  state.workbench.originalDraftBeforeRewrite = null;
+  showDiffViewer.value = false;
+  actions.runLinter();
+  actions.saveCheckpoint();
+  notify('已采用改写', '已保留改写内容为当前正文', 'success');
+}
+
+function handleRevertWholeRewrite() {
+  if (state.workbench.originalDraftBeforeRewrite) {
+    state.workbench.content = state.workbench.originalDraftBeforeRewrite;
+  }
+  state.workbench.originalDraftBeforeRewrite = null;
+  showDiffViewer.value = false;
+  actions.runLinter();
+  actions.saveCheckpoint();
+  notify('已还原原文', '已回退至改写前手稿', 'info');
+}
+
 // 划词 Inline Actions
 const inlineActionLoading = ref(false);
 const inlineActionResult = ref(null);
 const showInlineDiff = ref(false);
 let lastSelectedText = '';
+
+const inlineWordDiff = computed(() => {
+  if (!lastSelectedText || !inlineActionResult.value?.result) return [];
+  return computeWordDiff(lastSelectedText, inlineActionResult.value.result);
+});
+
+const inlineDiffStats = computed(() => {
+  if (!lastSelectedText || !inlineActionResult.value?.result) return null;
+  return computeDiffStats(lastSelectedText, inlineActionResult.value.result);
+});
 
 function getSelectedOrFullText() {
   const textarea = document.getElementById('prose-textarea');
