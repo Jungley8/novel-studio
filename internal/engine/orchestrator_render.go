@@ -92,6 +92,10 @@ func (o *Orchestrator) RenderSceneStream(
 	dialogueRatioDirective := buildDialogueRatioPrompt(beats)
 	wordBudgetDirective := buildBeatWordBudgetPrompt(beats, wordsTarget)
 
+	// 伏笔埋设直令：渲染提示词此前只能经"节拍"间接拿到伏笔，而节拍推演常丢埋设要求，
+	// 导致连续性庭每章判"伏笔埋设落空"。此处按 created_chapter 把伏笔精确派发给渲染器。
+	hooksDirective := BuildHookPlantingDirective(horizon.AllActiveHooks, chapterIndex)
+
 	systemPrompt := fmt.Sprintf(`你是一名专业成熟、文笔深厚扎实的小说名家。
 
 %s
@@ -148,7 +152,14 @@ func (o *Orchestrator) RenderSceneStream(
    - 【严禁游戏技能战报】：严禁在对话或正文中像游戏战斗日志一样生硬念出技能数值（如：“土神压顶咒。炼气三层，耗香火三缕。”）。功法耗损与天地法则必须化入身体受创、经脉剧痛或法力枯竭的沉浸式物理描写中。
    - 事件推进自然收束，严禁段尾空洞说教与总结升华。
 9. 严禁出现以下AI模式化废词：
-   不由得、仿佛、宛若、嘴角勾起、眼神复杂、一时间、殊不知、与此同时、冷哼一声、倒吸一口凉气、暗自思忖、死寂一片、冷汗涔涔、说白了、说穿了。`,
+   不由得、仿佛、宛若、嘴角勾起、眼神复杂、一时间、殊不知、与此同时、冷哼一声、倒吸一口凉气、暗自思忖、死寂一片、冷汗涔涔、说白了、说穿了。
+10. 【标点与列举硬约束（质检硬门，违反即整章驳回）】：
+   - 全文严禁使用中文破折号“——”：揭晓式停顿是 AI 的典型标记，一律改用逗号或句号斩断、或直接省略。
+   - 严禁在单个分句内出现三个及以上顿号“、”做并列罗列（如“采集、分拣、炼制、封存”）；需要并列时拆成短句，或改用逗号。
+11. 【专有名词与主语重复硬约束（质检硬门，违反即整章驳回）】：
+   - 同一人名全章出现不得超过 8 次；同一地名/道具名不得超过 3 次；严禁连续多个段落以同一名字作主语。
+   - 连续对话中，除首次点名外一律用代词、称谓变体或直接省略主语承接，严禁反复写“某某说”“某某的”。
+   - 同一短语（如“十二年”“半只纸鞋”）严禁在近邻段落重复；需要复现时换说法、换视角或省略。`,
 		toneDirective,
 		atmosphereDirective,
 		tensionDirective,
@@ -193,6 +204,7 @@ func (o *Orchestrator) RenderSceneStream(
 %s
 
 %s
+%s
 
 请直接输出小说正文内容，无需任何开场白或寒暄。`,
 		project.Title, chapterIndex, wordsTarget,
@@ -201,6 +213,7 @@ func (o *Orchestrator) RenderSceneStream(
 		anchorSection, codexSection,
 		wordBudgetDirective,
 		string(beatsJSON),
+		hooksDirective,
 		BuildElementDisciplineBlock(),
 	)
 
@@ -227,6 +240,40 @@ func (o *Orchestrator) RenderSceneStream(
 // 导出供提示词预览直接嵌入，保证与生产提示词逐字同源。
 func BuildElementDisciplineBlock() string {
 	return "【元素纪律（违者审校必挂）】\n- 只允许出现本章「必须执行的场景节拍」、已开放伏笔与 codex 已登记元素；\n- 严禁引入后续章节计划中的人物/道具/信息：未出场人物不得提前登场，计划后续章节回收的伏笔不得提前揭示；\n- 不确定的关键元素宁可不写，也绝不即兴发明关键道具、人物关系或身世真相。"
+}
+
+// BuildHookPlantingDirective 按埋设章（created_chapter）把活跃伏笔精确派发给渲染器。
+// 本章埋设的必须落笔（只埋线、不揭晓）；已埋设的只可自然呼应；未到埋设章的严禁出现。
+func BuildHookPlantingDirective(hooks []*domain.PlotHook, chapterIndex int) string {
+	if len(hooks) == 0 {
+		return ""
+	}
+	var plantNow, echo, forbid []string
+	for _, h := range hooks {
+		switch {
+		case h.CreatedChapter == chapterIndex:
+			plantNow = append(plantNow, fmt.Sprintf("- 《%s》：%s", h.Title, h.Details))
+		case h.CreatedChapter < chapterIndex && h.Status != domain.HookStatusResolved:
+			echo = append(echo, fmt.Sprintf("- 《%s》（预定第 %d 章回收；只可自然带过，严禁提前揭晓）", h.Title, h.TargetChapter))
+		case h.CreatedChapter > chapterIndex:
+			forbid = append(forbid, fmt.Sprintf("《%s》", h.Title))
+		}
+	}
+	var b strings.Builder
+	if len(plantNow) > 0 {
+		b.WriteString("【本章必须埋设的伏笔（埋线，不揭晓）】\n")
+		b.WriteString(strings.Join(plantNow, "\n"))
+		b.WriteString("\n以上线索必须落进本章的具体细节里（一个动作、一件道具、一句口风皆可），否则整章驳回；但只埋线、不点破，不得在本章给出结论。\n")
+	}
+	if len(echo) > 0 {
+		b.WriteString("\n【已埋设、可自然呼应（严禁提前揭晓）】\n")
+		b.WriteString(strings.Join(echo, "\n"))
+		b.WriteString("\n")
+	}
+	if len(forbid) > 0 {
+		b.WriteString(fmt.Sprintf("\n【尚未到你埋设的章节，本章严禁出现】%s\n", strings.Join(forbid, "、")))
+	}
+	return b.String()
 }
 
 // BuildMotifConceptPrompt 有意母题与符号清单注入块（RC 精修锚点）。
