@@ -778,5 +778,54 @@ Wave 1 与 Wave 2 之后的第三波闭环升级（P1/P2/P3），各自独立 wo
 - 前端 `cd web && pnpm test` 4/4 通过，`pnpm build` 顺利产出并提交至 `web/dist`；
 - 独立 worktree（`novel-studio-courtplayback`, `novel-studio-findingsloop`）与临时分支全部清理完毕。
 
+### 第十八轮：Wave 4 作品删除闭环与全模块 UX 深度提升（2026-10-13）
+
+响应 `/vibe-refine` 要求，打通全流程作品删除生命周期（Fail-Closed 并发守护、10 个无外键表深度级联擦除、前端瞬态重置与平滑切换），并系统性提升全模块用户交互体验（搜索筛选、空态行动点、耗时计时器、字数达标指示与自动保存反馈）。
+
+#### 1. 后端存储级联清理与并发互斥守护 (P0)
+- **`internal/store/sqlite_store_project.go`**：`DeleteProject` 显式清除无外键 `ON DELETE CASCADE` 约束的 10 个附随表，防止产生孤儿数据：
+  - `chapter_quality_metrics`、`chapter_versions`、`chapter_state_snapshots`、`compaction_cache`、`project_automation`、`memory_fts`、`scenes`、`book_queue`、`studio_messages`、`studio_threads`；
+  - 接着执行 `DELETE FROM projects WHERE id = ?` 触发引擎自带的外键级联，同时在 `project_events` 留存账本墓碑审计事件。
+  - 单测 `TestDeleteProject_OrphanCleanup`（`sqlite_store_test.go`）：向各孤儿表注入数据后删除作品，断言所有表记录彻底归零。
+- **`internal/server/handlers_project.go`**：`DELETE /api/projects/:id` 接入 `rejectIfProducing`：
+  - 后台处于批产或排程续产锁定状态时，直接 409 Conflict Fail-Closed 阻断删除；
+  - 单测：在 `coord_wiring_test.go` 中加入 `TestCanonWrites_RejectedWhileProductionActive` 的 `delete project` 用例，并新增 `TestDeleteProject_EndToEnd` 白盒端点测试。
+
+#### 2. 前端作品删除动作与状态闭环 (P0)
+- **`web/src/stores/domain/projectActions.js`**：新增 `deleteProject(projectId)` 动作：
+  - **忙碌守卫**：检查 `activeGenerationTask(state)`，若当前作品有成章或审读任务在途，拒绝删除并提示等待；
+  - **危险弹窗**：通过 `dialogs.confirm({ type: 'danger' })` 弹出红色高危确认对话框，详述数据永久擦除后果；
+  - **平滑切换**：从 `state.projects` 中剔除；若删除的是当前激活作品，调用 `resetProjectScopedState` 彻底重置瞬态草稿/审校/断点，自动平滑切换至下一部作品；若全删则整洁置空；
+- **`web/test/project-switch.test.mjs`**：新增 3 项回归测试：
+  - `删除作品：生成任务进行中拒绝删除（Fail-Closed）`
+  - `删除作品：确认后删除成功，从列表移除并平滑切换至下一部作品`
+  - `删除作品：删除最后一部作品后状态置空`
+  - 测试套件扩展至 7/7，全绿通过。
+
+#### 3. 全模块 UX 深度提升 (P1 / P2)
+- **多作品总览 `StudioLibraryView.vue`**：
+  - 增加书名实时搜索输入框与题材/平台下拉过滤选择器；
+  - 表格操作列新增删除按钮（`Trash2` 红色悬浮高亮、tooltip、危险二次确认与列表自动重载）；
+  - 修复空列表与搜索无结果时的友好清空重置体验。
+- **作品架构设定 `FrameworkView.vue`**：
+  - 视图底部新增高亮红框「危险区域 (Danger Zone)」，清晰提示彻底删除后果并提供作品级删除按钮。
+- **全局侧边栏 `AppSidebar.vue`**：
+  - 头部作品下拉框旁增设快速删除当前作品按钮，联动全局切换与提示。
+- **文学创作画布 `WorkbenchCanvasPanel.vue`**：
+  - 手稿顶栏增加章节目标字数达标百分比胶囊（达标前琥珀色，达标后翡翠绿）；
+  - 右侧状态区增加自动保存微型胶囊（「正在保存...」动画 /「已保存」绿色状态指示及 Cmd+S 存盘快捷键提示）。
+- **停线待办中心 `StudioTodoView.vue`**：
+  - 全空态时增加专业引导插画文案与双操作按钮（「前往工作台创作」/「查看自动化排程」）。
+- **全自动流水线控制台 `PipelineView.vue`**：
+  - 顶部运行态增加耗时计时器（`formatElapsedTime` 实时更新 `分:秒`，结束与异常时自动停止）；
+  - 时间轴日志头部增加「自动滚屏: 开/关」切换开关，方便滚动排查历史事件。
+
+#### 4. 验证结果
+- `go test ./internal/server/... ./internal/store/... -race -count=1` 全绿通过；
+- `cd web && pnpm test` 7/7 测试全部通过；
+- `pnpm build` 纯净构建通过并更新 `web/dist`；
+- `go build ./...` 验证单二进制内嵌 web 打包完全正常。
+
+
 
 
