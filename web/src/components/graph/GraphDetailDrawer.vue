@@ -166,7 +166,7 @@
 </template>
 
 <script setup>
-import { state } from '../../stores/appState';
+import { state, actions } from '../../stores/appState';
 import { 
   X, 
   Plus, 
@@ -216,16 +216,16 @@ defineProps({
 });
 
 function jumpToProtagonistEdit() {
-  state.activeTab = 'framework';
+  actions.setActiveTab('framework');
 }
 
 function jumpToCodexEdit(rawEntry) {
   if (rawEntry?.isProtagonistNode && rawEntry?.isVirtual) {
-    state.activeTab = 'framework';
+    actions.setActiveTab('framework');
     return;
   }
   state.editingCodexEntry = { ...rawEntry };
-  state.activeTab = 'codex';
+  actions.setActiveTab('codex');
   state.showCodexModal = true;
 }
 </script>

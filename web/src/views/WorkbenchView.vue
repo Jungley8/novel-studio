@@ -228,6 +228,8 @@ async function handleRewriteDraft() {
       state.workbench.content = res.content;
     }
     state.rewriteLoopCount++;
+    // 精修成功后自动开启正文 Git Diff 左右对比视图
+    state.workbench.showDiffViewer = true;
     await actions.runLinter();
     state.activeStep = 4;
     await actions.saveCheckpoint();

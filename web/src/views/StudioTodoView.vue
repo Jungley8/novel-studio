@@ -69,12 +69,12 @@
       </div>
       <div class="flex items-center justify-center gap-3 pt-2">
         <button 
-          @click="state.activeTab = 'workbench'" 
+          @click="actions.switchToProject(null, 'workbench')" 
           class="px-4 py-2 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-lg shadow-amber-glow transition cursor-pointer">
           前往工作台创作
         </button>
         <button 
-          @click="state.activeTab = 'studio-automation'" 
+          @click="actions.switchToGlobal('studio-automation')" 
           class="px-4 py-2 bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 text-xs rounded-lg border border-atelier-700 transition cursor-pointer">
           查看自动化排程
         </button>
@@ -236,7 +236,7 @@ async function handleTodo(todo) {
     }
     state.activeStep = 5;
   }
-  state.activeTab = 'workbench';
+  actions.setActiveTab('workbench');
 }
 
 onMounted(() => {

@@ -442,3 +442,151 @@ func TestReconcileNarrativeInventoryDelta_MultiPartAndSystemPrefix(t *testing.T)
 		}
 	}
 }
+
+func TestApplyStateMutation_ManualAuthorInput(t *testing.T) {
+	entry := &CodexEntry{
+		Name:      "林尘",
+		Realm:     "凡人",
+		Inventory: "随身物品待起草",
+		Archetype: "PROTAGONIST",
+	}
+
+	// 1. Author enters bare items without '+' sign, mixed with natural language verbs
+	m1 := StateMutation{
+		InventoryDelta: "洗髓丹, 捡到玄铁匕首, 灵石 50块",
+	}
+	audit1, err := ApplyStateMutation(entry, m1)
+	if err != nil {
+		t.Fatalf("m1 failed: %v", err)
+	}
+
+	if strings.Contains(entry.Inventory, "随身物品待起草") {
+		t.Fatalf("placeholder '随身物品待起草' must be filtered out of inventory, got: %s", entry.Inventory)
+	}
+	if !strings.Contains(entry.Inventory, "洗髓丹") || !strings.Contains(entry.Inventory, "玄铁匕首") || !strings.Contains(entry.Inventory, "灵石x50") {
+		t.Fatalf("expected items in inventory, got: %s (audit: %v)", entry.Inventory, audit1)
+	}
+
+	// 2. Author specifies placeholder or "无" in delta: should not add "无" as an item
+	m2 := StateMutation{
+		InventoryDelta: "无",
+	}
+	_, err = ApplyStateMutation(entry, m2)
+	if err != nil {
+		t.Fatalf("m2 failed: %v", err)
+	}
+	if strings.Contains(entry.Inventory, ", 无") || strings.HasPrefix(entry.Inventory, "无,") {
+		t.Fatalf("placeholder '无' must not be appended to inventory, got: %s", entry.Inventory)
+	}
+
+	// 3. Increment existing quantity with bare name: author writes "洗髓丹" again
+	m3 := StateMutation{
+		InventoryDelta: "洗髓丹",
+	}
+	_, err = ApplyStateMutation(entry, m3)
+	if err != nil {
+		t.Fatalf("m3 failed: %v", err)
+	}
+	if !strings.Contains(entry.Inventory, "洗髓丹x2") {
+		t.Fatalf("expected 洗髓丹x2 in inventory, got: %s", entry.Inventory)
+	}
+
+	// 4. Natural removal verb: author writes "丢弃玄铁匕首"
+	m4 := StateMutation{
+		InventoryDelta: "丢弃玄铁匕首",
+	}
+	_, err = ApplyStateMutation(entry, m4)
+	if err != nil {
+		t.Fatalf("m4 failed: %v", err)
+	}
+	if strings.Contains(entry.Inventory, "玄铁匕首") {
+		t.Fatalf("expected 玄铁匕首 to be removed by '丢弃' verb, got: %s", entry.Inventory)
+	}
+
+	// 5. Space-separated tokens: "+辟毒珠 -洗髓丹x2"
+	m5 := StateMutation{
+		InventoryDelta: "+辟毒珠 -洗髓丹x2",
+	}
+	_, err = ApplyStateMutation(entry, m5)
+	if err != nil {
+		t.Fatalf("m5 failed: %v", err)
+	}
+	if strings.Contains(entry.Inventory, "洗髓丹") {
+		t.Fatalf("expected 洗髓丹 to be fully consumed, got: %s", entry.Inventory)
+	}
+	if !strings.Contains(entry.Inventory, "辟毒珠") {
+		t.Fatalf("expected 辟毒珠 to be added via space-separated prefix, got: %s", entry.Inventory)
+	}
+}
+
+func TestReconcileAuthorInventoryDelta(t *testing.T) {
+	// Baseline: protagonist has no items
+	entry := &CodexEntry{
+		Name:      "林尘",
+		Realm:     "凡人",
+		Inventory: "无",
+		Archetype: "PROTAGONIST",
+	}
+
+	// 1. Author writes -劣质的定情玉佩 directly, item not held and text has no evidence
+	m1 := StateMutation{
+		InventoryDelta: "-劣质的定情玉佩",
+	}
+	reconciled := ReconcileAuthorInventoryDelta(entry, m1)
+	if !strings.Contains(reconciled.InventoryDelta, "+劣质的定情玉佩") {
+		t.Fatalf("expected author delta to reconcile unheld item with +劣质的定情玉佩, got: %s", reconciled.InventoryDelta)
+	}
+
+	// Applying should succeed cleanly without warnings
+	trail, err := DryRunStateMutation(entry, reconciled)
+	if err != nil {
+		t.Fatalf("dry run failed: %v", err)
+	}
+	for _, l := range trail {
+		if strings.Contains(l, "[Ledger Warning]") {
+			t.Fatalf("unexpected warning in author reconciled dry run: %s", l)
+		}
+	}
+
+	// 2. Author writes already held item: -养魂木 when protagonist holds it
+	entry2 := &CodexEntry{
+		Name:      "韩立",
+		Realm:     "筑基初期",
+		Inventory: "养魂木, 青竹蜂云剑",
+		Archetype: "PROTAGONIST",
+	}
+	m2 := StateMutation{
+		InventoryDelta: "-养魂木",
+	}
+	reconciled2 := ReconcileAuthorInventoryDelta(entry2, m2)
+	// Should NOT add +养魂木 because protagonist already holds it
+	if strings.Contains(reconciled2.InventoryDelta, "+养魂木") {
+		t.Fatalf("should not reconcile already held item, got: %s", reconciled2.InventoryDelta)
+	}
+
+	// 3. Chain already contains +X: author writes "+辟毒珠, -辟毒珠"
+	m3 := StateMutation{
+		InventoryDelta: "+辟毒珠, -辟毒珠",
+	}
+	reconciled3 := ReconcileAuthorInventoryDelta(entry, m3)
+	// Should not duplicate +辟毒珠
+	if strings.Count(reconciled3.InventoryDelta, "+辟毒珠") != 1 {
+		t.Fatalf("expected exactly one +辟毒珠 in chain, got: %s", reconciled3.InventoryDelta)
+	}
+}
+
+func TestParseInventoryTextToItems(t *testing.T) {
+	items := ParseInventoryTextToItems("洗髓丹x2, 辟毒珠, 斩仙飞刀*3, 无, 暂无")
+	if len(items) != 3 {
+		t.Fatalf("expected 3 valid items, got %d (%+v)", len(items), items)
+	}
+	if items[0].Name != "洗髓丹" || items[0].Quantity != 2 {
+		t.Errorf("unexpected item[0]: %+v", items[0])
+	}
+	if items[1].Name != "辟毒珠" || items[1].Quantity != 1 {
+		t.Errorf("unexpected item[1]: %+v", items[1])
+	}
+	if items[2].Name != "斩仙飞刀" || items[2].Quantity != 3 {
+		t.Errorf("unexpected item[2]: %+v", items[2])
+	}
+}

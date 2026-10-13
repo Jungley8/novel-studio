@@ -334,7 +334,7 @@ async function executePrimaryAction(msg) {
     if (!ok) return;
   }
   if (targetTab) {
-    actions.selectTab ? actions.selectTab(targetTab) : (state.activeTab = targetTab);
+    actions.setActiveTab(targetTab);
   }
   if (chapterIndex !== undefined && chapterIndex !== null) {
     state.editingChapterIndex = chapterIndex;

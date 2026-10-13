@@ -122,17 +122,17 @@
       <p class="text-xs text-ink-400 font-mono">正在聚合全书库作品指标与伏笔状态...</p>
     </div>
 
-    <!-- 空态：无作品工程 -->
+    <!-- 空态 A：全库无小说工程 -->
     <div 
-      v-else-if="!isLoading && libraryItems.length === 0" 
+      v-else-if="!isLoading && rawItems.length === 0" 
       class="text-center py-20 bg-atelier-900 border border-dashed border-atelier-750 rounded-2xl space-y-4">
       <div class="w-14 h-14 rounded-2xl bg-atelier-800 border border-atelier-750 flex items-center justify-center mx-auto text-ink-400 shadow-atelier-sm">
         <Library class="w-7 h-7" />
       </div>
       <div class="space-y-1">
         <h3 class="text-sm font-semibold text-ink-100 font-serif">作品库暂无小说工程</h3>
-        <p class="text-xs text-ink-400 max-w-sm mx-auto">
-          尚未创建任何长篇小说工程。你可以新建第一部作品，或前往灵感 Inbox 将零散想法转化为创世工程。
+        <p class="text-xs text-ink-400 max-w-sm mx-auto leading-relaxed">
+          尚未创建任何长篇小说工程。你可以新建第一部作品，或前往对话记录将灵感想法转化为创世工程。
         </p>
       </div>
       <div class="flex items-center justify-center gap-3 pt-2">
@@ -142,9 +142,31 @@
           新建第一部作品
         </button>
         <button 
-          @click="state.activeTab = 'studio-chat'" 
+          @click="actions.switchToGlobal('studio-chat')" 
           class="px-4 py-2 bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 text-xs rounded-lg border border-atelier-700 transition cursor-pointer">
           前往对话记录
+        </button>
+      </div>
+    </div>
+
+    <!-- 空态 B：搜索或分类筛选无匹配结果 -->
+    <div 
+      v-else-if="!isLoading && libraryItems.length === 0" 
+      class="text-center py-16 bg-atelier-900/60 border border-atelier-750 rounded-2xl space-y-3.5">
+      <div class="w-12 h-12 rounded-xl bg-atelier-850 border border-atelier-750 flex items-center justify-center mx-auto text-ink-400">
+        <SearchX class="w-6 h-6 text-ink-500" />
+      </div>
+      <div class="space-y-1">
+        <h3 class="text-sm font-semibold text-ink-100 font-serif">未找到匹配的作品</h3>
+        <p class="text-xs text-ink-400 max-w-sm mx-auto">
+          当前关键词 <span v-if="searchQuery" class="text-brand-amber font-mono font-bold">"{{ searchQuery }}"</span> 或分类筛选下暂无作品。
+        </p>
+      </div>
+      <div class="pt-2">
+        <button 
+          @click="clearFilters" 
+          class="px-3.5 py-1.5 bg-atelier-850 hover:bg-atelier-800 text-brand-amber text-xs rounded-lg border border-atelier-750 transition cursor-pointer font-medium">
+          清空搜索与筛选条件
         </button>
       </div>
     </div>
@@ -275,7 +297,8 @@ import {
   AlertTriangle, 
   ArrowUpRight,
   Trash2,
-  Search
+  Search,
+  SearchX
 } from 'lucide-vue-next';
 
 const isLoading = ref(false);
@@ -283,6 +306,11 @@ const errorMessage = ref('');
 const rawItems = ref([]);
 const searchQuery = ref('');
 const selectedPlatform = ref('ALL');
+
+function clearFilters() {
+  searchQuery.value = '';
+  selectedPlatform.value = 'ALL';
+}
 
 const availablePlatforms = computed(() => {
   const set = new Set();

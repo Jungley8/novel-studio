@@ -1134,8 +1134,9 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		})
 	}
 
+	var committedChapter *domain.Chapter
 	if shouldCommit {
-		chapter := &domain.Chapter{
+		committedChapter = &domain.Chapter{
 			ID:              fmt.Sprintf("ch_%s_%d", req.ProjectID, req.ChapterIndex),
 			ProjectID:       req.ProjectID,
 			ChapterIndex:    req.ChapterIndex,
@@ -1151,7 +1152,7 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 			CreatedAt:       time.Now(),
 		}
 
-		updatedProj, cerr := w.store.CommitChapter(activity.WithActor(ctx, activity.ActorSystem), req.ProjectID, chapter)
+		updatedProj, cerr := w.store.CommitChapter(activity.WithActor(ctx, activity.ActorSystem), req.ProjectID, committedChapter)
 		if cerr != nil {
 			return nil, fmt.Errorf("atomic chapter commitment failed: %w", cerr)
 		}
@@ -1180,42 +1181,9 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		saveChapterMetrics(outcome)
 	}
 
-	// 5.6 Summarize chapter if committed.
-	// 摘要失败永不阻塞归档（注释写明理由：摘要可由正文重建，与状态真相不同级）。
+	// 5.6 & 5.7 定稿后增强生命周期（摘要生成、分卷回顾、伏笔自动登记）
+	// 与手动定稿渠道共享统一权威实现 RunPostCommitEnhancement，彻底杜绝业务双轨制。
 	if result.Committed {
-		cs, csUsage, csErr := SummarizeChapter(ctx, w.orch.client, req.ReasoningModel, horizon.Project, req.ChapterIndex, currentDraft, settledMutation)
-		if csErr != nil {
-			addUsage(csUsage)
-			if auditReport != nil {
-				auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】生成章节摘要失败: %v", csErr))
-			}
-		} else {
-			addUsage(csUsage)
-			if saver, ok := w.store.(interface {
-				SaveChapterSummary(ctx context.Context, cs *domain.ChapterSummary) error
-			}); ok {
-				if cs.ProjectID == "" {
-					cs.ProjectID = req.ProjectID
-				}
-				if err := saver.SaveChapterSummary(ctx, &cs); err != nil {
-					if auditReport != nil {
-						auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】保存章节摘要失败: %v", err))
-					}
-				}
-			} else {
-				if auditReport != nil {
-					auditReport.Issues = append(auditReport.Issues, "【摘要警告】存储层未实现 SaveChapterSummary 接口")
-				}
-			}
-		}
-		estimatedCostUSD = EstimateCostUSD(totalUsage)
-		result.TotalUsage = totalUsage
-		result.EstimatedCostUSD = estimatedCostUSD
-
-		// Volume retrospective on volume arc completion.
-		// CommitChapter 返回的 Project 不带 framework 是 store 层既有契约，
-		// 因此判卷主体优先从 horizon.Project 取（chronicle 组装时已含 Framework 并执行过 BackfillVolumeArcs），
-		// result.UpdatedProject 仅作后备兜底。
 		var activeProj *domain.Project
 		if horizon != nil && horizon.Project != nil {
 			activeProj = horizon.Project
@@ -1223,127 +1191,24 @@ func (w *ChapterWorkshop) ProduceChapter(ctx context.Context, req WorkshopProduc
 		if activeProj == nil || (activeProj.Framework == nil && result.UpdatedProject != nil && result.UpdatedProject.Framework != nil) {
 			activeProj = result.UpdatedProject
 		}
-		if activeProj != nil && activeProj.Framework != nil && len(activeProj.Framework.VolumeArcs) > 0 {
-			activeProj.Framework.VolumeArcs = BackfillVolumeArcs(activeProj.Framework.VolumeArcs)
-			spans, arcMap := deriveVolumeSpans(activeProj.Framework.VolumeArcs)
-			volIdx := domain.ResolveVolume(req.ChapterIndex, spans)
-			if volIdx != -1 {
-				var currentSpan *domain.VolumeSpan
-				for i := range spans {
-					if spans[i].VolumeIndex == volIdx {
-						currentSpan = &spans[i]
-						break
-					}
-				}
-				if currentSpan != nil && req.ChapterIndex == currentSpan.EndChapter {
-					arc := arcMap[volIdx]
-					if arc != nil {
-						if vrStore, ok := w.store.(interface {
-							ListChapterSummaries(ctx context.Context, projectID string, from, to int) ([]*domain.ChapterSummary, error)
-							SaveVolumeRetrospective(ctx context.Context, retro *domain.VolumeRetrospective) error
-						}); ok {
-							projID := req.ProjectID
-							if activeProj.ID != "" {
-								projID = activeProj.ID
-							}
-							summaries, lErr := vrStore.ListChapterSummaries(ctx, projID, currentSpan.StartChapter, currentSpan.EndChapter)
-							if lErr != nil {
-								if auditReport != nil {
-									auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】获取分卷章节摘要失败: %v", lErr))
-								}
-							} else {
-								var chSummaries []ChapterSummary
-								for _, s := range summaries {
-									if s != nil {
-										chSummaries = append(chSummaries, *s)
-									}
-								}
-								if len(chSummaries) == 0 {
-									if auditReport != nil {
-										auditReport.Issues = append(auditReport.Issues, "【摘要警告】未找到本卷任何章节摘要，跳过分卷回顾")
-									}
-								} else {
-									vr, vrUsage, vrErr := BuildVolumeRetrospective(ctx, w.orch.client, req.ReasoningModel, activeProj, *arc, *currentSpan, chSummaries)
-									if vrErr != nil {
-										addUsage(vrUsage)
-										estimatedCostUSD = EstimateCostUSD(totalUsage)
-										result.TotalUsage = totalUsage
-										result.EstimatedCostUSD = estimatedCostUSD
-										if auditReport != nil {
-											auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】生成分卷回顾失败: %v", vrErr))
-										}
-									} else {
-										addUsage(vrUsage)
-										estimatedCostUSD = EstimateCostUSD(totalUsage)
-										result.TotalUsage = totalUsage
-										result.EstimatedCostUSD = estimatedCostUSD
-										if vr.ProjectID == "" {
-											vr.ProjectID = projID
-										}
-										if sErr := vrStore.SaveVolumeRetrospective(ctx, &vr); sErr != nil {
-											if auditReport != nil {
-												auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【摘要警告】保存分卷回顾失败: %v", sErr))
-											}
-										}
-									}
-								}
-							}
-						} else {
-							if auditReport != nil {
-								auditReport.Issues = append(auditReport.Issues, "【摘要警告】存储层未实现分卷回顾持久化接口")
-							}
-						}
-					}
-				}
-			}
-		}
-	}
 
-	// 5.7 伏笔自动登记（增强层：失败记账不阻断归档）
-	// 解决"正文新埋伏笔未入台账 → 后续章节无从回收"的漏记问题；登记声明须过证据门。
-	if result.Committed {
-		existingHooks, lerr := w.store.ListPlotHooks(ctx, req.ProjectID)
-		if lerr != nil {
-			if auditReport != nil {
-				auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【伏笔登记警告】读取伏笔台账失败: %v", lerr))
-			}
-		} else {
-			candidates, regUsage, rerr := ExtractPlantedHooks(ctx, w.orch.client, req.ReasoningModel, horizon.Project, req.ChapterIndex, currentDraft, existingHooks)
-			addUsage(regUsage)
-			if rerr != nil {
-				if auditReport != nil {
-					auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【伏笔登记警告】伏笔提取失败: %v", rerr))
-				}
-			} else {
-				valid, rejected := FilterPlantedHookCandidates(candidates, currentDraft, existingHooks)
-				for _, r := range rejected {
-					if auditReport != nil {
-						auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【伏笔登记被拒】「%s」: %s", r.Candidate.Title, r.Reason))
-					}
-				}
-				var registered []string
-				for i, c := range valid {
-					hook := &domain.PlotHook{
-						ID:             fmt.Sprintf("hook_auto_%d_%d", time.Now().UnixNano(), i+1),
-						ProjectID:      req.ProjectID,
-						Title:          c.Title,
-						Details:        c.Details,
-						CreatedChapter: req.ChapterIndex,
-						TargetChapter:  c.TargetChapter,
-						Status:         domain.HookStatusOpen,
-						CreatedAt:      time.Now(),
-					}
-					if serr := w.store.SavePlotHook(ctx, hook); serr != nil {
-						if auditReport != nil {
-							auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【伏笔登记警告】伏笔「%s」落库失败: %v", c.Title, serr))
-						}
-						continue
-					}
-					registered = append(registered, c.Title)
-				}
-				if len(registered) > 0 && auditReport != nil {
-					auditReport.Issues = append(auditReport.Issues, fmt.Sprintf("【伏笔登记】新增伏笔 %d 条: %s", len(registered), strings.Join(registered, "、")))
-				}
+		postReport, _ := RunPostCommitEnhancement(
+			ctx,
+			w.orch.client,
+			req.ReasoningModel,
+			w.store,
+			activeProj,
+			committedChapter,
+		)
+		if postReport != nil {
+			addUsage(postReport.SummaryUsage)
+			addUsage(postReport.RetroUsage)
+			estimatedCostUSD = EstimateCostUSD(totalUsage)
+			result.TotalUsage = totalUsage
+			result.EstimatedCostUSD = estimatedCostUSD
+			addUsage(postReport.HooksUsage)
+			if auditReport != nil && len(postReport.Issues) > 0 {
+				auditReport.Issues = append(auditReport.Issues, postReport.Issues...)
 			}
 		}
 	}

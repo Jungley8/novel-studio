@@ -95,6 +95,7 @@ export function createDefaultWorkbench() {
     },
     content: '',
     originalDraftBeforeRewrite: null,
+    showDiffViewer: false,
   };
 }
 

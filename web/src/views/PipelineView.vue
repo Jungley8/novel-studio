@@ -652,12 +652,7 @@ async function handleStartPipeline() {
 
 // 跳转至作品工作台
 async function goToWorkbench(projectId) {
-  if (projectId) {
-    // Fail-Closed：切换被拒绝（例如当前作品正在生成）时保持原地，不强行改写选中作品。
-    const ok = await actions.selectProject(projectId);
-    if (!ok) return;
-  }
-  state.activeTab = 'workbench';
+  await actions.switchToProject(projectId, 'workbench');
 }
 
 function formatPhaseName(phase) {

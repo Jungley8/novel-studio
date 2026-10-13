@@ -183,6 +183,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 		s.handleReviewDraft(w, r, projectID)
 	case "rewrite-draft":
 		s.handleRewriteDraft(w, r, projectID)
+	case "settle-draft":
+		s.handleSettleDraft(w, r, projectID)
 	case "checkpoint":
 		s.handleProjectCheckpoint(w, r, projectID)
 	case "edit-lease":
@@ -276,8 +278,7 @@ func (s *Server) handleProjectChapters(w http.ResponseWriter, r *http.Request, p
 			c.ID = fmt.Sprintf("ch_%s_%d", projectID, c.ChapterIndex)
 		}
 
-		// 手动入库路径（有意设计）：以人工判断为准——状态变更仅经 DryRunStateMutation 账本证据检查，
-		// 不跑自动状态验证器；伏笔回收声明已在 /review-draft 经证据门过滤。
+		var warnings []string
 		hasMutation := strings.TrimSpace(c.StateMutation.InventoryDelta) != "" ||
 			strings.TrimSpace(c.StateMutation.PowerDelta) != "" ||
 			len(c.StateMutation.CharacterMutations) > 0
@@ -292,23 +293,19 @@ func (s *Server) handleProjectChapters(w http.ResponseWriter, r *http.Request, p
 				// 接口自动在账本状态机中溯源补全持有，避免无谓阻断作者定稿。
 				c.StateMutation = domain.ReconcileNarrativeInventoryDelta(prot, c.Content, c.ChapterIndex, c.StateMutation)
 
+				// 对齐自动化流水线（workshop.go）：
+				// 状态机校验警告记录在主角 Ledger 审计日志中（CommitChapter 内部 ApplyStateMutation 会严格拒绝非法扣减至负数），
+				// 增强层与审计警告不阻断作者定稿归档，同时返回给前端用于友好提醒与审计。
 				trail, err := domain.DryRunStateMutation(prot, c.StateMutation)
-				if err != nil {
-					errorResponse(w, http.StatusInternalServerError, err.Error())
-					return
-				}
-				var warnings []string
-				for _, line := range trail {
-					if strings.Contains(line, "[Ledger Warning]") {
-						warnings = append(warnings, line)
-						if len(warnings) == 3 {
-							break
+				if err == nil {
+					for _, line := range trail {
+						if strings.Contains(line, "[Ledger Warning]") {
+							warnings = append(warnings, line)
+							if len(warnings) == 3 {
+								break
+							}
 						}
 					}
-				}
-				if len(warnings) > 0 {
-					errorResponse(w, http.StatusBadRequest, strings.Join(warnings, "; ")+": 证据不足，拒绝无证据状态变更")
-					return
 				}
 			}
 		}
@@ -321,10 +318,15 @@ func (s *Server) handleProjectChapters(w http.ResponseWriter, r *http.Request, p
 		_ = s.store.ClearCheckpoint(ctx, projectID, c.ChapterIndex)
 		protEntry, _ := s.store.GetProtagonistEntry(ctx, projectID)
 
+		// 异步触发后置增强：章节摘要生成与分卷回顾、伏笔自动提取登记
+		// 与自动化流水线（workshop.go 5.6 & 5.7）完全对齐！
+		s.triggerPostCommitEnhancement(projectID, &c)
+
 		jsonResponse(w, http.StatusCreated, map[string]any{
 			"chapter":     c,
 			"project":     updatedProj,
 			"protagonist": protEntry,
+			"warnings":    warnings,
 		})
 	default:
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -718,7 +720,15 @@ func (s *Server) handleProjectStateMachine(w http.ResponseWriter, r *http.Reques
 			protEntry.Realm = update.Realm
 		}
 		if update.Inventory != "" {
-			protEntry.Inventory = update.Inventory
+			if domain.IsPlaceholderItem(update.Inventory) {
+				protEntry.Inventory = "无"
+				protEntry.StructuredItems = nil
+			} else {
+				protEntry.Inventory = update.Inventory
+				if update.StructuredItems == nil {
+					protEntry.StructuredItems = domain.ParseInventoryTextToItems(update.Inventory)
+				}
+			}
 		}
 		if update.HealthStatus != "" {
 			protEntry.HealthStatus = update.HealthStatus

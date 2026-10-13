@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Jungley8/novel-studio/internal/config"
+	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/engine"
 	"github.com/Jungley8/novel-studio/internal/notify"
 	"github.com/Jungley8/novel-studio/internal/scheduler"
@@ -36,6 +37,7 @@ type Server struct {
 	bootstrapWg   sync.WaitGroup
 	bootstrapMu   sync.RWMutex
 	bootstrapJobs map[string]*BootstrapJobStatus
+	postCommitWg  sync.WaitGroup
 }
 
 func New(
@@ -105,6 +107,50 @@ func New(
 // WaitBootstrap 等待所有在途的异步创世推演完成（主要供测试与优雅停机同步使用）。
 func (s *Server) WaitBootstrap() {
 	s.bootstrapWg.Wait()
+}
+
+// WaitPostCommit 等待所有在途的定稿后异步增强任务完成（主要供测试与优雅停机同步使用）。
+func (s *Server) WaitPostCommit() {
+	s.postCommitWg.Wait()
+}
+
+// triggerPostCommitEnhancement 异步非阻塞执行定稿后增强处理（摘要、分卷回顾、伏笔提取），
+// 保证人工手动定稿与自动化流水线（workshop.go）在生命周期与数据完整性上 100% 拉齐一致。
+func (s *Server) triggerPostCommitEnhancement(projectID string, chapter *domain.Chapter) {
+	if chapter == nil {
+		return
+	}
+	client := s.getLLMClient()
+	if client == nil {
+		return
+	}
+	model := strings.TrimSpace(s.cfg.ReasoningModel)
+	if model == "" {
+		return
+	}
+	chCopy := *chapter
+	s.postCommitWg.Add(1)
+	go func() {
+		defer s.postCommitWg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("[post-commit] recovered panic: %v\n", r)
+			}
+		}()
+		bgCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+
+		proj, err := s.store.GetProject(bgCtx, projectID)
+		if err != nil || proj == nil {
+			return
+		}
+		report, _ := engine.RunPostCommitEnhancement(bgCtx, client, model, s.store, proj, &chCopy)
+		if report != nil && len(report.Issues) > 0 {
+			for _, iss := range report.Issues {
+				fmt.Printf("[post-commit][%s][ch%d] %s\n", projectID, chCopy.ChapterIndex, iss)
+			}
+		}
+	}()
 }
 
 func (s *Server) setBootstrapStatus(projectID string, status *BootstrapJobStatus) {

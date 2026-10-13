@@ -67,7 +67,7 @@
         在“写正文”中完成起草与定稿后，章节将收录至目录。
       </p>
       <button 
-        @click="state.activeTab = 'workbench'"
+        @click="actions.setActiveTab('workbench')"
         class="mt-4 px-4 py-2 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 text-xs font-bold rounded-lg transition shadow-atelier-sm flex items-center gap-1.5 cursor-pointer">
         <PenTool class="w-3.5 h-3.5" />
         <span>前往写第一章</span>
@@ -309,6 +309,48 @@
                 <span>定稿时间: {{ formatDate(currentSelectedChapter.created_at) }}</span>
                 <span>节奏得分: {{ currentSelectedChapter.burstiness_score || 50 }} 分</span>
               </div>
+
+              <!-- 上一章 / 下一章 沉浸翻页导航条 -->
+              <div class="pt-6 border-t border-atelier-800 flex items-center justify-between gap-4 select-none">
+                <button 
+                  @click="prevChapter && selectChapter(prevChapter.id)"
+                  :disabled="!prevChapter"
+                  class="flex-1 max-w-xs px-4 py-3 rounded-xl border text-left transition flex items-center gap-3 group"
+                  :class="prevChapter 
+                    ? 'bg-atelier-900/60 hover:bg-atelier-850 border-atelier-750 text-ink-200 hover:text-brand-amber hover:border-brand-amber/30 cursor-pointer' 
+                    : 'bg-atelier-950/40 border-atelier-850/40 text-ink-600 cursor-not-allowed opacity-50'">
+                  <ChevronLeft class="w-4 h-4 shrink-0 transition-transform group-hover:-translate-x-0.5" />
+                  <div class="min-w-0">
+                    <span class="block text-[10px] font-mono text-ink-500 uppercase">上一章</span>
+                    <span class="block text-xs font-serif truncate font-medium">
+                      {{ prevChapter ? `第${prevChapter.chapter_index}章 · ${prevChapter.title}` : '已是卷首首章' }}
+                    </span>
+                  </div>
+                </button>
+
+                <div class="hidden sm:flex flex-col items-center justify-center px-3 text-center">
+                  <span class="text-[10px] font-mono text-ink-500 uppercase">全书进度</span>
+                  <span class="text-xs font-mono font-bold text-ink-300">
+                    {{ currentChapterIndexInSorted >= 0 ? currentChapterIndexInSorted + 1 : 1 }} / {{ sortedChapters.length }}
+                  </span>
+                </div>
+
+                <button 
+                  @click="nextChapter && selectChapter(nextChapter.id)"
+                  :disabled="!nextChapter"
+                  class="flex-1 max-w-xs px-4 py-3 rounded-xl border text-right transition flex items-center justify-end gap-3 group"
+                  :class="nextChapter 
+                    ? 'bg-atelier-900/60 hover:bg-atelier-850 border-atelier-750 text-ink-200 hover:text-brand-amber hover:border-brand-amber/30 cursor-pointer' 
+                    : 'bg-atelier-950/40 border-atelier-850/40 text-ink-600 cursor-not-allowed opacity-50'">
+                  <div class="min-w-0">
+                    <span class="block text-[10px] font-mono text-ink-500 uppercase">下一章</span>
+                    <span class="block text-xs font-serif truncate font-medium">
+                      {{ nextChapter ? `第${nextChapter.chapter_index}章 · ${nextChapter.title}` : '已是最新章节' }}
+                    </span>
+                  </div>
+                  <ChevronRight class="w-4 h-4 shrink-0 transition-transform group-hover:translate-x-0.5" />
+                </button>
+              </div>
             </div>
 
             <!-- TAB 2: 分段情节与状态 -->
@@ -341,14 +383,35 @@
               </div>
 
               <!-- 状态变化 -->
-              <div v-if="currentSelectedChapter.state_mutation" class="p-4 bg-atelier-900/80 border border-atelier-750 rounded-xl space-y-2 text-xs">
+              <div v-if="currentSelectedChapter.state_mutation" class="p-4 bg-atelier-900/80 border border-atelier-750 rounded-xl space-y-3 text-xs">
                 <h4 class="font-bold text-brand-emerald flex items-center gap-1.5">
                   <Sparkles class="w-3.5 h-3.5" />
-                  <span>主角状态变化</span>
+                  <span>主角状态变迁</span>
                 </h4>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-ink-300">
-                  <div>战力增减：<span class="text-ink-100">{{ currentSelectedChapter.state_mutation.power_delta || '无' }}</span></div>
-                  <div>物品变动：<span class="text-ink-100">{{ currentSelectedChapter.state_mutation.inventory_delta || '无' }}</span></div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-ink-300">
+                  <div class="p-3 bg-atelier-950/70 border border-atelier-800 rounded-lg">
+                    <span class="text-[11px] font-mono text-ink-400 block mb-1">战力阶位变动</span>
+                    <span class="text-ink-100 font-medium">{{ currentSelectedChapter.state_mutation.power_delta || '无阶位浮动' }}</span>
+                  </div>
+                  <div class="p-3 bg-atelier-950/70 border border-atelier-800 rounded-lg space-y-1.5">
+                    <span class="text-[11px] font-mono text-ink-400 block">随身物品增减变动</span>
+                    <div v-if="parseInventoryTokens(currentSelectedChapter.state_mutation.inventory_delta).length > 0" class="flex flex-wrap gap-1.5 pt-1">
+                      <span 
+                        v-for="(item, itemIdx) in parseInventoryTokens(currentSelectedChapter.state_mutation.inventory_delta)" 
+                        :key="itemIdx"
+                        class="px-2 py-0.5 rounded text-[11px] font-mono flex items-center gap-1 border"
+                        :class="{
+                          'bg-brand-emerald/15 text-brand-emerald border-brand-emerald/30': item.type === 'add',
+                          'bg-brand-rose/15 text-brand-rose border-brand-rose/30': item.type === 'remove',
+                          'bg-atelier-850 text-ink-200 border-atelier-750': item.type === 'neutral'
+                        }">
+                        <span v-if="item.type === 'add'" class="font-bold">+</span>
+                        <span v-else-if="item.type === 'remove'" class="font-bold">-</span>
+                        <span>{{ item.text }}</span>
+                      </span>
+                    </div>
+                    <span v-else class="text-ink-500 font-mono text-[11px]">无物品得失</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -488,6 +551,7 @@ import {
   Archive, 
   ChevronDown, 
   ChevronRight, 
+  ChevronLeft,
   BookOpen, 
   FileText, 
   Layers, 
@@ -604,12 +668,51 @@ const filteredVolumeGroups = computed(() => {
   }).filter(vol => vol.chapters.length > 0);
 });
 
+// 按章节序号排序的章节列表
+const sortedChapters = computed(() => {
+  return [...state.chapters].sort((a, b) => a.chapter_index - b.chapter_index);
+});
+
+// 当前选中的章节在排序列表中的索引
+const currentChapterIndexInSorted = computed(() => {
+  if (!currentSelectedChapter.value) return -1;
+  return sortedChapters.value.findIndex(c => c.id === currentSelectedChapter.value.id);
+});
+
+// 上一章与下一章
+const prevChapter = computed(() => {
+  const idx = currentChapterIndexInSorted.value;
+  if (idx <= 0) return null;
+  return sortedChapters.value[idx - 1];
+});
+
+const nextChapter = computed(() => {
+  const idx = currentChapterIndexInSorted.value;
+  if (idx === -1 || idx >= sortedChapters.value.length - 1) return null;
+  return sortedChapters.value[idx + 1];
+});
+
+// 解析状态变迁中的物品增减，转化为视觉语义 tokens
+function parseInventoryTokens(delta) {
+  if (!delta || typeof delta !== 'string') return [];
+  const parts = delta.split(/[;,，；\n]+/).map(s => s.trim()).filter(Boolean);
+  return parts.map(part => {
+    if (part.startsWith('+') || part.startsWith('新增') || part.startsWith('获得')) {
+      return { text: part.replace(/^[+]/, '').trim(), type: 'add' };
+    }
+    if (part.startsWith('-') || part.startsWith('失去') || part.startsWith('消耗') || part.startsWith('移除')) {
+      return { text: part.replace(/^[-]/, '').trim(), type: 'remove' };
+    }
+    return { text: part, type: 'neutral' };
+  });
+}
+
 // 当前选中的章节对象
 const currentSelectedChapter = computed(() => {
   if (!selectedChapterId.value && state.chapters.length > 0) {
-    return state.chapters[0];
+    return sortedChapters.value[0] || state.chapters[0];
   }
-  return state.chapters.find(c => c.id === selectedChapterId.value) || state.chapters[0] || null;
+  return state.chapters.find(c => c.id === selectedChapterId.value) || sortedChapters.value[0] || state.chapters[0] || null;
 });
 
 // 监听章节目录变化：切换到新作品或所选章节已不存在时，重新定位到首章

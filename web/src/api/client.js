@@ -182,6 +182,7 @@ export const api = {
   renderScene: (projectId, data) => apiFetch(`/api/projects/${projectId}/render-scene`, { method: 'POST', body: JSON.stringify(data) }),
   renderSceneStream: (projectId, data, callbacks) => streamFetch(`/api/projects/${projectId}/render-scene`, data, callbacks),
   reviewDraft: (projectId, data) => apiFetch(`/api/projects/${projectId}/review-draft`, { method: 'POST', body: JSON.stringify(data) }),
+  settleDraft: (projectId, data) => apiFetch(`/api/projects/${projectId}/settle-draft`, { method: 'POST', body: JSON.stringify(data) }),
   rewriteDraft: (projectId, data) => apiFetch(`/api/projects/${projectId}/rewrite-draft`, { method: 'POST', body: JSON.stringify(data) }),
   rewriteDraftStream: (projectId, data, callbacks) => streamFetch(`/api/projects/${projectId}/rewrite-draft`, data, callbacks),
   getCheckpoint: (projectId, chapterIndex) => apiFetch(`/api/projects/${projectId}/checkpoint?chapter_index=${chapterIndex}`),

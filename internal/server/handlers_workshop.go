@@ -621,3 +621,70 @@ func (s *Server) handleRewriteDraft(w http.ResponseWriter, r *http.Request, proj
 		"checkpoint":    rewriteCp,
 	})
 }
+
+// handleSettleDraft 正文事实反向验收与结算接口（POST /api/projects/:id/settle-draft）：
+// 从已起草/精修的正文全文中严格按字面事实反向推导状态机变更（战力突破、物品变迁、NPC变更），
+// 并抽取 >=8 字的正文证据原句逐字引用，使人工工作台与自动化流水线（SettleFromDraft）事实验收逻辑完全一致。
+func (s *Server) handleSettleDraft(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		ChapterIndex   int    `json:"chapter_index"`
+		Content        string `json:"content"`
+		DraftText      string `json:"draft_text"`
+		ReasoningModel string `json:"reasoning_model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	draftText := strings.TrimSpace(req.Content)
+	if draftText == "" {
+		draftText = strings.TrimSpace(req.DraftText)
+	}
+	if draftText == "" {
+		errorResponse(w, http.StatusBadRequest, "draft text cannot be empty")
+		return
+	}
+
+	p, err := s.store.GetProject(r.Context(), projectID)
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, "project not found")
+		return
+	}
+	prot, _ := s.store.GetProtagonistEntry(r.Context(), projectID)
+
+	client := s.getLLMClient()
+	if client == nil {
+		errorResponse(w, http.StatusInternalServerError, "llm client not configured")
+		return
+	}
+
+	model := strings.TrimSpace(req.ReasoningModel)
+	if model == "" {
+		model = strings.TrimSpace(s.cfg.ReasoningModel)
+	}
+	if model == "" {
+		errorResponse(w, http.StatusBadRequest, "reasoning model not configured")
+		return
+	}
+
+	mut, evidences, usage, err := engine.SettleFromDraft(r.Context(), client, model, p, prot, draftText, req.ChapterIndex)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("正文事实验收失败: %v", err))
+		return
+	}
+
+	// 自动调解正文有叙事证据的背景资产/旧物
+	mut = domain.ReconcileNarrativeInventoryDelta(prot, draftText, req.ChapterIndex, mut)
+
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"state_mutation": mut,
+		"evidences":      evidences,
+		"usage":          usage,
+		"settled":        true,
+	})
+}

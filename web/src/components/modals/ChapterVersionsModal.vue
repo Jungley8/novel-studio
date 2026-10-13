@@ -82,21 +82,18 @@
             <div v-if="detailTab === 'full'" class="flex-1 overflow-y-auto py-3 text-xs font-serif leading-relaxed text-ink-100 whitespace-pre-wrap">
               {{ selectedVersion.content || '（该版本正文为空）' }}
             </div>
-            <div v-else class="flex-1 overflow-y-auto py-3 space-y-0.5 font-mono text-xs leading-relaxed">
-              <div v-if="diffRows.length === 0" class="text-ink-500 font-sans">
-                两版正文完全一致。
-              </div>
-              <div
-                v-for="(row, idx) in diffRows"
-                :key="idx"
-                class="px-2 py-0.5 rounded whitespace-pre-wrap break-words"
-                :class="row.kind === 'add'
-                  ? 'bg-brand-emerald/10 text-brand-emerald'
-                  : row.kind === 'del'
-                    ? 'bg-brand-rose/10 text-brand-rose'
-                    : 'text-ink-400'">
-                <span class="select-none mr-1.5">{{ row.kind === 'add' ? '+' : row.kind === 'del' ? '−' : ' ' }}</span>{{ row.text }}
-              </div>
+            <div v-else class="flex-1 overflow-auto py-2 text-xs min-h-[360px]">
+              <CodeDiff
+                :old-string="selectedVersion.content || ''"
+                :new-string="chapter.content || ''"
+                output-format="side-by-side"
+                theme="dark"
+                diff-style="word"
+                language="markdown"
+                filename="历史版本"
+                new-filename="当前章节正文"
+                class="h-full rounded-lg"
+              />
             </div>
           </div>
         </div>
@@ -121,6 +118,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
+import { CodeDiff } from 'v-code-diff';
 import { api } from '../../api/client';
 import { X } from 'lucide-vue-next';
 
@@ -168,66 +166,6 @@ async function selectVersion(v) {
   }
 }
 
-// 行级 LCS diff：version 行（a）vs 当前正文行（b）。
-// add = 仅当前有（绿色），del = 仅版本有（红色），same = 一致（灰色）。
-function lineDiff(aLines, bLines) {
-  let a = aLines;
-  let b = bLines;
-  // 公共前缀/后缀裁剪，缩小 DP 规模
-  let pre = 0;
-  while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
-  let suf = 0;
-  while (suf < a.length - pre && suf < b.length - pre && a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf++;
-
-  const rows = [];
-  for (let i = 0; i < pre; i++) rows.push({ kind: 'same', text: a[i] });
-
-  const ma = a.slice(pre, a.length - suf);
-  const mb = b.slice(pre, b.length - suf);
-  if (ma.length === 0 && mb.length === 0) {
-    // 全同
-  } else if (ma.length * mb.length > 100000) {
-    // 规模过大时退化为整块标记，避免 O(n*m) 爆炸
-    for (const t of ma) rows.push({ kind: 'del', text: t });
-    for (const t of mb) rows.push({ kind: 'add', text: t });
-  } else {
-    const m = ma.length;
-    const n = mb.length;
-    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-    for (let i = m - 1; i >= 0; i--) {
-      for (let j = n - 1; j >= 0; j--) {
-        dp[i][j] = ma[i] === mb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-      }
-    }
-    let i = 0;
-    let j = 0;
-    while (i < m && j < n) {
-      if (ma[i] === mb[j]) {
-        rows.push({ kind: 'same', text: ma[i] });
-        i++;
-        j++;
-      } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-        rows.push({ kind: 'del', text: ma[i] });
-        i++;
-      } else {
-        rows.push({ kind: 'add', text: mb[j] });
-        j++;
-      }
-    }
-    while (i < m) rows.push({ kind: 'del', text: ma[i++] });
-    while (j < n) rows.push({ kind: 'add', text: mb[j++] });
-  }
-
-  for (let k = a.length - suf; k < a.length; k++) rows.push({ kind: 'same', text: a[k] });
-  return rows;
-}
-
-const diffRows = computed(() => {
-  if (!selectedVersion.value) return [];
-  const a = (selectedVersion.value.content || '').split('\n');
-  const b = (props.chapter.content || '').split('\n');
-  return lineDiff(a, b);
-});
 
 function formatDate(isoStr) {
   if (!isoStr) return '未知时间';

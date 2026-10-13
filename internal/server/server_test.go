@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -1155,22 +1156,28 @@ func TestPostChapters_EvidenceGateRejectsUnownedConsume(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 Bad Request, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d: %s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "Ledger Warning") {
 		t.Fatalf("expected response body to contain 'Ledger Warning', got: %s", w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "证据不足，拒绝无证据状态变更") {
-		t.Fatalf("expected response body to contain '证据不足，拒绝无证据状态变更', got: %s", w.Body.String())
-	}
 
-	// 随后 GET 章节确认未落库
+	// 随后 GET 章节确认已正常落库（与流水线一致，不因警告阻断归档）
 	getReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+p.ID+"/chapters/1", nil)
 	getW := httptest.NewRecorder()
 	srv.ServeHTTP(getW, getReq)
-	if getW.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 Not Found for chapter 1, got %d: %s", getW.Code, getW.Body.String())
+	if getW.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for chapter 1, got %d: %s", getW.Code, getW.Body.String())
+	}
+
+	// 验证主角状态机未被违规扣成负数，状态机不变量完好（未持有的辟毒珠被拒绝扣减）
+	prot, err := s.GetProtagonistEntry(ctx, p.ID)
+	if err != nil || prot == nil {
+		t.Fatalf("GetProtagonistEntry failed: %v", err)
+	}
+	if prot.Inventory != "新手木剑" {
+		t.Fatalf("expected inventory unchanged '新手木剑', got: %s", prot.Inventory)
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+p.ID+"/chapters", nil)
@@ -1183,8 +1190,8 @@ func TestPostChapters_EvidenceGateRejectsUnownedConsume(t *testing.T) {
 	if err := json.Unmarshal(listW.Body.Bytes(), &chapters); err != nil {
 		t.Fatalf("unmarshal chapters list failed: %v", err)
 	}
-	if len(chapters) != 0 {
-		t.Fatalf("expected 0 chapters committed, got %d", len(chapters))
+	if len(chapters) != 1 {
+		t.Fatalf("expected 1 chapters committed, got %d", len(chapters))
 	}
 }
 
@@ -1431,5 +1438,172 @@ func TestServer_ConfigDefaultPipelineParameters(t *testing.T) {
 	}
 	if gotCfg2.DefaultAutoLockIntents {
 		t.Errorf("expected DefaultAutoLockIntents false, got true")
+	}
+}
+
+func TestPostChapters_PostCommitEnhancementAndSettleDraft(t *testing.T) {
+	srv, s, _ := setupTestServer(t)
+	ctx := context.Background()
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var req struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		sysContent := ""
+		for _, m := range req.Messages {
+			if m.Role == "system" {
+				sysContent = m.Content
+				break
+			}
+		}
+
+		reply := "{}"
+		if strings.Contains(sysContent, "精算师") {
+			// SettleFromDraft
+			reply = `{"inventory_delta":"+洗髓丹, -辟毒珠","power_delta":"炼气三层","character_mutations":[],"evidence":[{"quote":"从石匣中取出洗髓丹吞服","field":"inventory"},{"quote":"修为轰然突破！残铁古剑在这一刻","field":"power"}]}`
+		} else if strings.Contains(sysContent, "伏笔登记员") {
+			// ExtractPlantedHooks
+			reply = `[{"title":"残铁古剑异动","details":"古剑神辉必有大秘","quote":"残铁古剑在这一刻爆发出璀璨神辉！","target_chapter":5}]`
+		} else if strings.Contains(sysContent, "章节摘要") || strings.Contains(sysContent, "四要素") {
+			// SummarizeChapter
+			reply = `{"summary":"林凡在洞府前迎击强敌，残铁古剑神辉大炽反杀敌手，宗门暗流仍未止歇。"}`
+		}
+
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]string{
+						"role":    "assistant",
+						"content": reply,
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	cfgPayload := map[string]any{
+		"api_base":        mockServer.URL,
+		"api_key":         "sk-test",
+		"reasoning_model": "test-reasoner",
+	}
+	cfgBytes, _ := json.Marshal(cfgPayload)
+	cfgReq := httptest.NewRequest(http.MethodPost, "/api/config", bytes.NewReader(cfgBytes))
+	cfgW := httptest.NewRecorder()
+	srv.ServeHTTP(cfgW, cfgReq)
+	if cfgW.Code != http.StatusOK {
+		t.Fatalf("update config failed: %d %s", cfgW.Code, cfgW.Body.String())
+	}
+
+	// 1. 初始化项目与主角
+	proj := &domain.Project{
+		ID:             "proj-align-test",
+		Title:          "两轨拉齐测试作品",
+		TargetPlatform: "番茄仙侠",
+	}
+	if err := s.SaveProject(ctx, proj); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+	if err := s.SaveCodexEntry(ctx, &domain.CodexEntry{
+		ID:        "codex_align_pro",
+		ProjectID: proj.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "林凡",
+		Realm:     "炼气二层",
+		Inventory: "新手木剑, 辟毒珠",
+	}); err != nil {
+		t.Fatalf("SaveCodexEntry failed: %v", err)
+	}
+
+	chapterContent := "林凡握紧残铁古剑。从石匣中取出洗髓丹吞服，修为轰然突破！残铁古剑在这一刻爆发出璀璨神辉！强敌仓皇败退。"
+
+	// 2. 测试 POST /api/projects/:id/settle-draft 正文事实验收
+	{
+		settleReqBody := fmt.Sprintf(`{"chapter_index":1,"content":%q}`, chapterContent)
+		req := httptest.NewRequest(http.MethodPost, "/api/projects/"+proj.ID+"/settle-draft", strings.NewReader(settleReqBody))
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK for settle-draft, got %d: %s", w.Code, w.Body.String())
+		}
+		var settleResp struct {
+			StateMutation domain.StateMutation        `json:"state_mutation"`
+			Evidences     []domain.SettlementEvidence `json:"evidences"`
+			Settled       bool                        `json:"settled"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &settleResp); err != nil {
+			t.Fatalf("unmarshal settle-draft failed: %v", err)
+		}
+		if !settleResp.Settled {
+			t.Errorf("expected settled true")
+		}
+		if !strings.Contains(settleResp.StateMutation.InventoryDelta, "洗髓丹") {
+			t.Errorf("expected inventory_delta to contain 洗髓丹, got %s", settleResp.StateMutation.InventoryDelta)
+		}
+	}
+
+	// 3. 测试定稿提交并触发后置增强：章节摘要持久化 + 伏笔自动登记入库
+	{
+		commitBody := fmt.Sprintf(`{
+			"chapter_index": 1,
+			"title": "第一章 神剑破关",
+			"content": %q,
+			"state_mutation": {
+				"inventory_delta": "+洗髓丹, -辟毒珠",
+				"power_delta": "炼气三层"
+			}
+		}`, chapterContent)
+		req := httptest.NewRequest(http.MethodPost, "/api/projects/"+proj.ID+"/chapters", strings.NewReader(commitBody))
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("expected 201 Created for chapter commit, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// 等待异步后置增强完成（摘要生成与伏笔登记）
+		srv.WaitPostCommit()
+
+		// 验证 1：章节摘要已成功持久化至 chapter_summaries 表
+		if summaryStore, ok := s.(interface {
+			GetChapterSummary(ctx context.Context, projectID string, chapterIndex int) (*domain.ChapterSummary, error)
+		}); ok {
+			summary, err := summaryStore.GetChapterSummary(ctx, proj.ID, 1)
+			if err != nil {
+				t.Fatalf("GetChapterSummary failed: %v", err)
+			}
+			if summary == nil || !strings.Contains(summary.Text, "林凡") {
+				t.Errorf("expected persisted summary containing 林凡, got %+v", summary)
+			}
+		} else {
+			t.Errorf("store does not implement GetChapterSummary")
+		}
+
+		// 验证 2：正文新埋伏笔已自动提取登记入 plot_hooks 表
+		hooks, err := s.ListPlotHooks(ctx, proj.ID)
+		if err != nil {
+			t.Fatalf("ListPlotHooks failed: %v", err)
+		}
+		if len(hooks) == 0 {
+			t.Fatalf("expected auto-registered plot hooks, got 0")
+		}
+		foundHook := false
+		for _, h := range hooks {
+			if strings.Contains(h.Title, "残铁古剑") {
+				foundHook = true
+				break
+			}
+		}
+		if !foundHook {
+			t.Errorf("expected hook '残铁古剑异动', got %+v", hooks)
+		}
 	}
 }

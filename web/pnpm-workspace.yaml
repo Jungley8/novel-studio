@@ -1,2 +1,4 @@
 allowBuilds:
   esbuild: true
+  v-code-diff: true
+  vue-demi: true

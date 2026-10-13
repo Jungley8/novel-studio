@@ -7,7 +7,7 @@
           <GitCompare class="w-4 h-4" />
         </div>
         <div class="flex items-center gap-2 flex-wrap">
-          <span class="font-serif font-bold text-sm text-ink-50">改写对比 (VSCode Diff)</span>
+          <span class="font-serif font-bold text-sm text-ink-50">改写对比 (Git Diff)</span>
           <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-atelier-800 text-ink-300 border border-atelier-750">
             原 {{ stats.oldWords }} 字 ➔ 新 {{ stats.newWords }} 字
           </span>
@@ -16,27 +16,28 @@
             class="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border">
             {{ stats.deltaWords >= 0 ? '+' + stats.deltaWords : stats.deltaWords }} 字
           </span>
-          <span class="text-[10px] font-mono text-ink-400">
-            +{{ stats.addedLines }} 行 / -{{ stats.deletedLines }} 行
-          </span>
         </div>
       </div>
 
       <!-- 右侧控制区 -->
       <div class="flex items-center gap-2">
-        <!-- 单流 / 双栏 切换 -->
-        <div class="hidden sm:flex items-center bg-atelier-850 p-0.5 rounded-lg border border-atelier-750 text-[11px]">
-          <button 
-            @click="viewMode = 'unified'"
-            :class="viewMode === 'unified' ? 'bg-brand-amber text-atelier-950 font-bold' : 'text-ink-300 hover:text-ink-100'"
-            class="px-2 py-1 rounded transition cursor-pointer">
-            统一流 (Unified)
-          </button>
+        <!-- 左右并排 (Split) / 单列统一 (Unified) 切换 -->
+        <div class="flex items-center bg-atelier-850 p-0.5 rounded-lg border border-atelier-750 text-[11px]">
           <button 
             @click="viewMode = 'split'"
             :class="viewMode === 'split' ? 'bg-brand-amber text-atelier-950 font-bold' : 'text-ink-300 hover:text-ink-100'"
-            class="px-2 py-1 rounded transition cursor-pointer">
-            并排双栏 (Split)
+            class="px-2.5 py-1 rounded transition cursor-pointer flex items-center gap-1"
+            title="左右双栏对比，严格对齐增删改行（推荐）">
+            <Columns class="w-3.5 h-3.5" />
+            <span>左右对比 (Split)</span>
+          </button>
+          <button 
+            @click="viewMode = 'unified'"
+            :class="viewMode === 'unified' ? 'bg-brand-amber text-atelier-950 font-bold' : 'text-ink-300 hover:text-ink-100'"
+            class="px-2.5 py-1 rounded transition cursor-pointer flex items-center gap-1"
+            title="单列上下流对比">
+            <Rows class="w-3.5 h-3.5" />
+            <span>单列统一 (Unified)</span>
           </button>
         </div>
 
@@ -64,116 +65,67 @@
       </div>
     </div>
 
-    <!-- 主比对画布 -->
-    <div class="flex-1 overflow-auto bg-atelier-950">
-      <!-- 统一流模式 (Unified Diff) -->
-      <div v-if="viewMode === 'unified'" class="divide-y divide-atelier-850/40 min-w-full">
-        <div 
-          v-for="(row, idx) in diffRows" 
-          :key="idx"
-          :class="[
-            'flex items-start font-mono leading-relaxed px-3 py-0.5 text-xs select-text transition-colors',
-            row.kind === 'add' ? 'bg-emerald-500/10 text-emerald-200 border-l-2 border-emerald-500' :
-            row.kind === 'del' ? 'bg-rose-500/10 text-rose-300 border-l-2 border-rose-500' :
-            'text-ink-300 hover:bg-atelier-900/40'
-          ]">
-          <!-- 行号栏 -->
-          <div class="w-12 text-right text-ink-600 select-none pr-2 shrink-0 text-[10px]">
-            {{ row.oldLineNum || '' }}
-          </div>
-          <div class="w-12 text-right text-ink-600 select-none pr-3 shrink-0 text-[10px]">
-            {{ row.newLineNum || '' }}
-          </div>
-          <!-- 符号栏 -->
-          <div class="w-4 select-none shrink-0 font-bold" :class="row.kind === 'add' ? 'text-emerald-400' : row.kind === 'del' ? 'text-rose-400' : 'text-ink-600'">
-            {{ row.kind === 'add' ? '+' : row.kind === 'del' ? '−' : ' ' }}
-          </div>
-          <!-- 行正文 (支持词级高亮) -->
-          <div class="flex-1 whitespace-pre-wrap break-words min-w-0 font-serif text-[13px] leading-relaxed">
-            <template v-if="row.wordDiff && row.wordDiff.length">
-              <span 
-                v-for="(w, widx) in row.wordDiff" 
-                :key="widx"
-                :class="w.kind === 'del' ? 'bg-rose-500/30 text-rose-100 px-0.5 rounded line-through' : w.kind === 'add' ? 'bg-emerald-500/35 text-emerald-100 px-0.5 rounded font-semibold underline' : ''">
-                {{ w.text }}
-              </span>
-            </template>
-            <template v-else>
-              {{ row.text }}
-            </template>
-          </div>
-        </div>
-      </div>
-
-      <!-- 并排双栏模式 (Split Diff) -->
-      <div v-else class="grid grid-cols-2 h-full divide-x divide-atelier-750">
-        <!-- 左侧：原文 -->
-        <div class="flex flex-col h-full overflow-hidden">
-          <div class="px-3 py-1 bg-atelier-900 border-b border-atelier-800 text-[11px] font-bold text-rose-400 flex items-center justify-between shrink-0 select-none">
-            <span>原文 (改写前)</span>
-            <span class="text-ink-500">{{ stats.oldWords }} 字</span>
-          </div>
-          <div class="flex-1 overflow-auto divide-y divide-atelier-850/40">
-            <div 
-              v-for="(row, idx) in diffRows" 
-              :key="'l-' + idx"
-              v-show="row.kind !== 'add'"
-              :class="[
-                'flex items-start px-2 py-0.5 text-xs font-mono leading-relaxed',
-                row.kind === 'del' ? 'bg-rose-500/10 text-rose-300 border-l-2 border-rose-500' : 'text-ink-300'
-              ]">
-              <span class="w-10 text-right text-ink-600 select-none pr-2 shrink-0 text-[10px]">{{ row.oldLineNum || '' }}</span>
-              <span class="w-3 select-none shrink-0 font-bold text-rose-400">{{ row.kind === 'del' ? '−' : ' ' }}</span>
-              <span class="flex-1 whitespace-pre-wrap break-words font-serif text-[13px] leading-relaxed">{{ row.oldText || row.text }}</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 右侧：改写后 -->
-        <div class="flex flex-col h-full overflow-hidden">
-          <div class="px-3 py-1 bg-atelier-900 border-b border-atelier-800 text-[11px] font-bold text-emerald-400 flex items-center justify-between shrink-0 select-none">
-            <span>改写稿 (当前)</span>
-            <span class="text-ink-500">{{ stats.newWords }} 字</span>
-          </div>
-          <div class="flex-1 overflow-auto divide-y divide-atelier-850/40">
-            <div 
-              v-for="(row, idx) in diffRows" 
-              :key="'r-' + idx"
-              v-show="row.kind !== 'del'"
-              :class="[
-                'flex items-start px-2 py-0.5 text-xs font-mono leading-relaxed',
-                row.kind === 'add' ? 'bg-emerald-500/10 text-emerald-200 border-l-2 border-emerald-500' : 'text-ink-300'
-              ]">
-              <span class="w-10 text-right text-ink-600 select-none pr-2 shrink-0 text-[10px]">{{ row.newLineNum || '' }}</span>
-              <span class="w-3 select-none shrink-0 font-bold text-emerald-400">{{ row.kind === 'add' ? '+' : ' ' }}</span>
-              <span class="flex-1 whitespace-pre-wrap break-words font-serif text-[13px] leading-relaxed">{{ row.newText || row.text }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
+    <!-- 主比对画布 (第三方专业组件 v-code-diff，支持 Git 左右对比及行内词级高亮) -->
+    <div class="flex-1 min-h-0 overflow-auto bg-atelier-950">
+      <CodeDiff
+        :old-string="oldContent"
+        :new-string="newContent"
+        :output-format="viewMode === 'split' ? 'side-by-side' : 'line-by-line'"
+        theme="dark"
+        diff-style="word"
+        language="markdown"
+        filename="原文 (改写前)"
+        new-filename="改写稿 (当前)"
+        :force-inline-comparison="false"
+        :no-diff-line-feed="true"
+        :hide-header="false"
+        class="h-full"
+      />
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed } from 'vue';
-import { computeLineDiff, computeDiffStats } from '../../utils/diff';
-import { GitCompare, Check, RotateCcw, X } from 'lucide-vue-next';
+import { CodeDiff } from 'v-code-diff';
+import { GitCompare, Columns, Rows, Check, RotateCcw, X } from 'lucide-vue-next';
 
 const props = defineProps({
+  oldText: { type: String, default: '' },
+  newText: { type: String, default: '' },
   originalText: { type: String, default: '' },
   modifiedText: { type: String, default: '' },
 });
 
 defineEmits(['apply', 'revert', 'close']);
 
-const viewMode = ref('unified');
+// 默认直接开启用户要求的 Git 左右对比视图 (side-by-side)
+const viewMode = ref('split');
 
-const diffRows = computed(() => {
-  return computeLineDiff(props.originalText, props.modifiedText);
-});
+const oldContent = computed(() => props.oldText || props.originalText || '');
+const newContent = computed(() => props.newText || props.modifiedText || '');
 
 const stats = computed(() => {
-  return computeDiffStats(props.originalText, props.modifiedText, diffRows.value);
+  const oldWords = oldContent.value.length;
+  const newWords = newContent.value.length;
+  const deltaWords = newWords - oldWords;
+  return {
+    oldWords,
+    newWords,
+    deltaWords,
+  };
 });
 </script>
+
+<style scoped>
+:deep(.v-code-diff) {
+  border: none !important;
+  border-radius: 0 !important;
+  font-family: inherit !important;
+}
+:deep(.v-code-diff .d-code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+  font-size: 12px !important;
+  line-height: 1.6 !important;
+}
+</style>

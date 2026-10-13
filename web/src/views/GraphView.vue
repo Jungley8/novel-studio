@@ -148,7 +148,7 @@
               </p>
             </div>
             <button 
-              @click="state.activeTab = 'codex'" 
+              @click="actions.setActiveTab('codex')" 
               class="px-4 py-2 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-lg shadow-amber-glow transition cursor-pointer inline-flex items-center gap-1.5">
               <BookOpen class="w-3.5 h-3.5" />
               <span>前往设定集录入</span>

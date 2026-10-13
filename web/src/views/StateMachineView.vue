@@ -60,12 +60,28 @@
           </div>
 
           <div>
-            <label class="text-ink-400 font-medium">随身物品与道具 (Inventory)：</label>
+            <div class="flex items-center justify-between">
+              <label class="text-ink-400 font-medium">随身底牌与道具 (Inventory)：</label>
+              <span v-if="parsedProtagonistInventory.length > 0" class="text-[10px] font-mono text-ink-500">
+                已识别 {{ parsedProtagonistInventory.length }} 件道具
+              </span>
+            </div>
             <textarea 
               v-model="computedState.protagonistCharacter.value.inventory" 
-              rows="4" 
+              rows="3" 
               class="w-full mt-1.5 bg-atelier-950 border border-atelier-750 rounded-md p-2.5 text-xs text-ink-100 font-mono focus:outline-none focus:border-brand-amber/60 resize-none leading-relaxed" 
               placeholder="例如：洗髓丹x2, 残骨铁印x1, 玄铁匕首x1"></textarea>
+            <!-- 实时底牌徽章全景预览 (消除截断，结构化呈现) -->
+            <div v-if="parsedProtagonistInventory.length > 0" class="mt-2 flex flex-wrap gap-1.5 p-2 rounded-lg bg-atelier-900/90 border border-atelier-800">
+              <span 
+                v-for="(item, idx) in parsedProtagonistInventory" 
+                :key="idx"
+                class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-atelier-850 border border-atelier-750 text-[10px] text-ink-200 break-all">
+                <Package class="w-2.5 h-2.5 text-ink-400 shrink-0" />
+                <span>{{ item.name }}</span>
+                <span v-if="item.qty > 1" class="text-brand-amber font-mono font-semibold text-[9px] bg-brand-amber/10 px-1 rounded">x{{ item.qty }}</span>
+              </span>
+            </div>
           </div>
 
           <div>
@@ -275,7 +291,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { state, computedState, actions } from '../stores/appState';
 import { 
   Cpu, 
@@ -287,10 +303,16 @@ import {
   Plus,
   Edit3,
   GitCommit,
-  Sparkles
+  Sparkles,
+  Package
 } from 'lucide-vue-next';
+import { parseInventoryItems } from '../utils/inventory';
 
 const isAnalyzing = ref(false);
+
+const parsedProtagonistInventory = computed(() => {
+  return parseInventoryItems(computedState.protagonistCharacter.value?.inventory || '');
+});
 
 async function runAIAnalyzeState() {
   isAnalyzing.value = true;

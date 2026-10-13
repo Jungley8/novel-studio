@@ -8,11 +8,12 @@
     "build": "vite build",
     "build:dev": "vite build --minify false --mode development",
     "preview": "vite preview --no-open",
-    "test": "node --import ./test/register-loader.mjs --test test/project-switch.test.mjs test/nav-scope-isolation.test.mjs test/async-bootstrap.test.mjs test/diff-engine.test.mjs"
+    "test": "node --import ./test/register-loader.mjs --test test/project-switch.test.mjs test/nav-scope-isolation.test.mjs test/async-bootstrap.test.mjs test/diff-engine.test.mjs test/inventory-engine.test.mjs"
   },
   "dependencies": {
     "lucide-vue-next": "^0.475.0",
     "marked": "^18.1.0",
+    "v-code-diff": "^1.16.0",
     "vis-data": "^8.0.5",
     "vis-network": "^10.1.2",
     "vue": "^3.5.13"

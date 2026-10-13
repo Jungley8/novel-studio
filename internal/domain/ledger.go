@@ -30,6 +30,22 @@ var narrativeItemPrefixes = []string{
 	"暗藏的", "暗中备好的", "私藏的",
 }
 
+var addPrefixes = []string{
+	"获得", "得到", "拾取", "买下", "购得", "炼制成", "炼成", "收服", "取得",
+	"捡到", "收获", "采得", "夺得", "缴获", "获赠", "受赠", "拿取", "领受",
+	"铸成", "炼制", "买入", "兑换", "换取", "继承", "融合", "觉醒", "收纳",
+	"持有", "拥有", "新增", "增加",
+}
+
+var removePrefixes = []string{
+	"消耗", "失去", "损毁", "碎裂", "卖出", "服下", "使用", "丢弃", "销毁",
+	"用尽", "破碎", "被毁", "献祭", "上交", "交出", "送出", "转赠", "赠予",
+	"典当", "耗尽", "折损", "遗失", "毁坏", "耗费", "吞服", "吃下", "服食",
+	"饮用", "扣除", "移除", "扔掉",
+}
+
+var spaceDeltaPrefixRegex = regexp.MustCompile(`\s+([+\-])`)
+
 func cleanItemNote(s string) string {
 	s = strings.TrimSpace(s)
 	if m := noteSuffixRegex.FindStringSubmatch(s); len(m) == 2 {
@@ -43,6 +59,13 @@ func cleanNarrativeItemName(s string) string {
 	for _, p := range narrativeItemPrefixes {
 		s = strings.TrimPrefix(s, p)
 		s = strings.TrimSpace(s)
+	}
+	// Also strip narrative prefixes if embedded anywhere inside s
+	for _, p := range narrativeItemPrefixes {
+		if strings.Contains(s, p) {
+			s = strings.ReplaceAll(s, p, "")
+			s = strings.TrimSpace(s)
+		}
 	}
 	// Strip trailing particles like "的" or "之" when preceded by substantive text
 	runes := []rune(s)
@@ -62,21 +85,24 @@ func ApplyStateMutation(e *CodexEntry, mutation StateMutation) ([]string, error)
 	var auditTrail []string
 
 	// 1. Process Inventory Mutations
-	items := initInventoryItems(e)
+	items := InitInventoryItems(e)
 	rawDelta := strings.TrimSpace(mutation.InventoryDelta)
 
 	if rawDelta != "" {
-		deltaTokens := splitDeltaTokens(rawDelta)
+		deltaTokens := SplitDeltaTokens(rawDelta)
 		for _, token := range deltaTokens {
 			token = strings.TrimSpace(token)
-			if token == "" {
+			if token == "" || IsPlaceholderItem(token) {
 				continue
 			}
 
 			// Check if this token represents an addition or a removal
-			action, rawItem := detectItemAction(token)
-			itemName, deltaQty := parseItemAndQuantity(rawItem)
-			if itemName == "" {
+			action, rawItem := DetectItemAction(token)
+			if IsPlaceholderItem(rawItem) {
+				continue
+			}
+			itemName, deltaQty := ParseItemAndQuantity(rawItem)
+			if itemName == "" || IsPlaceholderItem(itemName) {
 				continue
 			}
 			if deltaQty <= 0 {
@@ -114,7 +140,8 @@ func ApplyStateMutation(e *CodexEntry, mutation StateMutation) ([]string, error)
 			default:
 				foundIndex := findInventoryItemIndex(items, itemName)
 				if foundIndex >= 0 {
-					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 状态同步: %s (持有: %d)", itemName, items[foundIndex].Quantity))
+					items[foundIndex].Quantity += deltaQty
+					auditTrail = append(auditTrail, fmt.Sprintf("[Ledger] 状态同步: %s (增加 %d, 当前保有: %d)", itemName, deltaQty, items[foundIndex].Quantity))
 				} else {
 					items = append(items, InventoryItem{
 						Name:     itemName,
@@ -127,14 +154,22 @@ func ApplyStateMutation(e *CodexEntry, mutation StateMutation) ([]string, error)
 
 		var formatted []string
 		for _, itm := range items {
+			if IsPlaceholderItem(itm.Name) {
+				continue
+			}
 			if itm.Quantity > 1 {
 				formatted = append(formatted, fmt.Sprintf("%sx%d", itm.Name, itm.Quantity))
 			} else {
 				formatted = append(formatted, itm.Name)
 			}
 		}
-		e.Inventory = strings.Join(formatted, ", ")
-		e.StructuredItems = items
+		if len(formatted) == 0 {
+			e.Inventory = "无"
+			e.StructuredItems = nil
+		} else {
+			e.Inventory = strings.Join(formatted, ", ")
+			e.StructuredItems = items
+		}
 	} else if len(e.StructuredItems) == 0 && len(items) > 0 {
 		e.StructuredItems = items
 	}
@@ -260,7 +295,7 @@ func parseInventoryItems(inv string) []string {
 		return nil
 	}
 	// Split by commas, semicolons, or newlines
-	replacer := strings.NewReplacer("，", ",", ";", ",", "；", ",", "\n", ",")
+	replacer := strings.NewReplacer("，", ",", ";", ",", "；", ",", "\n", ",", "、", ",")
 	parts := strings.Split(replacer.Replace(inv), ",")
 
 	var items []string
@@ -270,7 +305,7 @@ func parseInventoryItems(inv string) []string {
 		// Strip leading + or - if lingering in raw text
 		clean = strings.TrimPrefix(clean, "+")
 		clean = strings.TrimSpace(clean)
-		if clean != "" && !seen[clean] {
+		if clean != "" && !seen[clean] && !IsPlaceholderItem(clean) {
 			items = append(items, clean)
 			seen[clean] = true
 		}
@@ -278,9 +313,15 @@ func parseInventoryItems(inv string) []string {
 	return items
 }
 
-func splitDeltaTokens(delta string) []string {
+// SplitDeltaTokens splits raw delta strings into individual operation tokens.
+func SplitDeltaTokens(delta string) []string {
+	if strings.TrimSpace(delta) == "" {
+		return nil
+	}
+	// Split space-separated + or - signs: "+洗髓丹 +辟毒珠" -> "+洗髓丹, +辟毒珠"
+	normalized := spaceDeltaPrefixRegex.ReplaceAllString(delta, ", $1")
 	replacer := strings.NewReplacer("，", ",", ";", ",", "；", ",", "\n", ",", "、", ",")
-	raw := replacer.Replace(delta)
+	raw := replacer.Replace(normalized)
 	var rawTokens []string
 	for _, t := range strings.Split(raw, ",") {
 		ct := strings.TrimSpace(t)
@@ -294,10 +335,19 @@ func splitDeltaTokens(delta string) []string {
 		curr := rawTokens[i]
 		if (strings.HasSuffix(curr, "的") || strings.HasSuffix(curr, "之")) && i+1 < len(rawTokens) {
 			next := rawTokens[i+1]
-			nextAction, _ := detectItemAction(next)
-			if nextAction == "DEFAULT" {
-				curr = curr + next
-				i++
+			// Stitch if next does not start with an explicit +/- sign or explicit remove verb
+			if !strings.HasPrefix(next, "+") && !strings.HasPrefix(next, "-") {
+				isExplicitRemove := false
+				for _, rp := range removePrefixes {
+					if strings.HasPrefix(next, rp) {
+						isExplicitRemove = true
+						break
+					}
+				}
+				if !isExplicitRemove {
+					curr = curr + next
+					i++
+				}
 			}
 		}
 		tokens = append(tokens, curr)
@@ -305,7 +355,16 @@ func splitDeltaTokens(delta string) []string {
 	return tokens
 }
 
-func detectItemAction(token string) (action, itemName string) {
+func splitDeltaTokens(delta string) []string {
+	return SplitDeltaTokens(delta)
+}
+
+// DetectItemAction extracts the operation type (ADD or REMOVE) and raw item expression from a token.
+func DetectItemAction(token string) (action, itemName string) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "DEFAULT", ""
+	}
 	// Leading + / -
 	if strings.HasPrefix(token, "+") {
 		return "ADD", strings.TrimSpace(strings.TrimPrefix(token, "+"))
@@ -314,23 +373,25 @@ func detectItemAction(token string) (action, itemName string) {
 		return "REMOVE", strings.TrimSpace(strings.TrimPrefix(token, "-"))
 	}
 
-	// Chinese prefixes for add
-	addPrefixes := []string{"获得", "得到", "拾取", "买下", "购得", "炼制成", "收服"}
 	for _, p := range addPrefixes {
 		if strings.HasPrefix(token, p) {
 			return "ADD", strings.TrimSpace(strings.TrimPrefix(token, p))
 		}
 	}
 
-	// Chinese prefixes for remove
-	removePrefixes := []string{"消耗", "失去", "损毁", "碎裂", "卖出", "服下", "使用"}
 	for _, p := range removePrefixes {
 		if strings.HasPrefix(token, p) {
 			return "REMOVE", strings.TrimSpace(strings.TrimPrefix(token, p))
 		}
 	}
 
-	return "DEFAULT", token
+	// Default for explicit item name without prefix in inventory delta: treat as ADD
+	// e.g. author writes "洗髓丹, 筑基丹" in inventory delta -> author intends to add them
+	return "ADD", token
+}
+
+func detectItemAction(token string) (action, itemName string) {
+	return DetectItemAction(token)
 }
 
 func containsItem(items []string, target string) bool {
@@ -347,7 +408,8 @@ func findItemIndex(items []string, target string) int {
 	return -1
 }
 
-func parseItemAndQuantity(raw string) (name string, qty int) {
+// ParseItemAndQuantity normalizes an item string and extracts its multiplier/unit quantity.
+func ParseItemAndQuantity(raw string) (name string, qty int) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
 		return "", 1
@@ -389,7 +451,12 @@ func parseItemAndQuantity(raw string) (name string, qty int) {
 	return cleanNarrativeItemName(s), 1
 }
 
-func initInventoryItems(e *CodexEntry) []InventoryItem {
+func parseItemAndQuantity(raw string) (name string, qty int) {
+	return ParseItemAndQuantity(raw)
+}
+
+// InitInventoryItems populates a slice of structured inventory items, filtering out placeholder text.
+func InitInventoryItems(e *CodexEntry) []InventoryItem {
 	if e == nil {
 		return nil
 	}
@@ -397,6 +464,9 @@ func initInventoryItems(e *CodexEntry) []InventoryItem {
 		var copyItems []InventoryItem
 		for _, itm := range e.StructuredItems {
 			name := strings.TrimSpace(itm.Name)
+			if IsPlaceholderItem(name) {
+				continue
+			}
 			qty := itm.Quantity
 			if qty <= 0 {
 				qty = 1
@@ -408,14 +478,25 @@ func initInventoryItems(e *CodexEntry) []InventoryItem {
 				AcquiredAt: itm.AcquiredAt,
 			})
 		}
-		return copyItems
+		if len(copyItems) > 0 {
+			return copyItems
+		}
 	}
 
-	rawItems := parseInventoryItems(e.Inventory)
+	return ParseInventoryTextToItems(e.Inventory)
+}
+
+// ParseInventoryTextToItems parses an inventory text string (e.g. "洗髓丹x2, 辟毒珠") into structured InventoryItem slices,
+// ignoring placeholders like "无", "暂无", "待定".
+func ParseInventoryTextToItems(inventoryText string) []InventoryItem {
+	rawItems := parseInventoryItems(inventoryText)
 	var items []InventoryItem
 	for _, raw := range rawItems {
-		name, qty := parseItemAndQuantity(raw)
-		if name != "" {
+		if IsPlaceholderItem(raw) {
+			continue
+		}
+		name, qty := ParseItemAndQuantity(raw)
+		if name != "" && !IsPlaceholderItem(name) {
 			items = append(items, InventoryItem{
 				Name:     name,
 				Quantity: qty,
@@ -425,9 +506,18 @@ func initInventoryItems(e *CodexEntry) []InventoryItem {
 	return items
 }
 
-func isPlaceholderItem(name string) bool {
+func initInventoryItems(e *CodexEntry) []InventoryItem {
+	return InitInventoryItems(e)
+}
+
+// IsPlaceholderItem returns true if the string represents an empty placeholder rather than an actual item.
+func IsPlaceholderItem(name string) bool {
 	clean := strings.TrimSpace(name)
-	return clean == "" || clean == "无" || clean == "暂无" || clean == "待定" || clean == "随身物品待起草" || strings.Contains(clean, "待起草")
+	return clean == "" || clean == "无" || clean == "暂无" || clean == "待定" || clean == "随身物品待起草" || strings.Contains(clean, "待起草") || clean == "无变动" || clean == "无变化" || clean == "没有变动" || clean == "空"
+}
+
+func isPlaceholderItem(name string) bool {
+	return IsPlaceholderItem(name)
 }
 
 func extractNarrativeKeywords(text string) []string {
@@ -502,9 +592,9 @@ func hasNarrativeEvidence(content, rawItem, parsedItem string) bool {
 
 	keywords := extractNarrativeKeywords(target)
 	if len(keywords) > 0 {
-		// A. If a significant keyword of length >= 3 appears in content
+		// A. If a significant keyword of length >= 2 appears in content
 		for _, kw := range keywords {
-			if len([]rune(kw)) >= 3 && strings.Contains(content, kw) {
+			if len([]rune(kw)) >= 2 && strings.Contains(content, kw) {
 				return true
 			}
 		}
@@ -526,6 +616,9 @@ func hasNarrativeEvidence(content, rawItem, parsedItem string) bool {
 
 	// C. Sub-string checks for composite phrases like "林天傲画押"
 	runes := []rune(target)
+	if len(runes) >= 2 && strings.Contains(content, string(runes)) {
+		return true
+	}
 	if len(runes) >= 4 {
 		prefixPart := string(runes[:3])
 		suffixPart := string(runes[3:])
@@ -553,7 +646,7 @@ func findInventoryItemIndex(items []InventoryItem, targetName string) int {
 	// 2. Stripped note match
 	targetCleanNote := cleanItemNote(cleanTarget)
 	for i, itm := range items {
-		if !isPlaceholderItem(itm.Name) && cleanItemNote(itm.Name) == targetCleanNote {
+		if !IsPlaceholderItem(itm.Name) && cleanItemNote(itm.Name) == targetCleanNote {
 			return i
 		}
 	}
@@ -562,7 +655,7 @@ func findInventoryItemIndex(items []InventoryItem, targetName string) int {
 	targetNorm := cleanNarrativeItemName(cleanTarget)
 	if targetNorm != "" {
 		for i, itm := range items {
-			if !isPlaceholderItem(itm.Name) && cleanNarrativeItemName(itm.Name) == targetNorm {
+			if !IsPlaceholderItem(itm.Name) && cleanNarrativeItemName(itm.Name) == targetNorm {
 				return i
 			}
 		}
@@ -572,7 +665,7 @@ func findInventoryItemIndex(items []InventoryItem, targetName string) int {
 	if m := bookTitleRegex.FindStringSubmatch(cleanTarget); len(m) == 2 {
 		targetBook := m[1]
 		for i, itm := range items {
-			if isPlaceholderItem(itm.Name) {
+			if IsPlaceholderItem(itm.Name) {
 				continue
 			}
 			if bm := bookTitleRegex.FindStringSubmatch(itm.Name); len(bm) == 2 && bm[1] == targetBook {
@@ -588,7 +681,7 @@ func findInventoryItemIndex(items []InventoryItem, targetName string) int {
 	targetRunes := []rune(cleanTarget)
 	if len(targetRunes) >= 2 {
 		for i, itm := range items {
-			if isPlaceholderItem(itm.Name) {
+			if IsPlaceholderItem(itm.Name) {
 				continue
 			}
 			itemRunes := []rune(itm.Name)
@@ -611,7 +704,7 @@ func ContainsInventoryItem(e *CodexEntry, targetName string) bool {
 	if e == nil {
 		return false
 	}
-	items := initInventoryItems(e)
+	items := InitInventoryItems(e)
 	return findInventoryItemIndex(items, targetName) >= 0
 }
 
@@ -626,22 +719,41 @@ func ReconcileNarrativeInventoryDelta(prot *CodexEntry, content string, chapterI
 		return mutation
 	}
 
-	tokens := splitDeltaTokens(rawDelta)
+	tokens := SplitDeltaTokens(rawDelta)
 	var addReconciled []string
 	reconciledSet := make(map[string]bool)
 
 	for _, token := range tokens {
-		action, rawItem := detectItemAction(token)
+		action, rawItem := DetectItemAction(token)
 		if action != "REMOVE" {
 			continue
 		}
-		itemName, deltaQty := parseItemAndQuantity(rawItem)
-		if itemName == "" || reconciledSet[itemName] {
+		if IsPlaceholderItem(rawItem) {
+			continue
+		}
+		itemName, deltaQty := ParseItemAndQuantity(rawItem)
+		if itemName == "" || IsPlaceholderItem(itemName) || reconciledSet[itemName] {
 			continue
 		}
 
 		// 检查主角当前是否已持有该物品
 		if ContainsInventoryItem(prot, itemName) || ContainsInventoryItem(prot, rawItem) {
+			continue
+		}
+
+		// 检查当前变更链条中是否已经显式包含对该物品的增加
+		alreadyAdded := false
+		for _, t := range tokens {
+			act, raw := DetectItemAction(t)
+			if act == "ADD" {
+				nm, _ := ParseItemAndQuantity(raw)
+				if nm == itemName || raw == rawItem || nm == rawItem || raw == itemName {
+					alreadyAdded = true
+					break
+				}
+			}
+		}
+		if alreadyAdded {
 			continue
 		}
 
@@ -661,6 +773,72 @@ func ReconcileNarrativeInventoryDelta(prot *CodexEntry, content string, chapterI
 
 	if len(addReconciled) > 0 {
 		// 将追溯补全的前置获得指令注入到当前变更链条头部
+		mutation.InventoryDelta = strings.Join(addReconciled, ", ") + ", " + mutation.InventoryDelta
+	}
+
+	return mutation
+}
+
+// ReconcileAuthorInventoryDelta 对作者在定稿界面显式键入的物品变更执行最高权威性调解：
+// 若作者显式指定扣减某件物品（-某物 或 丢弃某物），但主角账本历史未预录入且正文无字面证据，
+// 系统将其视为作者权威指定的背景出清，前置补齐持有，杜绝状态机校验告警，确保作者手动指定的变动 100% 生效闭合。
+func ReconcileAuthorInventoryDelta(prot *CodexEntry, mutation StateMutation) StateMutation {
+	if prot == nil {
+		return mutation
+	}
+	rawDelta := strings.TrimSpace(mutation.InventoryDelta)
+	if rawDelta == "" {
+		return mutation
+	}
+
+	tokens := SplitDeltaTokens(rawDelta)
+	var addReconciled []string
+	reconciledSet := make(map[string]bool)
+
+	for _, token := range tokens {
+		action, rawItem := DetectItemAction(token)
+		if action != "REMOVE" {
+			continue
+		}
+		if IsPlaceholderItem(rawItem) {
+			continue
+		}
+		itemName, deltaQty := ParseItemAndQuantity(rawItem)
+		if itemName == "" || IsPlaceholderItem(itemName) || reconciledSet[itemName] {
+			continue
+		}
+
+		// 检查主角当前是否已持有该物品
+		if ContainsInventoryItem(prot, itemName) || ContainsInventoryItem(prot, rawItem) {
+			continue
+		}
+
+		// 检查当前变更链条中是否已经显式包含对该物品的增加
+		alreadyAdded := false
+		for _, t := range tokens {
+			act, raw := DetectItemAction(t)
+			if act == "ADD" {
+				nm, _ := ParseItemAndQuantity(raw)
+				if nm == itemName || raw == rawItem || nm == rawItem || raw == itemName {
+					alreadyAdded = true
+					break
+				}
+			}
+		}
+		if alreadyAdded {
+			continue
+		}
+
+		reconciledSet[itemName] = true
+		reconciledSet[rawItem] = true
+		qtyStr := ""
+		if deltaQty > 1 {
+			qtyStr = fmt.Sprintf("x%d", deltaQty)
+		}
+		addReconciled = append(addReconciled, fmt.Sprintf("+%s%s", itemName, qtyStr))
+	}
+
+	if len(addReconciled) > 0 {
 		mutation.InventoryDelta = strings.Join(addReconciled, ", ") + ", " + mutation.InventoryDelta
 	}
 

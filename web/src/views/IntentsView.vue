@@ -85,7 +85,7 @@
       </p>
       <div class="pt-2">
         <button 
-          @click="state.activeTab = 'framework'" 
+          @click="actions.setActiveTab('framework')" 
           class="px-4 py-2 bg-brand-amber/15 hover:bg-brand-amber/25 text-brand-amber border border-brand-amber/30 text-xs font-semibold rounded-lg transition cursor-pointer">
           前往作品设定规划分卷
         </button>

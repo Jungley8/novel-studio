@@ -514,6 +514,15 @@
             <span>{{ state.isRewriting ? '正在精修正文...' : '自动精修' }}</span>
           </button>
 
+          <!-- 改写前后 Git Diff 对比快捷切换按钮 -->
+          <button 
+            v-if="state.workbench?.originalDraftBeforeRewrite && state.workbench.originalDraftBeforeRewrite.trim() !== state.workbench.content.trim()"
+            @click="state.workbench.showDiffViewer = !state.workbench.showDiffViewer"
+            class="w-full py-2 bg-brand-cyan/15 hover:bg-brand-cyan/25 text-brand-cyan border border-brand-cyan/40 font-bold text-xs rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer shadow-cyan-glow/10">
+            <GitCompare class="w-3.5 h-3.5" />
+            <span>{{ state.workbench.showDiffViewer ? '返回文本编辑' : '查看改写前后 Git Diff 对比' }}</span>
+          </button>
+
           <div class="grid grid-cols-2 gap-2 pt-1">
             <button 
               @click="goToStep(4)"
@@ -552,10 +561,20 @@
               <div class="flex items-center gap-2 text-[10px]">
                 <button 
                   type="button"
+                  @click="handleSettleDraftFromContent"
+                  :disabled="isSettlingDraft"
+                  class="text-brand-amber hover:underline cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                  title="调用正文事实精算师，严格从正文中反向推导状态变迁与证据引用（与自动化流水线完全拉齐）">
+                  <Loader2 v-if="isSettlingDraft" class="w-3 h-3 animate-spin" />
+                  <span>{{ isSettlingDraft ? '正在验收事实...' : 'AI 事实验收' }}</span>
+                </button>
+                <span class="text-atelier-700">|</span>
+                <button 
+                  type="button"
                   @click="autoExtractStateFromContent"
-                  class="text-brand-amber hover:underline cursor-pointer"
-                  title="自动从正文中提取剧情物品并补充持有">
-                  正文提取
+                  class="text-ink-400 hover:text-ink-200 cursor-pointer"
+                  title="本地快速提取书名号中的宝物/功法">
+                  快速提取
                 </button>
                 <span class="text-atelier-700">|</span>
                 <button 
@@ -586,9 +605,95 @@
                   placeholder="例如：+洗髓丹, -辟毒珠 (留空表示无变动)" 
                   class="w-full mt-0.5 px-2.5 py-1.5 bg-atelier-900 border border-atelier-800 rounded text-[11px] text-ink-100 placeholder-ink-600 focus:outline-none focus:border-brand-amber/50" />
               </div>
+              <!-- 随身底牌流转与实时结算全景 (消除截断，结构化徽章全景呈现) -->
+              <div class="mt-2 p-2.5 rounded-lg bg-atelier-900/90 border border-atelier-800 text-[10px] space-y-2.5">
+                <!-- 当前主角随身底牌 -->
+                <div class="space-y-1.5">
+                  <div class="text-ink-400 flex items-center justify-between">
+                    <span class="font-medium flex items-center gap-1.5 text-ink-300">
+                      <Package class="w-3 h-3 text-ink-400 shrink-0" />
+                      <span>当前主角随身底牌：</span>
+                    </span>
+                    <span class="text-[9px] font-mono text-ink-500">
+                      共 {{ currentInventoryList.length }} 件道具
+                    </span>
+                  </div>
+                  <div v-if="currentInventoryList.length > 0" class="flex flex-wrap gap-1.5">
+                    <span 
+                      v-for="(item, idx) in currentInventoryList" 
+                      :key="'cur-' + idx"
+                      class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-atelier-850 border border-atelier-750 text-ink-200 text-[10px] leading-relaxed break-all hover:border-atelier-700 transition">
+                      <span>{{ item.name }}</span>
+                      <span v-if="item.qty > 1" class="text-brand-amber font-mono font-semibold text-[9px] bg-brand-amber/10 px-1 rounded">x{{ item.qty }}</span>
+                    </span>
+                  </div>
+                  <div v-else class="text-ink-500 text-[10px] italic py-0.5">
+                    暂无随身底牌道具
+                  </div>
+                </div>
+
+                <!-- 预计定稿后底牌 -->
+                <div class="pt-2 border-t border-atelier-800/80 space-y-1.5">
+                  <div class="flex items-center justify-between">
+                    <span class="font-medium text-brand-amber flex items-center gap-1.5">
+                      <Sparkles class="w-3 h-3 text-brand-amber shrink-0" />
+                      <span>预计定稿后底牌：</span>
+                    </span>
+                    <span v-if="inventoryDeltaSummary" class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-brand-amber/10 text-brand-amber border border-brand-amber/20">
+                      {{ inventoryDeltaSummary }}
+                    </span>
+                    <span v-else class="text-[9px] font-mono text-ink-500">
+                      共 {{ predictedInventoryList.length }} 件
+                    </span>
+                  </div>
+                  <div v-if="predictedInventoryList.length > 0 || removedInventoryList.length > 0" class="flex flex-wrap gap-1.5">
+                    <!-- 预计保留与新增道具 -->
+                    <span 
+                      v-for="(item, idx) in predictedInventoryList" 
+                      :key="'pred-' + idx"
+                      :class="item.isNew ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 font-medium' : 'bg-atelier-850 border-atelier-750 text-ink-200'"
+                      class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] leading-relaxed break-all transition">
+                      <span v-if="item.isNew" class="text-[9px] font-bold text-brand-emerald bg-brand-emerald/20 px-1 rounded">+新增</span>
+                      <span>{{ item.name }}</span>
+                      <span v-if="item.qty > 1" class="text-brand-amber font-mono font-semibold text-[9px] bg-brand-amber/10 px-1 rounded">x{{ item.qty }}</span>
+                    </span>
+                    <!-- 本章消耗/移除道具 -->
+                    <span 
+                      v-for="(item, idx) in removedInventoryList" 
+                      :key="'rem-' + idx"
+                      class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-950/40 border border-rose-500/30 text-rose-300/80 text-[10px] leading-relaxed break-all line-through opacity-85"
+                      :title="'本章消耗/移除：' + item.name">
+                      <span class="text-[9px] text-rose-400 no-underline font-mono">-扣除</span>
+                      <span>{{ item.name }}</span>
+                      <span v-if="item.qty > 1" class="font-mono text-[9px]">x{{ item.qty }}</span>
+                    </span>
+                  </div>
+                  <div v-else class="text-ink-500 text-[10px] italic py-0.5">
+                    定稿后主角将无随身道具
+                  </div>
+                </div>
+              </div>
             </div>
+
+            <!-- 证据链展示 (Settlement Evidences) -->
+            <div v-if="settlementEvidences.length > 0" class="pt-1.5 border-t border-atelier-800 space-y-1">
+              <span class="text-[10px] text-ink-400 font-mono flex items-center justify-between">
+                <span>正文事实证据链 ({{ settlementEvidences.length }}条)：</span>
+                <button type="button" @click="settlementEvidences = []" class="hover:text-ink-200 cursor-pointer">收起</button>
+              </span>
+              <div class="space-y-1 max-h-28 overflow-y-auto pr-1">
+                <div 
+                  v-for="(ev, idx) in settlementEvidences" 
+                  :key="idx"
+                  class="p-1.5 rounded bg-atelier-900/80 border border-atelier-800 text-[10px] text-ink-300 leading-tight">
+                  <span class="text-brand-amber font-mono font-bold mr-1">[{{ ev.field }}]</span>
+                  <span class="text-ink-200">“{{ ev.quote }}”</span>
+                </div>
+              </div>
+            </div>
+
             <p class="text-[10px] text-ink-500 leading-normal">
-              定稿时系统自动核验正文叙事证据；若包含未持有的背景旧物消耗，接口已自动追溯补全。
+              定稿时系统自动调解正文旧物；提交后后台异步自动生成章节摘要并登记新伏笔（与流水线生命周期一致）。
             </p>
           </div>
 
@@ -632,7 +737,7 @@
             <span class="w-2 h-2 rounded-full bg-brand-amber shrink-0 animate-pulse"></span>
             <span class="font-serif font-bold text-ink-100 text-[11px] shrink-0">创作参考</span>
             <span class="text-[10px] text-ink-400 truncate font-mono">
-              {{ computedState.protagonistCharacter.value ? (computedState.protagonistCharacter.value.name + (computedState.protagonistCharacter.value.realm ? ' (' + computedState.protagonistCharacter.value.realm + ')' : '')) : '凡人' }} · {{ lastChapterTail ? '上章末尾' : '开局首章' }}
+              {{ computedState.protagonistCharacter.value ? (computedState.protagonistCharacter.value.name + (computedState.protagonistCharacter.value.realm ? ' (' + computedState.protagonistCharacter.value.realm + ')' : '')) : '凡人' }} · {{ lastChapterTail ? '上章末尾' : '开局首章' }}<template v-if="currentInventoryList.length > 0"> · 底牌({{ currentInventoryList.length }})</template>
             </span>
           </div>
           <div class="flex items-center gap-1 text-[10px] text-ink-400 group-hover:text-brand-amber shrink-0">
@@ -645,7 +750,7 @@
         <!-- 展开内容区 (最大高度 240px，带平滑滚动) -->
         <div v-show="showReferenceDock" class="p-3 pt-0 max-h-60 overflow-y-auto space-y-2.5 border-t border-atelier-800/60">
           <!-- 主角状态 -->
-          <div class="p-2.5 bg-atelier-900/80 border border-atelier-750/80 rounded-lg space-y-1 text-xs">
+          <div class="p-2.5 bg-atelier-900/80 border border-atelier-750/80 rounded-lg space-y-2 text-xs">
             <div class="flex items-center justify-between text-[11px]">
               <span class="font-bold text-brand-emerald flex items-center gap-1.5">
                 <Cpu class="w-3.5 h-3.5" />
@@ -653,8 +758,24 @@
               </span>
               <strong class="text-ink-100 font-semibold truncate max-w-[140px]">{{ computedState.protagonistCharacter.value ? (computedState.protagonistCharacter.value.name + (computedState.protagonistCharacter.value.realm ? ' (' + computedState.protagonistCharacter.value.realm + ')' : '')) : '凡人' }}</strong>
             </div>
-            <div class="text-[10px] text-ink-300">
-              随身底牌：<span class="text-ink-200">{{ computedState.protagonistCharacter.value?.inventory || '无' }}</span>
+            <div class="space-y-1">
+              <div class="text-[10px] text-ink-400 flex items-center justify-between">
+                <span class="flex items-center gap-1">
+                  <Package class="w-3 h-3 text-ink-400 shrink-0" />
+                  <span>随身底牌：</span>
+                </span>
+                <span v-if="currentInventoryList.length > 0" class="text-[9px] font-mono text-ink-500">{{ currentInventoryList.length }} 件道具</span>
+              </div>
+              <div v-if="currentInventoryList.length > 0" class="flex flex-wrap gap-1 pt-0.5">
+                <span 
+                  v-for="(item, idx) in currentInventoryList" 
+                  :key="'ref-' + idx"
+                  class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-atelier-850 border border-atelier-700/80 text-ink-200 text-[10px] leading-tight break-all">
+                  <span>{{ item.name }}</span>
+                  <span v-if="item.qty > 1" class="text-brand-amber font-mono font-semibold text-[9px]">x{{ item.qty }}</span>
+                </span>
+              </div>
+              <div v-else class="text-ink-500 text-[10px] italic">暂无底牌道具</div>
             </div>
           </div>
 
@@ -719,8 +840,11 @@ import {
   HeartHandshake,
   ChevronUp,
   ChevronDown,
-  Scale
+  Scale,
+  Package,
+  GitCompare
 } from 'lucide-vue-next';
+import { parseInventoryItems, simulateInventoryDelta } from '../../utils/inventory';
 
 const props = defineProps({
   onRenderScene: {
@@ -920,6 +1044,45 @@ async function handleReviewDraft() {
 }
 
 const commitError = ref(null);
+const isSettlingDraft = ref(false);
+const settlementEvidences = ref([]);
+
+async function handleSettleDraftFromContent() {
+  const content = state.workbench.content || '';
+  if (!content.trim()) return notify('正文为空', '请先完成正文起草后再执行正文事实验收', 'info');
+  if (!state.currentProject) return;
+
+  isSettlingDraft.value = true;
+  const targetIndex = computedState.currentWorkingChapterIndex.value;
+  try {
+    notify('正文事实验收中', `正在分析第 ${targetIndex} 章正文事实，反向提纯战力与物品变动`, 'info', 3000);
+    const res = await api.settleDraft(state.currentProject.id, {
+      chapter_index: targetIndex,
+      content: content,
+    });
+    if (res && res.state_mutation) {
+      state.workbench.stateMutation = {
+        inventory_delta: res.state_mutation.inventory_delta || '',
+        power_delta: res.state_mutation.power_delta || '',
+        character_mutations: res.state_mutation.character_mutations || [],
+      };
+      settlementEvidences.value = res.evidences || [];
+      commitError.value = null;
+      notify(
+        '正文事实验收完成',
+        `已提取确凿变迁，附带 ${settlementEvidences.value.length} 条原文引用证据`,
+        'success',
+        4000
+      );
+    }
+  } catch (e) {
+    console.warn('AI settle failed, fallback to local book matching:', e);
+    notify('正文智能验收降级', e.message || '转为本地提取', 'warning', 3000);
+    autoExtractStateFromContent();
+  } finally {
+    isSettlingDraft.value = false;
+  }
+}
 
 function clearStateMutation() {
   state.workbench.stateMutation = {
@@ -927,6 +1090,7 @@ function clearStateMutation() {
     power_delta: '',
   };
   commitError.value = null;
+  settlementEvidences.value = [];
   notify('已清空状态变更', '本章将不携带任何属性变动直接定稿', 'info');
 }
 
@@ -956,6 +1120,23 @@ function autoExtractStateFromContent() {
   }
 }
 
+// 随身底牌解析与实时结算推演 (消除截断，结构化徽章全景呈现)
+const currentInventoryList = computed(() => {
+  return parseInventoryItems(computedState.protagonistCharacter.value?.inventory || '');
+});
+
+const inventorySimulation = computed(() => {
+  return simulateInventoryDelta(
+    computedState.protagonistCharacter.value?.inventory || '',
+    state.workbench.stateMutation?.inventory_delta || ''
+  );
+});
+
+const predictedInventoryList = computed(() => inventorySimulation.value.predictedList);
+const removedInventoryList = computed(() => inventorySimulation.value.removedList);
+const inventoryDeltaSummary = computed(() => inventorySimulation.value.deltaSummary);
+const predictedInventory = computed(() => inventorySimulation.value.predictedString);
+
 // 保存定稿
 async function handleCommitChapter() {
   if (!state.currentProject || !state.workbench.content.trim()) return;
@@ -965,7 +1146,7 @@ async function handleCommitChapter() {
   try {
     const titleMatch = state.workbench.coreConflict.match(/^[^\n，。！？]+/);
     const title = titleMatch ? titleMatch[0].trim() : `第 ${targetIndex} 章`;
-    await api.commitChapter(state.currentProject.id, {
+    const res = await api.commitChapter(state.currentProject.id, {
       chapter_index: targetIndex,
       title: title,
       content: state.workbench.content,
@@ -977,17 +1158,42 @@ async function handleCommitChapter() {
     try {
       await api.clearCheckpoint(state.currentProject.id, targetIndex);
     } catch (_) {}
-    notify(
-      '本章已定稿保存',
-      `第 ${targetIndex} 章已保存至章节目录 (${state.workbench.content.length}字)`,
-      'success',
-      4500,
-      { taskType: 'commit', chapterIndex: targetIndex, status: 'completed' }
-    );
+
+    if (res?.warnings?.length > 0) {
+      notify(
+        '本章已定稿保存（含状态机审计提醒）',
+        `第 ${targetIndex} 章已保存至章节目录 (${state.workbench.content.length}字)。审计提醒：${res.warnings.join('; ')}`,
+        'warning',
+        6000,
+        { taskType: 'commit', chapterIndex: targetIndex, status: 'completed' }
+      );
+    } else {
+      notify(
+        '本章已定稿保存',
+        `第 ${targetIndex} 章已保存至章节目录 (${state.workbench.content.length}字)，后台已自动生成摘要并登记伏笔`,
+        'success',
+        4500,
+        { taskType: 'commit', chapterIndex: targetIndex, status: 'completed' }
+      );
+    }
     commitError.value = null;
+    settlementEvidences.value = [];
     state.editingChapterIndex = null;
     state.pipelineState.halted = false;
     state.pipelineState.haltInfo = null;
+
+    // 立即就地更新主角条目，保证抽屉与状态机视界 0 延时响应
+    if (res?.protagonist) {
+      const idx = state.codexEntries.findIndex(
+        e => e.id === res.protagonist.id || e.archetype === 'PROTAGONIST'
+      );
+      if (idx >= 0) {
+        state.codexEntries[idx] = res.protagonist;
+      } else {
+        state.codexEntries.push(res.protagonist);
+      }
+    }
+
     await actions.selectProject(state.currentProject.id);
     state.workbench = createDefaultWorkbench();
     state.reviewResult = null;

@@ -142,6 +142,21 @@
 
 ---
 
+## 逐模块 UI/UX 体验精炼、Diff比对、阅读器导航与底牌全景展示专项（Wave 8 / Round 28）
+
+目标：系统化逐模块精炼提升 NovelStudio 全站 UI/UX 体验，彻底解决历史遗留的视觉与交互痛点（时间线 Git Diff 左右双模式对比、随身底牌展示截断根治、章节阅读器沉浸翻页导航、多作品书库空态深度分离、全站跨模块导航契约收编）。
+
+| # | 交付 | 模块 / Spec | 优先级 | 状态 |
+|---|------|------------|--------|------|
+| 1 | **时间线 Git Diff 左右双模式比对**（接入 `v-code-diff`，支持分栏/单列双模式实时切换，无实质差异友好徽章提示） | `web/src/views/ActivityView.vue` | **P0** | 🟢 已完成 |
+| 2 | **随身底牌与物品展示截断根治**（封装 `utils/inventory.js`，消灭 `max-w-[150px]` 限制，换装全景折行徽章卡片流） | `web/src/utils/inventory.js` + `WorkbenchStepsPanel.vue` + `StateMachineView.vue` + `FrameworkView.vue` | **P0** | 🟢 已完成 |
+| 3 | **章节阅读器沉浸翻页与变迁徽章**（新增上一章/下一章翻页导航条与全书进度，状态变迁解析并渲染增/减/中性结构化徽章） | `web/src/views/ChaptersView.vue` | **P1** | 🟢 已完成 |
+| 4 | **多作品书库空态深度分离**（彻底分离“全库零工程”与“搜索/筛选无结果”，提供一键清空筛选条件 CTA） | `web/src/views/StudioLibraryView.vue` | **P1** | 🟢 已完成 |
+| 5 | **全站跨模块导航单一事实源收编**（消灭 `state.activeTab =` 直接赋值，统一走 `actions.setActiveTab` / `switchToProject` / `switchToGlobal`） | 10+ 核心视图与组件 | **P0** | 🟢 已完成 |
+| 6 | **专项单测与全量回归**（新增 `diff-engine.test.mjs` 与 `inventory-engine.test.mjs`，19/19 单测全绿通过） | `web/test/` | **P0** | 🟢 已完成 |
+
+---
+
 ## 精炼成果与总进度
 
 - 🟢 **已精炼完成**: 5/5 核心双轨制与割裂架构缺陷（主角、势力阵营、世界公理、关键人物影子、种子伏笔冗余）
@@ -151,10 +166,11 @@
 - 🟢 **全局与作品级菜单完全隔离 (Wave 5)**: 6/6 交付完成（双域单一事实源、Sidebar/Header 物理隔离、视图零状态兜底）
 - 🟢 **对话记录/灵感合并、文本复制解禁与Markdown优化 (Wave 6)**: 6/6 交付完成（Inbox与灵感合一、select-none移除、marked解析排版、12/12 单测全绿）
 - 🟢 **创世推演异步化与即时跳转 (Wave 7)**: 6/6 交付完成（即时响应、平滑跳入工作台、后台goroutine与生产锁、状态轮询自愈刷新、13/13 单测全绿）
+- 🟢 **逐模块 UI/UX 优化与底牌/Diff/阅读器升级 (Wave 8)**: 6/6 交付完成（v-code-diff时间线、底牌全景展示、阅读器上下章翻页、书库双空态、全站导航收编、19/19 单测全绿）
 - 🟡 **进行中**: 0
 - 🔴 **待排期**: 无
 - **Go 测试**: `go test ./... -race -count=1` 全库全绿通过
-- **前端测试**: `pnpm test`（13/13 全部通过）
+- **前端测试**: `pnpm test`（19/19 全部通过）
 - **前端构建**: `pnpm --dir web build` 纯净构建通过
 
 

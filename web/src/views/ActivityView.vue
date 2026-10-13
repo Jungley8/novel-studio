@@ -95,14 +95,60 @@
                         <span v-for="f in detail.fields_changed" :key="f"
                           class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-brand-amber/10 text-brand-amber border border-brand-amber/25">{{ f }}</span>
                       </div>
-                      <div class="flex gap-1.5 mb-2">
+                      <div class="flex items-center gap-2 mb-2 flex-wrap">
+                        <button v-if="detail.before" @click="detailTab = 'diff'"
+                          :class="['px-2.5 py-1 text-[11px] rounded transition cursor-pointer flex items-center gap-1', detailTab === 'diff' ? 'bg-brand-amber text-atelier-950 font-bold shadow-sm' : 'bg-atelier-850 text-ink-300 hover:text-ink-100']">
+                          <GitCompare class="w-3 h-3" />
+                          <span>差异比对 (Diff)</span>
+                        </button>
                         <button @click="detailTab = 'after'"
-                          :class="['px-2 py-1 text-[11px] rounded transition cursor-pointer', detailTab === 'after' ? 'bg-brand-amber text-atelier-950 font-bold' : 'bg-atelier-850 text-ink-300']">变更后全文</button>
+                          :class="['px-2.5 py-1 text-[11px] rounded transition cursor-pointer', detailTab === 'after' ? 'bg-brand-amber text-atelier-950 font-bold shadow-sm' : 'bg-atelier-850 text-ink-300 hover:text-ink-100']">
+                          变更后全文
+                        </button>
                         <button v-if="detail.before" @click="detailTab = 'before'"
-                          :class="['px-2 py-1 text-[11px] rounded transition cursor-pointer', detailTab === 'before' ? 'bg-brand-amber text-atelier-950 font-bold' : 'bg-atelier-850 text-ink-300']">变更前</button>
+                          :class="['px-2.5 py-1 text-[11px] rounded transition cursor-pointer', detailTab === 'before' ? 'bg-brand-amber text-atelier-950 font-bold shadow-sm' : 'bg-atelier-850 text-ink-300 hover:text-ink-100']">
+                          变更前
+                        </button>
+
+                        <!-- 当处于 diff 模式时，支持左右双栏与单列上下切换 -->
+                        <div v-if="detail.before && detailTab === 'diff'" class="flex items-center bg-atelier-850 p-0.5 rounded border border-atelier-750 text-[10px] ml-1">
+                          <button 
+                            @click="diffViewMode = 'split'" 
+                            :class="diffViewMode === 'split' ? 'bg-atelier-750 text-brand-amber font-bold' : 'text-ink-400 hover:text-ink-200'"
+                            class="px-2 py-0.5 rounded transition cursor-pointer">
+                            左右双栏
+                          </button>
+                          <button 
+                            @click="diffViewMode = 'unified'" 
+                            :class="diffViewMode === 'unified' ? 'bg-atelier-750 text-brand-amber font-bold' : 'text-ink-400 hover:text-ink-200'"
+                            class="px-2 py-0.5 rounded transition cursor-pointer">
+                            单列流
+                          </button>
+                        </div>
+
+                        <!-- 相同内容提示 -->
+                        <span v-if="detail.before && detail.before === detail.after" class="text-[10px] font-mono text-ink-400 bg-atelier-850 px-2 py-0.5 rounded border border-atelier-750">
+                          (变更前后文本无实质差异)
+                        </span>
+
                         <span v-if="detail.token_usage" class="text-[10px] font-mono text-ink-500 self-center ml-auto">{{ tokenLabel(detail.token_usage) }}</span>
                       </div>
-                      <pre class="text-[11px] text-ink-200 whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto font-sans">{{ detailTab === 'after' ? (detail.after || '(空)') : detail.before }}</pre>
+
+                      <!-- Diff 内容区 -->
+                      <div v-if="detailTab === 'diff' && detail.before" class="rounded border border-atelier-750 overflow-hidden bg-atelier-950 max-h-96 overflow-y-auto">
+                        <CodeDiff
+                          :old-string="detail.before || ''"
+                          :new-string="detail.after || ''"
+                          :output-format="diffViewMode === 'split' ? 'side-by-side' : 'line-by-line'"
+                          theme="dark"
+                          language="plaintext"
+                          :diff-style="'word'"
+                          :trim-empty-lines="false"
+                        />
+                      </div>
+
+                      <!-- 纯文本全文展示区 -->
+                      <pre v-else class="text-[11px] text-ink-200 whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto font-sans p-2 bg-atelier-950/80 rounded border border-atelier-800">{{ detailTab === 'after' ? (detail.after || '(空)') : detail.before }}</pre>
                     </div>
                   </div>
                 </div>
@@ -124,7 +170,8 @@
 import { ref, reactive, computed, watch, onMounted } from 'vue';
 import { state } from '../stores/appState';
 import { api } from '../api/client';
-import { History, ChevronDown } from 'lucide-vue-next';
+import { History, ChevronDown, GitCompare } from 'lucide-vue-next';
+import { CodeDiff } from 'v-code-diff';
 
 const loading = ref(false);
 const events = ref([]);
@@ -133,6 +180,7 @@ const expandedId = ref(null);
 const detail = ref(null);
 const detailLoading = ref(false);
 const detailTab = ref('after');
+const diffViewMode = ref('split');
 
 const filters = reactive({ entity_type: '', chapter_index: '', include_checkpoint: true });
 const openRuns = ref(new Set());
@@ -375,11 +423,12 @@ async function toggleDetail(ev) {
     return;
   }
   expandedId.value = ev.id;
-  detailTab.value = 'after';
   detail.value = null;
   detailLoading.value = true;
   try {
-    detail.value = await api.getActivityEvent(state.currentProject.id, ev.id);
+    const res = await api.getActivityEvent(state.currentProject.id, ev.id);
+    detail.value = res;
+    detailTab.value = res?.before ? 'diff' : 'after';
   } catch (e) {
     console.error('[Activity] detail failed', e);
   } finally {

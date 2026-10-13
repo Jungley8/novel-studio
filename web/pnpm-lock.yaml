@@ -14,6 +14,9 @@ importers:
       marked:
         specifier: ^18.1.0
         version: 18.1.0
+      v-code-diff:
+        specifier: ^1.16.0
+        version: 1.16.0(vue@3.5.43)
       vis-data:
         specifier: ^8.0.5
         version: 8.0.5(uuid@14.0.2)(vis-util@6.0.2(@egjs/hammerjs@2.0.17)(component-emitter@2.0.0))
@@ -498,6 +501,13 @@ packages:
   didyoumean@1.2.2:
     resolution: {integrity: sha512-gxtyfqMg7GKyhQmb056K7M3xszy/myH8w+B4RT+QXBQsvAOdc3XymqDDPHx1BgPgsdAA5SIifona89YtRATDzw==}
 
+  diff-match-patch@1.0.5:
+    resolution: {integrity: sha512-IayShXAgj/QMXgB0IWmKx+rOPuGMhqm5w6jvFxmVenXKIzRqTAAsbBPT3kWQeGANj3jGgvcvv4yK6SxqYmikgw==}
+
+  diff@5.2.2:
+    resolution: {integrity: sha512-vtcDfH3TOjP8UekytvnHH1o1P4FcUdt4eQ1Y+Abap1tk/OB2MWQvcwS2ClCd1zuIhc3JKOx6p3kod8Vfys3E+A==}
+    engines: {node: '>=0.3.1'}
+
   dlv@1.1.3:
     resolution: {integrity: sha512-+HlytyjlPKnIG8XuRG8WvmBP8xs8P71y+SKKS6ZXWoEgLuePxtDoUEiH7WkdePWrQ5JBpE6aoVqfZfJUQkjXwA==}
 
@@ -566,6 +576,10 @@ packages:
   hasown@2.0.4:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
+
+  highlight.js@11.12.0:
+    resolution: {integrity: sha512-nbfWpyRMcMrPMmDwJB+dhX/eiaPKtc2RB+0QZskqJ3WjRA/FDS0e9hZrx8EC/lbEv8gXy98FcDbNa/dspAaJMg==}
+    engines: {node: '>=12.0.0'}
 
   is-binary-path@2.1.0:
     resolution: {integrity: sha512-ZMERYes6pDydyuGidse7OsHxtbI7WVeUEozgR/g7rd0xUimYNlvZRE/K2MgZTjWy725IfelLeVcEM97mmtRGXw==}
@@ -788,6 +802,15 @@ packages:
     resolution: {integrity: sha512-xZe/16rV4aa+HGSOCiY2YeLT1OybRLrrkL/Rqaq7p7GMVXjFh+6wN4oMYgjFmnSnhY8t6Xpdl2l9qmnHYuMHwQ==}
     hasBin: true
 
+  v-code-diff@1.16.0:
+    resolution: {integrity: sha512-xNhzfK/OHgVs86T1Wnjb1YqSAYHXhmwAAYm8G7yVWuc96j9QWyIhG1xirWMjrzlkJr3KRGR+TUKqG23P5bl8Pg==}
+    peerDependencies:
+      '@vue/composition-api': ^1.4.9
+      vue: ^2.6.0 || >=3.0.0
+    peerDependenciesMeta:
+      '@vue/composition-api':
+        optional: true
+
   vis-data@8.0.5:
     resolution: {integrity: sha512-tRQKcTGaclo60rTY1j4v7BgD9v5jfD3wl+JgR1q6I4AI7go3QH5OjMCLIuZPpL2sf4IRMlwyPlRLnK4m+Phjsw==}
     peerDependencies:
@@ -849,6 +872,17 @@ packages:
       tsx:
         optional: true
       yaml:
+        optional: true
+
+  vue-demi@0.14.10:
+    resolution: {integrity: sha512-nMZBOwuzabUO0nLgIcc6rycZEebF6eeUfaiQx9+WSk8e29IbLvPU9feI6tqW4kTo3hvoYAJkMh8n8D0fuISphg==}
+    engines: {node: '>=12'}
+    hasBin: true
+    peerDependencies:
+      '@vue/composition-api': ^1.0.0-rc.1
+      vue: ^3.0.0-0 || ^2.6.0
+    peerDependenciesMeta:
+      '@vue/composition-api':
         optional: true
 
   vue@3.5.43:
@@ -1185,6 +1219,10 @@ snapshots:
 
   didyoumean@1.2.2: {}
 
+  diff-match-patch@1.0.5: {}
+
+  diff@5.2.2: {}
+
   dlv@1.1.3: {}
 
   electron-to-chromium@1.5.448: {}
@@ -1264,6 +1302,8 @@ snapshots:
   hasown@2.0.4:
     dependencies:
       function-bind: 1.1.2
+
+  highlight.js@11.12.0: {}
 
   is-binary-path@2.1.0:
     dependencies:
@@ -1493,6 +1533,14 @@ snapshots:
 
   uuid@14.0.2: {}
 
+  v-code-diff@1.16.0(vue@3.5.43):
+    dependencies:
+      diff: 5.2.2
+      diff-match-patch: 1.0.5
+      highlight.js: 11.12.0
+      vue: 3.5.43
+      vue-demi: 0.14.10(vue@3.5.43)
+
   vis-data@8.0.5(uuid@14.0.2)(vis-util@6.0.2(@egjs/hammerjs@2.0.17)(component-emitter@2.0.0)):
     dependencies:
       uuid: 14.0.2
@@ -1523,6 +1571,10 @@ snapshots:
     optionalDependencies:
       fsevents: 2.3.3
       jiti: 1.21.7
+
+  vue-demi@0.14.10(vue@3.5.43):
+    dependencies:
+      vue: 3.5.43
 
   vue@3.5.43:
     dependencies:
