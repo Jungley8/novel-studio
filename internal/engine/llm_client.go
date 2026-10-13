@@ -1155,6 +1155,10 @@ func (r *LLMRouter) ChatCompletionForRole(ctx context.Context, role LLMRole, mod
 }
 
 func (c *HTTPLLMClient) generateMockResponse(model, systemPrompt, userPrompt string) (string, TokenUsage, error) {
+	if resp, usage, ok := tryProceduralMockResponse(model, systemPrompt, userPrompt); ok {
+		return resp, usage, nil
+	}
+
 	pTokens := len([]rune(systemPrompt+userPrompt))/3 + 120
 
 	// 1. Beats derivation
