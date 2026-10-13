@@ -61,6 +61,10 @@ globalThis.fetch = async (url, options = {}) => {
 
   if (u === '/api/linter/analyze') return respondJson({ burstiness_score: 60, passed: true, hit_banned_words: [] });
 
+  if (method === 'DELETE' && (u === '/api/projects/pA' || u === '/api/projects/pB')) {
+    return respondJson({ status: 'deleted' });
+  }
+
   return respondJson({ error: `unrouted: ${method} ${u}` }, 500);
 };
 
@@ -208,3 +212,52 @@ test('切换作品恢复“最近推进的一章”在途断点（含已归档�
   const postSwitch = calls.slice(before);
   assert.equal(postSwitch.some(c => c.method === 'POST' && c.url.includes('/checkpoint')), false);
 });
+
+test('删除作品：生成任务进行中拒绝删除（Fail-Closed）', async () => {
+  state.selectedProjectId = 'pA';
+  state.currentProject = projectA;
+  state.pipelineState.active = true;
+
+  const ok = await actions.deleteProject('pA');
+  state.pipelineState.active = false;
+  assert.equal(ok, false, '任务进行中删除应被 Fail-Closed 拒绝');
+});
+
+test('删除作品：确认后删除成功，从列表移除并平滑切换至下一部作品', async () => {
+  state.projects = [
+    { id: 'pA', title: '作品A' },
+    { id: 'pB', title: '作品B' },
+  ];
+  state.selectedProjectId = 'pA';
+  state.currentProject = projectA;
+  state.workbench.content = 'A的正文草稿';
+
+  const delPromise = actions.deleteProject('pA');
+  assert.equal(state.dialog.isOpen, true, '应拉起二次确认弹窗');
+  assert.equal(state.dialog.type, 'danger');
+  state.dialog.resolve(true);
+
+  const ok = await delPromise;
+  assert.equal(ok, true);
+  assert.equal(state.projects.length, 1);
+  assert.equal(state.projects[0].id, 'pB');
+  assert.equal(state.selectedProjectId, 'pB', '删除激活作品后应平滑切换至下一部作品');
+  assert.notEqual(state.workbench.content, 'A的正文草稿', '工作台瞬态状态应已重置');
+});
+
+test('删除作品：删除最后一部作品后状态置空', async () => {
+  state.projects = [{ id: 'pB', title: '作品B' }];
+  state.selectedProjectId = 'pB';
+  state.currentProject = projectB;
+
+  const delPromise = actions.deleteProject('pB');
+  assert.equal(state.dialog.isOpen, true);
+  state.dialog.resolve(true);
+
+  const ok = await delPromise;
+  assert.equal(ok, true);
+  assert.equal(state.projects.length, 0);
+  assert.equal(state.selectedProjectId, null, '作品全删后 selectedProjectId 应置空');
+  assert.equal(state.currentProject, null, '作品全删后 currentProject 应置空');
+});
+

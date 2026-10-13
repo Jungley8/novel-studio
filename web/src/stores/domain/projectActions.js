@@ -339,5 +339,72 @@ export function createProjectActions(state, notify, helpers, dialogs) {
       state.activeStep = 3;
       notify('已载入历史版本', `第 ${chapter.chapter_index} 章的「${version.source === 'edit' ? '编辑保存' : '定稿'}」版本已载入，可直接对比修改`, 'success');
     },
+
+    // 删除作品（Fail-Closed 生产门禁 + 危险二次确认 + 整体重置与平滑切换）
+    async deleteProject(id) {
+      const targetId = id || state.selectedProjectId;
+      if (!targetId) return false;
+
+      const target = (state.projects || []).find(p => p.id === targetId) || (targetId === state.selectedProjectId ? state.currentProject : null);
+      const targetTitle = target?.title || '未命名作品';
+
+      // 1. Fail-Closed 门禁：若目标作品正在生成内容，拒绝删除
+      if (targetId === state.selectedProjectId) {
+        const busyTask = activeGenerationTask(state);
+        if (busyTask) {
+          notify(
+            '无法删除作品',
+            `《${targetTitle}》的「${busyTask}」正在进行中，请等待完成后再删除`,
+            'warning',
+            4500
+          );
+          return false;
+        }
+      }
+
+      // 2. 危险操作二次确认弹窗
+      if (dialogs) {
+        const ok = await dialogs.confirm({
+          title: `删除作品《${targetTitle}》`,
+          message: `确定要彻底删除作品《${targetTitle}》吗？\n\n此操作将永久清除该作品的所有章节、大纲设定、伏笔簿、状态机演进与分析报告，数据不可恢复！`,
+          type: 'danger',
+          confirmText: '确认永久删除',
+          cancelText: '取消',
+        });
+        if (!ok) return false;
+      }
+
+      state.isLoading = true;
+      try {
+        await api.deleteProject(targetId);
+
+        // 从本地作品列表中移除
+        state.projects = (state.projects || []).filter(p => p.id !== targetId);
+
+        // 3. 若删除的是当前正处于激活态的作品，整体重置瞬态并平滑切换至其它作品或置空
+        if (state.selectedProjectId === targetId) {
+          resetProjectScopedState(state);
+          if (state.projects.length > 0) {
+            const nextId = state.projects[0].id;
+            await this.selectProject(nextId);
+          } else {
+            state.selectedProjectId = null;
+            state.currentProject = null;
+            state.chapters = [];
+            state.hooks = [];
+            state.codexEntries = [];
+          }
+        }
+
+        notify('作品已删除', `作品《${targetTitle}》已成功彻底删除`, 'info', 3000);
+        return true;
+      } catch (e) {
+        console.error('delete project error:', e);
+        notify('删除作品失败', e.message, 'error', 4500);
+        return false;
+      } finally {
+        state.isLoading = false;
+      }
+    },
   };
 }
