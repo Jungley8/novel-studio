@@ -129,6 +129,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 
 	action := parts[1]
 	switch action {
+	case "bootstrap-status":
+		s.handleProjectBootstrapStatus(w, r, projectID)
 	case "bench":
 		s.handleProjectBench(w, r, projectID)
 	case "structure-audit":
@@ -762,6 +764,50 @@ func (s *Server) handleHookDelete(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
+type BootstrapJobStatus struct {
+	ProjectID string    `json:"project_id"`
+	Status    string    `json:"status"` // "running", "completed", "failed", "idle"
+	Stage     string    `json:"stage"`  // human-readable stage description
+	Error     string    `json:"error,omitempty"`
+	StartedAt time.Time `json:"started_at,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+}
+
+func (s *Server) handleProjectBootstrapStatus(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	job := s.getBootstrapStatus(projectID)
+	if job != nil {
+		jsonResponse(w, http.StatusOK, job)
+		return
+	}
+
+	// 内存中无活跃任务时，回查底层持久化作品是否已有创世产物
+	proj, err := s.store.GetProject(r.Context(), projectID)
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	if proj.Framework != nil && len(proj.Framework.VolumeArcs) > 0 {
+		jsonResponse(w, http.StatusOK, &BootstrapJobStatus{
+			ProjectID: projectID,
+			Status:    "completed",
+			Stage:     "创世总纲已就绪",
+		})
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, &BootstrapJobStatus{
+		ProjectID: projectID,
+		Status:    "idle",
+		Stage:     "未启动创世推演",
+	})
+}
+
 type BootstrapProjectRequest struct {
 	Title          string `json:"title"`
 	TargetPlatform string `json:"target_platform"`
@@ -791,17 +837,119 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 		reasoningModel = s.cfg.ReasoningModel
 	}
 
-	fw, _, err := s.orch.BootstrapFramework(r.Context(), reasoningModel, engine.FrameworkBootstrapRequest{
+	projectID := fmt.Sprintf("proj_%d", time.Now().UnixNano())
+	concept := strings.TrimSpace(req.Concept)
+	worldRules := ""
+	if concept != "" {
+		worldRules = fmt.Sprintf("【核心立意与构想】\n%s", concept)
+	}
+
+	proj := &domain.Project{
+		ID:             projectID,
+		Title:          req.Title,
+		TargetPlatform: req.TargetPlatform,
+		WorldRules:     worldRules,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+
+	if err := s.store.SaveProject(r.Context(), proj); err != nil {
+		errorResponse(w, http.StatusInternalServerError, "save project failed: "+err.Error())
+		return
+	}
+
+	// 初始注册核心主角占位至设定集 (Codex)
+	protEntry := &domain.CodexEntry{
+		ID:              fmt.Sprintf("codex_%s_pro", projectID),
+		ProjectID:       projectID,
+		Category:        domain.CategoryCharacter,
+		Archetype:       "PROTAGONIST",
+		Name:            "主角",
+		Realm:           "初入门槛",
+		Aliases:         []string{"主角"},
+		Summary:         "全书核心主角 | 创世推演中...",
+		DetailsMarkdown: fmt.Sprintf("【全书核心主角档案】\n- 构想立意：%s\n- 状态：宏观推演构建中...", concept),
+		Inventory:       "随身物品待起草",
+		HealthStatus:    "良好",
+		TrackingMode:    domain.TrackingModeAlwaysInject,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+	_ = s.store.SaveCodexEntry(r.Context(), protEntry)
+
+	// 记录创世启动事件至审计账本
+	_ = s.store.AppendEvent(r.Context(), &activity.ActivityEvent{
+		ProjectID:  projectID,
+		RunID:      bootRunID,
+		EntityType: activity.EntityFramework,
+		EntityID:   projectID,
+		EventType:  activity.EventFrameworkBoot,
+		Actor:      activity.ActorAIReasoner,
+		Source:     activity.SourceBootstrap,
+		Title:      fmt.Sprintf("创世推演已启动《%s》", req.Title),
+		Summary:    "后台正在异步推演世界公理、战力阶梯、势力阵营与首章黄金冲突",
+		CreatedAt:  time.Now(),
+	})
+
+	// 登记异步任务状态，供前端实时轮询查询
+	s.setBootstrapStatus(projectID, &BootstrapJobStatus{
+		ProjectID: projectID,
+		Status:    "running",
+		Stage:     "正在梳理世界公理与战力阶梯...",
+		StartedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	})
+
+	// 启动后台异步创世推演 goroutine
+	s.bootstrapWg.Add(1)
+	go func() {
+		defer s.bootstrapWg.Done()
+		s.runAsyncBootstrap(projectID, req, reasoningModel, bootRunID)
+	}()
+
+	// 立即响应 201 Created，返回新创建的作品实体，避免前端超时
+	jsonResponse(w, http.StatusCreated, proj)
+}
+
+func (s *Server) runAsyncBootstrap(projectID string, req BootstrapProjectRequest, reasoningModel, bootRunID string) {
+	// 获取跨进程生产协调锁，保证推演期间不被删除或并发抢占
+	prod, _, _ := coord.AcquireProduction(context.Background(), s.store, projectID, "创世推演", 0)
+	if prod != nil {
+		defer prod.Release()
+	}
+
+	bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	bgCtx = activity.WithRunID(activity.WithSource(bgCtx, activity.SourceBootstrap), bootRunID)
+
+	fw, _, err := s.orch.BootstrapFramework(bgCtx, reasoningModel, engine.FrameworkBootstrapRequest{
 		Title:          req.Title,
 		TargetPlatform: req.TargetPlatform,
 		CoreConcept:    req.Concept,
 	})
 	if err != nil {
-		errorResponse(w, http.StatusInternalServerError, "bootstrap framework failed: "+err.Error())
+		s.setBootstrapStatus(projectID, &BootstrapJobStatus{
+			ProjectID: projectID,
+			Status:    "failed",
+			Stage:     "创世推演失败: " + err.Error(),
+			Error:     err.Error(),
+			UpdatedAt: time.Now(),
+		})
+		_ = s.store.AppendEvent(bgCtx, &activity.ActivityEvent{
+			ProjectID:  projectID,
+			RunID:      bootRunID,
+			EntityType: activity.EntityFramework,
+			EntityID:   projectID,
+			EventType:  activity.EventFrameworkBoot,
+			Actor:      activity.ActorAIReasoner,
+			Source:     activity.SourceBootstrap,
+			Title:      fmt.Sprintf("创世总纲推演失败《%s》", req.Title),
+			Summary:    err.Error(),
+			CreatedAt:  time.Now(),
+		})
 		return
 	}
 
-	projectID := fmt.Sprintf("proj_%d", time.Now().UnixNano())
 	var worldRules strings.Builder
 	worldRules.WriteString("【世界底层规则与核心公理】\n")
 	for i, axiom := range fw.WorldAxioms {
@@ -818,22 +966,23 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 	if len(fw.PowerLadder) > 0 && fw.PowerLadder[0].Realm != "" {
 		initialRealm = fw.PowerLadder[0].Realm
 	}
-	proj := &domain.Project{
-		ID:             projectID,
-		Title:          req.Title,
-		TargetPlatform: req.TargetPlatform,
-		WorldRules:     strings.TrimSpace(worldRules.String()),
-		Framework:      fw,
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
-	}
 
-	if err := s.store.SaveProject(r.Context(), proj); err != nil {
-		errorResponse(w, http.StatusInternalServerError, "save project failed: "+err.Error())
-		return
+	proj, gErr := s.store.GetProject(bgCtx, projectID)
+	if gErr != nil || proj == nil {
+		proj = &domain.Project{
+			ID:             projectID,
+			Title:          req.Title,
+			TargetPlatform: req.TargetPlatform,
+		}
 	}
+	proj.WorldRules = strings.TrimSpace(worldRules.String())
+	proj.Framework = fw
+	proj.UpdatedAt = time.Now()
+	_ = s.store.SaveProject(bgCtx, proj)
 
-	// 注册核心主角至设定集 (Codex)
+	s.setBootstrapStage(projectID, "正在同步核心主角与势力阵营至设定集...")
+
+	// 注册/更新核心主角至设定集 (Codex)
 	protName := "主角"
 	protWant := ""
 	protNeed := ""
@@ -880,7 +1029,7 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
 	}
-	_ = s.store.SaveCodexEntry(r.Context(), protEntry)
+	_ = s.store.SaveCodexEntry(bgCtx, protEntry)
 
 	// 同步势力阵营至设定集
 	for _, fac := range fw.Factions {
@@ -900,7 +1049,7 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 			CreatedAt:       time.Now(),
 			UpdatedAt:       time.Now(),
 		}
-		_ = s.store.SaveCodexEntry(r.Context(), entry)
+		_ = s.store.SaveCodexEntry(bgCtx, entry)
 	}
 
 	// 同步关键人物至设定集
@@ -922,7 +1071,7 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 			CreatedAt:       time.Now(),
 			UpdatedAt:       time.Now(),
 		}
-		_ = s.store.SaveCodexEntry(r.Context(), entry)
+		_ = s.store.SaveCodexEntry(bgCtx, entry)
 	}
 
 	for i, sh := range fw.SeedHooks {
@@ -936,14 +1085,16 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 			Status:         domain.HookStatusOpen,
 			CreatedAt:      time.Now(),
 		}
-		_ = s.store.SavePlotHook(r.Context(), hook)
+		_ = s.store.SavePlotHook(bgCtx, hook)
 	}
 
+	s.setBootstrapStage(projectID, "正在推演人物关系图谱与首章黄金冲突...")
+
 	// 全自动级联关系图谱推演 (Extract Codex Relations Cascade)
-	codexEntries, _ := s.store.ListCodexEntries(r.Context(), projectID, "")
+	codexEntries, _ := s.store.ListCodexEntries(bgCtx, projectID, "")
 	if len(codexEntries) >= 2 && s.orch != nil {
 		relations, _, relErr := s.orch.ExtractCodexRelations(
-			r.Context(),
+			bgCtx,
 			s.cfg.ReasoningModel,
 			proj,
 			codexEntries,
@@ -951,18 +1102,18 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 		)
 		if relErr == nil && len(relations) > 0 {
 			for _, rel := range relations {
-				_ = s.store.SaveCodexRelation(r.Context(), projectID, &rel)
+				_ = s.store.SaveCodexRelation(bgCtx, projectID, &rel)
 			}
 		}
 	}
 
 	// 全自动推演第 1 卷第 1 章开局黄金冲突并初始化草稿检查点
 	if s.chronicle != nil && s.orch != nil {
-		horizon, hErr := s.chronicle.AssembleHorizon(r.Context(), projectID, 1)
+		horizon, hErr := s.chronicle.AssembleHorizon(bgCtx, projectID, 1)
 		if hErr == nil && horizon != nil {
-			conflict1, _, cErr := s.orch.SuggestChapterConflict(r.Context(), s.cfg.ReasoningModel, horizon)
+			conflict1, _, cErr := s.orch.SuggestChapterConflict(bgCtx, s.cfg.ReasoningModel, horizon)
 			if cErr == nil && strings.TrimSpace(conflict1) != "" {
-				_ = s.store.SaveCheckpoint(r.Context(), &domain.ChapterCheckpoint{
+				_ = s.store.SaveCheckpoint(bgCtx, &domain.ChapterCheckpoint{
 					ProjectID:    projectID,
 					ChapterIndex: 1,
 					Phase:        domain.CheckpointPhaseInit,
@@ -974,7 +1125,7 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Ledger aggregate marker for the bootstrap run.
-	_ = s.store.AppendEvent(r.Context(), &activity.ActivityEvent{
+	_ = s.store.AppendEvent(bgCtx, &activity.ActivityEvent{
 		ProjectID:  projectID,
 		RunID:      bootRunID,
 		EntityType: activity.EntityFramework,
@@ -993,9 +1144,14 @@ func (s *Server) handleBootstrapProject(w http.ResponseWriter, r *http.Request) 
 	fw.Factions = nil
 	fw.KeyCharacters = nil
 	fw.SeedHooks = nil
-	_ = s.store.SaveProject(r.Context(), proj)
+	_ = s.store.SaveProject(bgCtx, proj)
 
-	jsonResponse(w, http.StatusCreated, proj)
+	s.setBootstrapStatus(projectID, &BootstrapJobStatus{
+		ProjectID: projectID,
+		Status:    "completed",
+		Stage:     "创世总纲推演完成",
+		UpdatedAt: time.Now(),
+	})
 }
 
 func (s *Server) handleProjectExport(w http.ResponseWriter, r *http.Request, projectID, format string) {

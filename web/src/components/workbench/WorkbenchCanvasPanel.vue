@@ -59,6 +59,26 @@
         </div>
       </div>
 
+      <!-- 宏观创世推演进行中提示条 -->
+      <div 
+        v-if="state.bootstrappingProjectId && state.bootstrappingProjectId === state.currentProject?.id" 
+        class="px-5 py-2.5 bg-gradient-to-r from-brand-amber/15 via-atelier-900/90 to-brand-amber/10 border-b border-brand-amber/30 text-xs select-none shrink-0 animate-fade-in shadow-sm">
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <Loader2 class="w-4 h-4 text-brand-amber animate-spin shrink-0" />
+            <div class="truncate">
+              <span class="font-bold text-ink-100 font-serif">《{{ state.currentProject.title }}》宏观创世推演进行中</span>
+              <span class="text-ink-400 ml-2 hidden sm:inline">{{ state.bootstrapProgressMessage || 'AI 正在梳理世界公理、战力阶梯、势力阵营与首章黄金冲突...' }}</span>
+            </div>
+          </div>
+          <button 
+            @click="actions.setActiveTab('framework')" 
+            class="text-[11px] text-brand-amber hover:underline cursor-pointer shrink-0">
+            查看推演设定 →
+          </button>
+        </div>
+      </div>
+
       <!-- 连载接龙卡片 (本章已成功归档，一键衔接下一章) -->
       <div 
         v-if="state.pipelineState.justCommitted" 

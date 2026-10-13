@@ -20,11 +20,11 @@
       <div class="flex items-center gap-2.5">
         <button 
           @click="actions.bootstrapCurrentFramework()" 
-          :disabled="state.isLoading" 
+          :disabled="state.isLoading || state.bootstrappingProjectId === state.currentProject.id" 
           class="flex items-center gap-1.5 px-3 py-2 bg-atelier-800 hover:bg-atelier-700 text-brand-amber text-xs font-semibold rounded-md border border-atelier-700 transition cursor-pointer disabled:opacity-50">
-          <Loader2 v-if="state.isLoading" class="w-3.5 h-3.5 animate-spin" />
+          <Loader2 v-if="state.isLoading || state.bootstrappingProjectId === state.currentProject.id" class="w-3.5 h-3.5 animate-spin" />
           <Sparkles v-else class="w-3.5 h-3.5" />
-          <span>{{ state.isLoading ? '推演中...' : 'AI 推演' }}</span>
+          <span>{{ (state.isLoading || state.bootstrappingProjectId === state.currentProject.id) ? '推演中...' : 'AI 推演' }}</span>
         </button>
         <button 
           @click="handleSaveFramework" 
@@ -104,9 +104,32 @@
       </div>
     </div>
 
-    <!-- 2. 世界观空白状态 -->
+    <!-- 2. 世界观推演中状态 (当处于异步创世推演中时) -->
     <div 
-      v-if="!state.currentProject.framework" 
+      v-if="!state.currentProject.framework && state.bootstrappingProjectId === state.currentProject.id" 
+      class="p-10 text-center bg-atelier-900 border border-brand-amber/30 rounded-xl space-y-4 shadow-amber-glow/10">
+      <div class="w-12 h-12 rounded-xl bg-brand-amber/15 border border-brand-amber/35 flex items-center justify-center mx-auto text-brand-amber animate-pulse">
+        <Sparkles class="w-6 h-6 animate-spin text-brand-amber" />
+      </div>
+      <div class="space-y-1">
+        <h3 class="text-sm font-serif font-bold text-ink-100 flex items-center justify-center gap-2">
+          <span>AI 正在进行宏观创世推演</span>
+          <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-brand-amber/20 text-brand-amber border border-brand-amber/40">
+            异步进行中
+          </span>
+        </h3>
+        <p class="text-xs text-brand-amber max-w-md mx-auto leading-relaxed">
+          {{ state.bootstrapProgressMessage || '正在构建底层公理、战力阶梯、势力阵营、关键人物与伏笔...' }}
+        </p>
+        <p class="text-[11px] text-ink-400 mt-2">
+          后台推演中，完成后将自动刷新本页并呈现完整世界观。您亦可随时前往工作台起草正文。
+        </p>
+      </div>
+    </div>
+
+    <!-- 2. 世界观空白状态 (推演未启动时) -->
+    <div 
+      v-else-if="!state.currentProject.framework" 
       class="p-10 text-center bg-atelier-900 border border-dashed border-atelier-750 rounded-xl space-y-4 shadow-atelier-md">
       <div class="w-12 h-12 rounded-xl bg-brand-amber/10 border border-brand-amber/25 flex items-center justify-center mx-auto text-brand-amber">
         <Compass class="w-6 h-6" />

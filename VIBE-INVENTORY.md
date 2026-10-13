@@ -127,6 +127,21 @@
 
 ---
 
+## 创世推演异步化与即时跳转响应架构专项（Wave 7 / Round 27）
+
+目标：消灭新建作品「创世推演」30~90 秒同步阻塞与前端 HTTP 超时挂起，实现秒级响应 `201 Created`、平滑切入新书工作台、后台 goroutine 异步推演落地、生产协调锁护航与前端全自动状态感知刷新。
+
+| # | 交付 | 模块 / Spec | 优先级 | 状态 |
+|---|------|------------|--------|------|
+| 1 | **即时作品持久化与 201 响应**（`POST /api/projects/bootstrap` 秒级落盘基础作品与主角占位，立即返回） | `internal/server/handlers_project.go` | **P0** | 🟢 已完成 |
+| 2 | **后台异步创世推进与生产协调锁**（goroutine 异步执行总纲/阵营/人物/图谱/首章冲突推演，`coord.AcquireProduction` 生产锁保护） | `internal/server/handlers_project.go` | **P0** | 🟢 已完成 |
+| 3 | **推演状态查询端点**（`GET /api/projects/:id/bootstrap-status` 暴露 running/completed/failed 与分步阶段） | `internal/server/handlers_project.go` + `server.go` | **P0** | 🟢 已完成 |
+| 4 | **平滑跳转与异步监视器**（前端新建后立即 `switchToProject` 切入工作台，`startBootstrapMonitor` 轮询并在完成后自动全量刷新） | `web/src/stores/domain/projectActions.js` + `NewProjectModal.vue` | **P0** | 🟢 已完成 |
+| 5 | **多场景创世状态感知 UX**（顶部 Header 任务指示条、作品设定页动态推演光效卡片、手稿画布快捷横幅） | `FrameworkView.vue` + `WorkbenchCanvasPanel.vue` + `appState.js` | **P1** | 🟢 已完成 |
+| 6 | **端到端专项测试**（前端 `async-bootstrap.test.mjs` 覆盖状态机与刷新，后端 `server_test.go` 验证异步推演与状态端点） | `web/test/async-bootstrap.test.mjs` + `internal/server/server_test.go` | **P0** | 🟢 已完成 |
+
+---
+
 ## 精炼成果与总进度
 
 - 🟢 **已精炼完成**: 5/5 核心双轨制与割裂架构缺陷（主角、势力阵营、世界公理、关键人物影子、种子伏笔冗余）
@@ -135,11 +150,13 @@
 - 🟢 **作品删除与各模块 UX 专项 (Wave 4)**: 9/9 交付完成（后端全级联擦除、409 生产互斥门禁、前端状态切换闭环、7/7 回归单测、全场景危险确认与各模块 UX 增强）
 - 🟢 **全局与作品级菜单完全隔离 (Wave 5)**: 6/6 交付完成（双域单一事实源、Sidebar/Header 物理隔离、视图零状态兜底）
 - 🟢 **对话记录/灵感合并、文本复制解禁与Markdown优化 (Wave 6)**: 6/6 交付完成（Inbox与灵感合一、select-none移除、marked解析排版、12/12 单测全绿）
+- 🟢 **创世推演异步化与即时跳转 (Wave 7)**: 6/6 交付完成（即时响应、平滑跳入工作台、后台goroutine与生产锁、状态轮询自愈刷新、13/13 单测全绿）
 - 🟡 **进行中**: 0
 - 🔴 **待排期**: 无
-- **Go 测试**: `go test ./... -race -count=1` 全绿通过
-- **前端测试**: `pnpm test`（12/12 通过）
+- **Go 测试**: `go test ./... -race -count=1` 全库全绿通过
+- **前端测试**: `pnpm test`（13/13 全部通过）
 - **前端构建**: `pnpm --dir web build` 纯净构建通过
+
 
 
 

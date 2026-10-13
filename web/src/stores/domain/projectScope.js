@@ -127,6 +127,7 @@ export function createDefaultPipelineState() {
 // 切换作品会使其结果串稿，因此切换必须先等待其完成。
 export function activeGenerationTask(state) {
   if (state.pipelineState?.active) return '全自动成章';
+  if (state.bootstrappingProjectId && state.bootstrappingProjectId === state.selectedProjectId) return '创世推演';
   if (state.isSuggestingConflict) return '剧情构思';
   if (state.isGeneratingBeats) return '分段推演';
   if (state.isRenderingScene) return '正文起草';

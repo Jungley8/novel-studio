@@ -925,6 +925,56 @@ Wave 1 与 Wave 2 之后的第三波闭环升级（P1/P2/P3），各自独立 wo
   - `pnpm --dir web build` 生产构建通过；
   - `go test ./internal/server/... ./internal/store/... -race -count=1` 后端测试全绿通过。
 
+---
+
+### Wave 7: 创世推演异步化与即时跳转响应架构 (Round 21)
+
+#### 1. 问题定位与设计目标
+- **原痛点**：在新建作品弹窗勾选「创世推演」提交后，后端 `POST /api/projects/bootstrap` 同步阻塞执行宏观总纲推演（包含大模型构思世界公理、战力天梯、势力阵营、关键人物、伏笔播种、级联关系图谱推演、首章黄金冲突生成等 3 次大型推理），长达 30~90 秒，导致前台 HTTP 请求挂起、等待时间过长甚至浏览器端超时断连；且用户只能停留在模态弹窗内干等。
+- **目标**：
+  1. **即时响应与快速切入**：新建作品时立即持久化基础作品骨架与主角档案，百毫秒级返回 `201 Created`；
+  2. **顺畅无缝跳转**：前台收到响应后立即关闭弹窗，平滑切换至新作品工作台，进入创作就绪态；
+  3. **后台异步创世与安全锁**：耗时的创世重活交由后台独立的 goroutine 异步运行，并自动加持跨进程生产协调锁（`coord.AcquireProduction`），防止并发冲突与提前误删；
+  4. **全链路状态监控与自愈**：通过 `/api/projects/:id/bootstrap-status` 实时暴露推演阶段，前台通过轮询监视器跟踪任务，推演完成后自动刷新设定集、图谱与伏笔，并在顶部栏和手稿画布提供动态进度感知。
+
+#### 2. 后端服务端改造 (`internal/server/`)
+- **立即落盘与异步调度 (`handlers_project.go`)**：
+  - `handleBootstrapProject`：接收请求后校验标题，立即在 SQLite 中写入基础 `domain.Project`（立意规则与元数据），播种初始主角 `domain.CodexEntry`，记录 `activity.EventFrameworkBoot` 启动账本；
+  - 内存任务状态机注册：设置 `BootstrapJobStatus`（状态为 `running`，阶段为 `正在梳理世界公理与战力阶梯...`）；
+  - 启动独立 goroutine 执行 `runAsyncBootstrap`，通过 `s.bootstrapWg` 保证优雅同步，并立即返回 `http.StatusCreated` 与基础作品实体。
+- **异步推演工作流 (`runAsyncBootstrap`)**：
+  - 获取生产锁 `coord.AcquireProduction(..., "创世推演", 0)`；
+  - 采用独立的 `context.WithTimeout(context.Background(), 10*time.Minute)`，不受客户端 HTTP 断连影响；
+  - 异步分步推进：推演宏观大纲 ➔ 持久化世界公理与战力天梯 ➔ 同步主角档案、势力阵营、关键人物与伏笔 ➔ 级联提取关系图谱 ➔ 推演第 1 卷第 1 章开局黄金冲突并初始化检查点 ➔ 写入完成账本 ➔ 清理瞬态种子并更新状态为 `completed`。
+- **状态监控端点 (`handleProjectBootstrapStatus`)**：
+  - 新增 `GET /api/projects/:id/bootstrap-status` 端点；
+  - 优先从内存 `bootstrapJobs` 返回实时状态与推进阶段，若内存已回收则回查持久化层 framework 是否存在，返回 `completed` 或 `idle`。
+
+#### 3. 前端交互与状态机深化 (`web/`)
+- **API 客户端与状态扩展**：
+  - `web/src/api/client.js`：新增 `getBootstrapStatus(projectId)` 端点封装；
+  - `web/src/stores/appState.js`：在 `state` 增加 `bootstrappingProjectId` 与 `bootstrapProgressMessage`，并在 `computedState.activeTasks` 中动态注册创世推演任务；
+  - `web/src/stores/domain/projectScope.js`：`activeGenerationTask` 纳管 `创世推演`，在推演进行中严格 Fail-Closed 禁止误切作品导致串稿。
+- **创世异步监视器 (`projectActions.js`)**：
+  - 实现 `startBootstrapMonitor(projectId, title)`，以 2 秒间隔轻量轮询推演状态，更新阶段消息；
+  - 状态变为 `completed` 时，自动重新拉取当前作品最新设定（`currentProject`）、设定集条目（`loadCodexEntries`）、人物关系图谱（`loadCodexRelations`）、伏笔列表（`listHooks`）、分卷大纲矩阵（`loadMatrixOverview`），并弹出完成通知；
+  - `selectProject` 增加自动续接侦测：若选中的作品世界观为空且后端仍在推演，自动激活轮询监视器。
+- **即时响应与多场景 UX (`NewProjectModal.vue` / `FrameworkView.vue` / `WorkbenchCanvasPanel.vue`)**：
+  - `NewProjectModal.vue`：提交创世后毫秒级收到响应，立即 `loadProjects()` 并 `switchToProject(created.id, 'workbench')` 跳转入书，关闭弹窗并启动后台监控；
+  - `FrameworkView.vue`：当作品处于异步创世推演中时，顶部「AI 推演」按钮智能置灰，页面居中展示带有琥珀色旋转流光的「AI 正在进行宏观创世推演」卡片与动态阶段提示，推演完成后无缝切换为完整设定表单；
+  - `WorkbenchCanvasPanel.vue`：手稿画布顶部增加专属创世进行中动态提示横幅，提供直达作品设定的快捷入口。
+
+#### 4. 测试与验证全链路
+- **前端测试 (`web/test/async-bootstrap.test.mjs`)**：
+  - 验证创建即时响应、任务栏显示创世推演、`activeGenerationTask` 防误切守卫、以及轮询触发完成后自动刷新作品设定与状态机清空。
+- **后端测试 (`internal/server/server_test.go`)**：
+  - `TestServer_Bootstrap_ProtagonistCodexAndRelations`：测试 `POST /api/projects/bootstrap` 即时返回 201 Created，通过 `srv.WaitBootstrap()` 同步后台推演，验证主角档案、势力关系图谱与首章黄金冲突检查点完全落盘，并断言 `GET /api/projects/:id/bootstrap-status` 正确返回 `completed`。
+- **回归验证**：
+  - `pnpm --dir web test` 13/13 前端测试全绿通过；
+  - `pnpm --dir web build` 生产构建成功；
+  - `go test ./... -race -count=1` 全库（cmd, activity, config, coord, desktop, domain, engine, metrics, notify, scheduler, server, service, store）测试全部绿灯通过。
+
+
 
 
 

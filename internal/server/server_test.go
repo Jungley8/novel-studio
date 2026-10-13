@@ -1071,6 +1071,24 @@ func TestServer_Bootstrap_ProtagonistCodexAndRelations(t *testing.T) {
 		t.Fatalf("unmarshal created project failed: %v", err)
 	}
 
+	// 创世推演已异步化：等待后台 goroutine 完成
+	srv.WaitBootstrap()
+
+	// 验证异步推演状态端点已显示 completed
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+createdProj.ID+"/bootstrap-status", nil)
+	statusW := httptest.NewRecorder()
+	srv.ServeHTTP(statusW, statusReq)
+	if statusW.Code != http.StatusOK {
+		t.Fatalf("expected 200 for bootstrap status, got %d: %s", statusW.Code, statusW.Body.String())
+	}
+	var jobStatus server.BootstrapJobStatus
+	if err := json.Unmarshal(statusW.Body.Bytes(), &jobStatus); err != nil {
+		t.Fatalf("unmarshal job status failed: %v", err)
+	}
+	if jobStatus.Status != "completed" {
+		t.Errorf("expected job status 'completed', got %q", jobStatus.Status)
+	}
+
 	ctx := context.Background()
 	// 1. Verify that Protagonist was created as a CodexEntry!
 	entries, err := s.ListCodexEntries(ctx, createdProj.ID, "")

@@ -1,8 +1,80 @@
 import { api } from '../../api/client';
 import { activeGenerationTask, resetProjectScopedState } from './projectScope';
 
+let bootstrapPollTimer = null;
+
 export function createProjectActions(state, notify, helpers, dialogs) {
   return {
+    async startBootstrapMonitor(projectId, title) {
+      if (!projectId) return;
+      state.bootstrappingProjectId = projectId;
+      state.bootstrapProgressMessage = 'AI 正在梳理世界公理与战力阶梯...';
+
+      if (bootstrapPollTimer) {
+        clearInterval(bootstrapPollTimer);
+        bootstrapPollTimer = null;
+      }
+
+      let attempts = 0;
+      const maxAttempts = 150; // 最大 5 分钟轮询（每 2 秒一次）
+
+      bootstrapPollTimer = setInterval(async () => {
+        attempts++;
+        if (attempts > maxAttempts) {
+          clearInterval(bootstrapPollTimer);
+          bootstrapPollTimer = null;
+          state.bootstrappingProjectId = null;
+          state.bootstrapProgressMessage = '';
+          notify('创世推演超时', `《${title}》后台推演耗时较长，请稍后在作品设定中刷新查看`, 'warning', 5000);
+          return;
+        }
+
+        try {
+          const res = await api.getBootstrapStatus(projectId);
+          if (res.stage) {
+            state.bootstrapProgressMessage = res.stage;
+          }
+
+          if (res.status === 'completed') {
+            clearInterval(bootstrapPollTimer);
+            bootstrapPollTimer = null;
+            state.bootstrappingProjectId = null;
+            state.bootstrapProgressMessage = '';
+
+            // 若当前用户正停留在此作品，全面刷新其世界设定、人物设定集与图谱
+            if (state.selectedProjectId === projectId) {
+              state.currentProject = await api.getProject(projectId);
+              if (helpers && helpers.loadCodexEntries) await helpers.loadCodexEntries();
+              if (helpers && helpers.loadCodexRelations) await helpers.loadCodexRelations();
+              if (helpers && helpers.loadMatrixOverview) await helpers.loadMatrixOverview();
+              state.hooks = await api.listHooks(projectId);
+              state.chapters = await api.listChapters(projectId);
+            }
+
+            // 同步刷新全局作品列表
+            state.projects = await api.listProjects();
+
+            notify('创世推演已完成', `《${title}》世界公理、势力阵营、人物图谱与首章黄金冲突已全部就绪！`, 'success', 5000, {
+              isTask: true,
+              taskType: 'framework',
+              primaryAction: {
+                label: '查看作品设定',
+                targetTab: 'framework',
+              },
+            });
+          } else if (res.status === 'failed') {
+            clearInterval(bootstrapPollTimer);
+            bootstrapPollTimer = null;
+            state.bootstrappingProjectId = null;
+            state.bootstrapProgressMessage = '';
+            notify('创世推演未完成', res.error || '推演过程遇到异常', 'warning', 5000);
+          }
+        } catch (e) {
+          // 网络抖动忽略，持续尝试至超时
+        }
+      }, 2000);
+    },
+
     async loadProjects() {
       try {
         state.projects = await api.listProjects();
@@ -77,6 +149,16 @@ export function createProjectActions(state, notify, helpers, dialogs) {
         } else if (helpers && helpers.restoreCheckpoint) {
           await helpers.restoreCheckpoint();
         }
+
+        // 若当前选中的作品框架尚为空，主动检查服务端是否存在正在运行的异步创世推演
+        if (!state.bootstrappingProjectId && (!state.currentProject?.framework || !state.currentProject.framework.volume_arcs)) {
+          api.getBootstrapStatus(id).then(status => {
+            if (status && status.status === 'running') {
+              this.startBootstrapMonitor(id, state.currentProject?.title || '作品');
+            }
+          }).catch(() => {});
+        }
+
         return true;
       } catch (e) {
         console.error('select project error:', e);

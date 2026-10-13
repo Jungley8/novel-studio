@@ -113,7 +113,7 @@
           :disabled="isSubmitting || !form.title.trim()" 
           class="px-4 py-1.5 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-lg shadow-amber-glow transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50">
           <span v-if="isSubmitting" class="w-3 h-3 border-2 border-atelier-950 border-t-transparent rounded-full animate-spin"></span>
-          <span>{{ isSubmitting ? '正在创世推演...' : (form.genesis_mode ? '🌌 立即启动 AI 创世' : '创建作品') }}</span>
+          <span>{{ isSubmitting ? '正在创建...' : (form.genesis_mode ? '🌌 立即启动 AI 创世' : '创建作品') }}</span>
         </button>
       </div>
     </div>
@@ -228,9 +228,22 @@ async function submitCreate() {
       });
     }
     await actions.loadProjects();
-    await actions.selectProject(created.id);
+    await actions.switchToProject(created.id, 'workbench');
     state.showNewProjectModal = false;
-    notify('作品工程创建成功', `${created.title} 已就绪`, 'success');
+
+    if (form.genesis_mode) {
+      actions.startBootstrapMonitor(created.id, created.title);
+      notify('作品《' + created.title + '》创建成功', '宏观创世推演已在后台异步启动，完成后将自动就绪', 'success', 4500, {
+        isTask: true,
+        taskType: 'framework',
+        primaryAction: {
+          label: '查看设定',
+          targetTab: 'framework',
+        },
+      });
+    } else {
+      notify('作品工程创建成功', `${created.title} 已就绪`, 'success');
+    }
   } catch (e) {
     notify('创建工程失败', e.message, 'error');
   } finally {

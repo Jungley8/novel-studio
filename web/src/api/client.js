@@ -120,6 +120,7 @@ export const api = {
   createProject: (data) => apiFetch('/api/projects', { method: 'POST', body: JSON.stringify(data) }),
   updateProject: (data) => apiFetch('/api/projects', { method: 'POST', body: JSON.stringify(data) }),
   bootstrapProject: (data) => apiFetch('/api/projects/bootstrap', { method: 'POST', body: JSON.stringify(data) }),
+  getBootstrapStatus: (projectId) => apiFetch(`/api/projects/${projectId}/bootstrap-status`),
   deleteProject: (id) => apiFetch(`/api/projects/${id}`, { method: 'DELETE' }),
 
   // Chapters & Hooks

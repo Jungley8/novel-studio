@@ -74,6 +74,8 @@ export const state = reactive({
   currentProject: null,
   chapters: [],
   hooks: [],
+  bootstrappingProjectId: null,
+  bootstrapProgressMessage: '',
 
   // The Matrix
   matrixOverview: null,
@@ -198,6 +200,15 @@ export const computedState = {
   }),
   activeTasks: computed(() => {
     const tasks = [];
+    if (state.bootstrappingProjectId) {
+      const proj = state.projects.find(p => p.id === state.bootstrappingProjectId) || state.currentProject;
+      tasks.push({
+        id: 'bootstrap',
+        type: 'bootstrap',
+        title: `《${proj?.title || '新作品'}》创世推演`,
+        desc: state.bootstrapProgressMessage || 'AI 正在梳理世界公理、战力阶梯与初始势力...',
+      });
+    }
     if (state.pipelineState.active) {
       tasks.push({
         id: 'pipeline',

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Jungley8/novel-studio/internal/config"
@@ -18,20 +19,23 @@ import (
 )
 
 type Server struct {
-	cfg         *config.Config
-	configPath  string
-	store       store.Store
-	llmClient   *engine.HTTPLLMClient
-	llmRouter   *engine.LLMRouter
-	orch        *engine.Orchestrator
-	linter      *engine.Linter
-	chronicle   *engine.CanonChronicle
-	qualityGate *engine.QualityGate
-	workshop    *engine.ChapterWorkshop
-	scheduler   *scheduler.Scheduler
-	schedCancel context.CancelFunc
-	mux         *http.ServeMux
-	fs          fs.FS
+	cfg           *config.Config
+	configPath    string
+	store         store.Store
+	llmClient     *engine.HTTPLLMClient
+	llmRouter     *engine.LLMRouter
+	orch          *engine.Orchestrator
+	linter        *engine.Linter
+	chronicle     *engine.CanonChronicle
+	qualityGate   *engine.QualityGate
+	workshop      *engine.ChapterWorkshop
+	scheduler     *scheduler.Scheduler
+	schedCancel   context.CancelFunc
+	mux           *http.ServeMux
+	fs            fs.FS
+	bootstrapWg   sync.WaitGroup
+	bootstrapMu   sync.RWMutex
+	bootstrapJobs map[string]*BootstrapJobStatus
 }
 
 func New(
@@ -70,18 +74,19 @@ func New(
 	workshop := engine.NewChapterWorkshop(orch, chronicle, qualityGate, s)
 
 	srv := &Server{
-		cfg:         cfg,
-		configPath:  configPath,
-		store:       s,
-		llmClient:   llmClient,
-		llmRouter:   router,
-		orch:        orch,
-		linter:      linter,
-		chronicle:   chronicle,
-		qualityGate: qualityGate,
-		workshop:    workshop,
-		mux:         http.NewServeMux(),
-		fs:          webFS,
+		cfg:           cfg,
+		configPath:    configPath,
+		store:         s,
+		llmClient:     llmClient,
+		llmRouter:     router,
+		orch:          orch,
+		linter:        linter,
+		chronicle:     chronicle,
+		qualityGate:   qualityGate,
+		workshop:      workshop,
+		mux:           http.NewServeMux(),
+		fs:            webFS,
+		bootstrapJobs: make(map[string]*BootstrapJobStatus),
 	}
 
 	// 启动期清理跨进程协调租约的过期残留（上次崩溃遗留的生产锁/编辑租约）。
@@ -95,6 +100,36 @@ func New(
 	srv.scheduler.SetQueueTimes(cfg.QueueTimes)
 
 	return srv, nil
+}
+
+// WaitBootstrap 等待所有在途的异步创世推演完成（主要供测试与优雅停机同步使用）。
+func (s *Server) WaitBootstrap() {
+	s.bootstrapWg.Wait()
+}
+
+func (s *Server) setBootstrapStatus(projectID string, status *BootstrapJobStatus) {
+	s.bootstrapMu.Lock()
+	defer s.bootstrapMu.Unlock()
+	s.bootstrapJobs[projectID] = status
+}
+
+func (s *Server) setBootstrapStage(projectID string, stage string) {
+	s.bootstrapMu.Lock()
+	defer s.bootstrapMu.Unlock()
+	if job, ok := s.bootstrapJobs[projectID]; ok {
+		job.Stage = stage
+		job.UpdatedAt = time.Now()
+	}
+}
+
+func (s *Server) getBootstrapStatus(projectID string) *BootstrapJobStatus {
+	s.bootstrapMu.RLock()
+	defer s.bootstrapMu.RUnlock()
+	if job, ok := s.bootstrapJobs[projectID]; ok {
+		cp := *job
+		return &cp
+	}
+	return nil
 }
 
 func (s *Server) StartScheduler() {
