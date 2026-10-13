@@ -12,9 +12,10 @@
               <h2 class="text-base font-serif font-bold text-ink-50 tracking-wide">全自动创作流水线</h2>
               <span 
                 v-if="isRunning" 
-                class="flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded-full bg-brand-amber/15 text-brand-amber border border-brand-amber/30">
+                class="flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-brand-amber/15 text-brand-amber border border-brand-amber/30">
                 <span class="w-1.5 h-1.5 rounded-full bg-brand-amber animate-pulse"></span>
                 <span>生产线运行中</span>
+                <span class="text-ink-400">· 耗时 {{ formatElapsedTime(elapsedSeconds) }}</span>
               </span>
               <span 
                 v-else-if="pipelineResult?.halted" 
@@ -428,6 +429,14 @@
               <span class="text-[10px] font-mono px-2 py-0.2 rounded bg-atelier-800 text-ink-400 border border-atelier-750">
                 {{ events.length }} 条事件
               </span>
+              <button 
+                @click="autoScroll = !autoScroll"
+                class="text-[10px] font-mono px-2 py-0.5 rounded border transition cursor-pointer"
+                :class="autoScroll 
+                  ? 'bg-brand-amber/10 text-brand-amber border-brand-amber/30' 
+                  : 'bg-atelier-800 text-ink-400 border-atelier-750'">
+                自动滚屏: {{ autoScroll ? '开' : '关' }}
+              </button>
             </div>
             <span v-if="isRunning" class="text-[11px] font-mono text-brand-amber flex items-center gap-1">
               <span class="w-1.5 h-1.5 rounded-full bg-brand-amber animate-ping"></span>
@@ -491,7 +500,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, nextTick } from 'vue';
+import { ref, reactive, computed, nextTick, onUnmounted } from 'vue';
 import { state, actions, notify } from '../stores/appState';
 import { api } from '../api/client';
 import {
@@ -513,6 +522,26 @@ const pipelineResult = ref(null);
 const pipelineError = ref(null);
 const events = ref([]);
 const timelineContainer = ref(null);
+const autoScroll = ref(true);
+const elapsedSeconds = ref(0);
+let timerId = null;
+
+function formatElapsedTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}分${s < 10 ? '0' : ''}${s}秒`;
+}
+
+function stopTimer() {
+  if (timerId) {
+    clearInterval(timerId);
+    timerId = null;
+  }
+}
+
+onUnmounted(() => {
+  stopTimer();
+});
 
 const formData = reactive({
   title: '',
@@ -533,6 +562,8 @@ const canSubmit = computed(() => {
 // 重置表单与运行状态
 function resetPipeline() {
   if (isRunning.value) return;
+  stopTimer();
+  elapsedSeconds.value = 0;
   pipelineResult.value = null;
   pipelineError.value = null;
   events.value = [];
@@ -541,7 +572,7 @@ function resetPipeline() {
 // 自动滚底
 async function scrollToBottom() {
   await nextTick();
-  if (timelineContainer.value) {
+  if (autoScroll.value && timelineContainer.value) {
     timelineContainer.value.scrollTop = timelineContainer.value.scrollHeight;
   }
 }
@@ -561,6 +592,12 @@ async function handleStartPipeline() {
   pipelineResult.value = null;
   pipelineError.value = null;
   events.value = [];
+
+  stopTimer();
+  elapsedSeconds.value = 0;
+  timerId = setInterval(() => {
+    elapsedSeconds.value++;
+  }, 1000);
 
   const payload = {
     title: formData.title.trim(),
@@ -582,6 +619,7 @@ async function handleStartPipeline() {
         await scrollToBottom();
       },
       onResult: async (res) => {
+        stopTimer();
         pipelineResult.value = res;
         isRunning.value = false;
         if (res?.halted) {
@@ -593,18 +631,21 @@ async function handleStartPipeline() {
         await scrollToBottom();
       },
       onError: (err) => {
+        stopTimer();
         pipelineError.value = err.message || '流水线执行异常';
         isRunning.value = false;
         notify('流水线执行中断', err.message || '网络连接超时或服务异常', 'error');
       },
     });
   } catch (err) {
+    stopTimer();
     if (!pipelineError.value) {
       pipelineError.value = err.message || '流水线执行失败';
       isRunning.value = false;
       notify('流水线启动失败', err.message || '网络连接异常', 'error');
     }
   } finally {
+    stopTimer();
     isRunning.value = false;
   }
 }

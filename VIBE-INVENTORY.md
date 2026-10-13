@@ -85,15 +85,15 @@
 
 | # | 交付 | 模块 / Spec | 优先级 | 状态 |
 |---|------|------------|--------|------|
-| 1 | **后端作品删除级联清理**（显式清理无 FK 的 10 个附随表：metrics/versions/snapshots/compaction/automation/memory_fts/scenes/book_queue/threads/messages，账本墓碑留存） | `internal/store/sqlite_store_project.go` + `agy-novel23-delproj-backend.md` | **P0** | 🟡 进行中 |
-| 2 | **作品删除并发锁守卫**（`DELETE /api/projects/:id` 接入 `rejectIfProducing`，后台生产/开书中 409 Fail-Closed） | `internal/server/handlers_project.go` + `server_test.go` | **P0** | 🟡 进行中 |
-| 3 | **前端删除作品动作与状态闭环**（`deleteProject`：activeTask 忙碌检查 Fail-Closed + 危险确认弹窗 + 移除本地作品 + 激活作品删除时重置瞬态平滑切换至其它作品/置空） | `web/src/stores/domain/projectActions.js` + `agy-novel23-delproj-web.md` | **P0** | 🟡 进行中 |
-| 4 | **前端删除作品回归测试**（生成忙碌拒绝 409/本地提示、取消确认、删除成功切换下一个作品、删除最后一部作品状态清空） | `web/test/project-switch.test.mjs` | **P0** | 🟡 进行中 |
-| 5 | **多作品总览交互与删除入口**（操作列删除按钮 + 危险二次确认 + 库数据刷新 + 标题/平台搜索筛选 + 全库总字数指标卡） | `web/src/views/StudioLibraryView.vue` + `agy-novel24-ux-studio.md` | **P1** | 🟡 进行中 |
-| 6 | **作品设定危险区域（Danger Zone）**（作品总览底端红色高危卡片：明确永久删除提示与删除按钮） | `web/src/views/FrameworkView.vue` | **P1** | 🟡 进行中 |
-| 7 | **侧边栏作品快捷管理 UX**（作品选择器平滑切换、删除/设置入口联动、空作品库友好提示） | `web/src/components/layout/AppSidebar.vue` | **P1** | 🟡 进行中 |
-| 8 | **工作台画布与质检 UX 提升**（自动保存状态胶囊、章节字数达标进度条、分庭判决与少数派 dissent 视觉升级） | `web/src/components/workbench/` + `agy-novel24-ux-workbench.md` | **P2** | 🟡 进行中 |
-| 9 | **待办中心与流水线控制台 UX 提升**（待办中心清空友好插画/快速直达工作台；流水线耗时计时器与自动滚动切换） | `StudioTodoView.vue` + `PipelineView.vue` | **P2** | 🟡 进行中 |
+| 1 | **后端作品删除级联清理**（显式清理无 FK 的 10 个附随表：metrics/versions/snapshots/compaction/automation/memory_fts/scenes/book_queue/threads/messages，账本墓碑留存） | `internal/store/sqlite_store_project.go` + `agy-novel23-delproj-backend.md` | **P0** | 🟢 已完成 |
+| 2 | **作品删除并发锁守卫**（`DELETE /api/projects/:id` 接入 `rejectIfProducing`，后台生产/开书中 409 Fail-Closed） | `internal/server/handlers_project.go` + `coord_wiring_test.go` | **P0** | 🟢 已完成 |
+| 3 | **前端删除作品动作与状态闭环**（`deleteProject`：activeTask 忙碌检查 Fail-Closed + 危险确认弹窗 + 移除本地作品 + 激活作品删除时重置瞬态平滑切换至其它作品/置空） | `web/src/stores/domain/projectActions.js` + `agy-novel23-delproj-web.md` | **P0** | 🟢 已完成 |
+| 4 | **前端删除作品回归测试**（生成忙碌拒绝 409/本地提示、取消确认、删除成功切换下一个作品、删除最后一部作品状态清空） | `web/test/project-switch.test.mjs` | **P0** | 🟢 已完成 |
+| 5 | **多作品总览交互与删除入口**（操作列删除按钮 + 危险二次确认 + 库数据刷新 + 标题/平台搜索筛选） | `web/src/views/StudioLibraryView.vue` + `agy-novel24-ux-studio.md` | **P1** | 🟢 已完成 |
+| 6 | **作品设定危险区域（Danger Zone）**（作品总览底端红色高危卡片：明确永久删除提示与删除按钮） | `web/src/views/FrameworkView.vue` | **P1** | 🟢 已完成 |
+| 7 | **侧边栏作品快捷管理 UX**（作品选择器平滑切换、删除/设置入口联动、空作品库友好提示） | `web/src/components/layout/AppSidebar.vue` | **P1** | 🟢 已完成 |
+| 8 | **工作台画布与质检 UX 提升**（自动保存状态胶囊、章节字数达标进度条、分庭判决与少数派 dissent 视觉升级） | `web/src/components/workbench/` + `agy-novel24-ux-workbench.md` | **P2** | 🟢 已完成 |
+| 9 | **待办中心与流水线控制台 UX 提升**（待办中心清空友好插画/快速直达工作台；流水线耗时计时器与自动滚动切换） | `StudioTodoView.vue` + `PipelineView.vue` | **P2** | 🟢 已完成 |
 
 ---
 
@@ -102,8 +102,10 @@
 - 🟢 **已精炼完成**: 5/5 核心双轨制与割裂架构缺陷（主角、势力阵营、世界公理、关键人物影子、种子伏笔冗余）
 - 🟢 **AI-First 改造**: 10/10 交付完成（编排器引擎/CLI/API、框架级级联、对话持久化全栈、成本面板、默认批产参数、停线待办中心、pipeline 控制台、排程/无人值守）
 - 🟢 **God File 拆分**: 5/5 完成（sqlite_store 14 文件 / WorkbenchView 3 文件 / orchestrator 7 文件 / GraphView 3 文件 / handlers_workshop 5 文件）
-- 🟡 **进行中**: 9 项（Wave 4：删除作品与各模块 UX 提升）
+- 🟢 **作品删除与各模块 UX 专项 (Wave 4)**: 9/9 交付完成（后端全级联擦除、409 生产互斥门禁、前端状态切换闭环、7/7 回归单测、全场景危险确认与各模块 UX 增强）
+- 🟡 **进行中**: 0
 - 🔴 **待排期**: 无
 - **Go 测试**: `go test ./... -race -count=1` 全绿通过
+- **前端测试**: `pnpm test`（7/7 通过）
 - **前端构建**: `pnpm --dir web build` 纯净构建通过
 

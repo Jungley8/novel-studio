@@ -593,6 +593,28 @@
           </div>
         </div>
       </div>
+
+      <!-- 危险区域 (Danger Zone) -->
+      <div class="p-5 bg-rose-500/5 border border-rose-500/25 rounded-xl space-y-3 shadow-atelier-sm">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2 text-xs font-serif font-bold text-rose-400">
+              <AlertTriangle class="w-4 h-4 text-rose-400" />
+              <span>危险区域 · 删除当前作品</span>
+            </div>
+            <p class="text-[11px] text-ink-400">
+              彻底删除作品《{{ state.currentProject.title }}》及其所有已定稿章节、在途手稿、大纲设定、伏笔簿与演进记录。此操作不可撤回。
+            </p>
+          </div>
+          <button 
+            @click="handleDeleteCurrentProject" 
+            :disabled="state.isLoading"
+            class="px-3.5 py-2 bg-rose-500/15 hover:bg-rose-500 text-rose-300 hover:text-white border border-rose-500/30 font-bold text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5 self-start sm:self-auto shrink-0 disabled:opacity-50">
+            <Trash2 class="w-3.5 h-3.5" />
+            <span>彻底删除此作品</span>
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -614,8 +636,15 @@ import {
   Sliders,
   Loader2,
   Lock,
-  Unlock
+  Unlock,
+  AlertTriangle,
+  Trash2
 } from 'lucide-vue-next';
+
+async function handleDeleteCurrentProject() {
+  if (!state.currentProject) return;
+  await actions.deleteProject(state.currentProject.id);
+}
 
 function normalizeFramework() {
   const fw = state.currentProject?.framework;

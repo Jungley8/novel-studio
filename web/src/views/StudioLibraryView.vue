@@ -14,7 +14,24 @@
         </div>
       </div>
 
-      <div class="flex items-center gap-2.5">
+      <div class="flex flex-wrap items-center gap-2.5">
+        <!-- 搜索与筛选 -->
+        <div class="relative">
+          <Search class="w-3.5 h-3.5 text-ink-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input 
+            v-model="searchQuery" 
+            placeholder="搜索书名..." 
+            class="pl-8 pr-2.5 py-1.5 bg-atelier-850 text-ink-100 placeholder-ink-500 text-xs rounded-md border border-atelier-750 focus:border-brand-amber/60 focus:outline-none transition w-32 sm:w-40" />
+        </div>
+
+        <select 
+          v-if="availablePlatforms.length > 0"
+          v-model="selectedPlatform" 
+          class="px-2.5 py-1.5 bg-atelier-850 text-ink-300 text-xs rounded-md border border-atelier-750 focus:border-brand-amber/60 focus:outline-none transition cursor-pointer">
+          <option value="ALL">全部题材/平台</option>
+          <option v-for="plat in availablePlatforms" :key="plat" :value="plat">{{ plat }}</option>
+        </select>
+
         <button 
           @click="fetchLibraryData" 
           :disabled="isLoading"
@@ -224,12 +241,20 @@
 
               <!-- 操作 -->
               <td class="py-3.5 px-4 text-right" @click.stop>
-                <button 
-                  @click="openProject(item.project_id)"
-                  class="px-2.5 py-1 bg-atelier-800 hover:bg-brand-amber hover:text-atelier-950 text-ink-300 font-medium text-xs rounded border border-atelier-700 transition cursor-pointer flex items-center gap-1 ml-auto">
-                  <span>进入工作台</span>
-                  <ArrowUpRight class="w-3 h-3" />
-                </button>
+                <div class="flex items-center justify-end gap-1.5">
+                  <button 
+                    @click="openProject(item.project_id)"
+                    class="px-2.5 py-1 bg-atelier-800 hover:bg-brand-amber hover:text-atelier-950 text-ink-300 font-medium text-xs rounded border border-atelier-700 transition cursor-pointer flex items-center gap-1">
+                    <span>进入工作台</span>
+                    <ArrowUpRight class="w-3 h-3" />
+                  </button>
+                  <button 
+                    @click.stop="handleDeleteProject(item)"
+                    class="p-1.5 bg-atelier-800 hover:bg-rose-500/15 text-ink-400 hover:text-rose-400 rounded border border-atelier-700 hover:border-rose-500/30 transition cursor-pointer"
+                    title="彻底删除此作品">
+                    <Trash2 class="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -248,33 +273,55 @@ import {
   RefreshCw, 
   Plus, 
   AlertTriangle, 
-  ArrowUpRight 
+  ArrowUpRight,
+  Trash2,
+  Search
 } from 'lucide-vue-next';
 
 const isLoading = ref(false);
 const errorMessage = ref('');
 const rawItems = ref([]);
+const searchQuery = ref('');
+const selectedPlatform = ref('ALL');
 
-const libraryItems = computed(() => rawItems.value);
+const availablePlatforms = computed(() => {
+  const set = new Set();
+  (rawItems.value || []).forEach(item => {
+    if (item.platform) set.add(item.platform);
+  });
+  return Array.from(set);
+});
 
-const totalProjects = computed(() => libraryItems.value.length);
+const libraryItems = computed(() => {
+  let list = rawItems.value || [];
+  if (selectedPlatform.value !== 'ALL') {
+    list = list.filter(item => item.platform === selectedPlatform.value);
+  }
+  if (searchQuery.value.trim()) {
+    const q = searchQuery.value.trim().toLowerCase();
+    list = list.filter(item => (item.title || '').toLowerCase().includes(q));
+  }
+  return list;
+});
+
+const totalProjects = computed(() => rawItems.value.length);
 const totalChapters = computed(() => {
-  return libraryItems.value.reduce((acc, curr) => acc + (curr.archived_chapters || 0), 0);
+  return rawItems.value.reduce((acc, curr) => acc + (curr.archived_chapters || 0), 0);
 });
 const totalOpenHooks = computed(() => {
-  return libraryItems.value.reduce((acc, curr) => acc + (curr.open_hooks || 0), 0);
+  return rawItems.value.reduce((acc, curr) => acc + (curr.open_hooks || 0), 0);
 });
 const totalOverdueHooks = computed(() => {
-  return libraryItems.value.reduce((acc, curr) => acc + (curr.overdue_hooks || 0), 0);
+  return rawItems.value.reduce((acc, curr) => acc + (curr.overdue_hooks || 0), 0);
 });
 const totalTokens = computed(() => {
-  return libraryItems.value.reduce((acc, curr) => acc + (curr.token_usage || 0), 0);
+  return rawItems.value.reduce((acc, curr) => acc + (curr.token_usage || 0), 0);
 });
 const totalCostUSD = computed(() => {
-  return libraryItems.value.reduce((acc, curr) => acc + (curr.estimated_cost_usd || 0), 0);
+  return rawItems.value.reduce((acc, curr) => acc + (curr.estimated_cost_usd || 0), 0);
 });
 const avgReviewPassRate = computed(() => {
-  const withChapters = libraryItems.value.filter(item => (item.archived_chapters || 0) > 0);
+  const withChapters = rawItems.value.filter(item => (item.archived_chapters || 0) > 0);
   if (withChapters.length === 0) return '—';
   const sum = withChapters.reduce((acc, curr) => acc + (curr.review_pass_rate || 0), 0);
   return `${Math.round((sum / withChapters.length) * 100)}%`;
@@ -296,6 +343,13 @@ async function fetchLibraryData() {
     errorMessage.value = `获取多作品总览失败: ${err.message || '网络连接超时或后端服务未就绪'}`;
   } finally {
     isLoading.value = false;
+  }
+}
+
+async function handleDeleteProject(item) {
+  const ok = await actions.deleteProject(item.project_id);
+  if (ok) {
+    await fetchLibraryData();
   }
 }
 

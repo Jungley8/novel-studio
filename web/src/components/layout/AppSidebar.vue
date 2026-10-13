@@ -29,14 +29,23 @@
             <span>新建作品</span>
           </button>
         </div>
-        <div v-if="state.projects.length > 0" class="relative">
-          <select 
-            :value="state.selectedProjectId" 
-            @change="handleProjectChange($event)"
-            class="w-full bg-atelier-850 border border-atelier-700 rounded-md px-2.5 py-1.5 text-xs text-ink-100 font-medium appearance-none focus:outline-none focus:border-brand-amber/60 focus:ring-1 focus:ring-brand-amber/40 transition truncate pr-6 cursor-pointer">
-            <option v-for="p in state.projects" :key="p.id" :value="p.id">{{ p.title }}</option>
-          </select>
-          <ChevronDown class="w-3.5 h-3.5 text-ink-400 absolute right-2 top-2.5 pointer-events-none" />
+        <div v-if="state.projects.length > 0" class="flex items-center gap-1.5">
+          <div class="relative flex-1 min-w-0">
+            <select 
+              :value="state.selectedProjectId" 
+              @change="handleProjectChange($event)"
+              class="w-full bg-atelier-850 border border-atelier-700 rounded-md px-2.5 py-1.5 text-xs text-ink-100 font-medium appearance-none focus:outline-none focus:border-brand-amber/60 focus:ring-1 focus:ring-brand-amber/40 transition truncate pr-6 cursor-pointer">
+              <option v-for="p in state.projects" :key="p.id" :value="p.id">{{ p.title }}</option>
+            </select>
+            <ChevronDown class="w-3.5 h-3.5 text-ink-400 absolute right-2 top-2.5 pointer-events-none" />
+          </div>
+          <button 
+            v-if="state.selectedProjectId"
+            @click="handleDeleteActiveProject"
+            class="p-1.5 bg-atelier-850 hover:bg-rose-500/15 text-ink-400 hover:text-rose-400 border border-atelier-700 hover:border-rose-500/30 rounded-md transition cursor-pointer shrink-0"
+            title="彻底删除当前作品">
+            <Trash2 class="w-3.5 h-3.5" />
+          </button>
         </div>
         <button 
           v-else
@@ -138,7 +147,8 @@ import {
   Rocket,
   AlertTriangle,
   CalendarClock,
-  Gauge
+  Gauge,
+  Trash2
 } from 'lucide-vue-next';
 
 const navGroups = computed(() => [
@@ -206,5 +216,10 @@ async function handleProjectChange(event) {
   if (!ok) {
     event.target.value = state.selectedProjectId;
   }
+}
+
+async function handleDeleteActiveProject() {
+  if (!state.selectedProjectId) return;
+  await actions.deleteProject(state.selectedProjectId);
 }
 </script>

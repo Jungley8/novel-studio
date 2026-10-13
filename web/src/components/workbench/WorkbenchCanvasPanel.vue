@@ -124,9 +124,18 @@
           <span class="text-xs font-bold font-serif text-ink-100 truncate">
             第 {{ computedState.currentWorkingChapterIndex.value }} 章
           </span>
-          <span class="text-[11px] font-mono text-ink-400 shrink-0">
-            <strong class="text-brand-amber font-semibold">{{ state.workbench.content.length }}</strong> 字
-          </span>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <span class="text-[11px] font-mono text-ink-400">
+              <strong class="text-brand-amber font-semibold">{{ state.workbench.content.length }}</strong> / {{ state.wordsTarget || 2000 }} 字
+            </span>
+            <span 
+              class="text-[9px] font-mono px-1.5 py-0.2 rounded border transition"
+              :class="state.workbench.content.length >= (state.wordsTarget || 2000)
+                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                : 'bg-brand-amber/10 text-brand-amber border-brand-amber/25'">
+              {{ Math.min(100, Math.round((state.workbench.content.length / (state.wordsTarget || 2000)) * 100)) }}% 达标
+            </span>
+          </div>
 
           <button 
             @click="actions.runAutonomousPipeline()"
@@ -171,9 +180,19 @@
 
         <!-- 右侧核心功能组 (亲密性整合，清晰克制) -->
         <div class="flex items-center gap-1.5 shrink-0">
-          <span v-if="state.lastSavedAt" class="hidden 2xl:inline text-[10px] text-ink-400 font-mono">
-            已存 {{ formatSaveTime(state.lastSavedAt) }}
-          </span>
+          <div 
+            v-if="state.isSavingDraft" 
+            class="hidden lg:flex items-center gap-1 text-[10px] text-brand-amber font-mono mr-1">
+            <Loader2 class="w-3 h-3 animate-spin text-brand-amber" />
+            <span>正在保存...</span>
+          </div>
+          <div 
+            v-else-if="state.lastSavedAt" 
+            class="hidden lg:flex items-center gap-1.5 text-[10px] text-ink-400 font-mono mr-1"
+            title="快捷键 Cmd/Ctrl + S 手动存盘">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+            <span>已保存 {{ formatSaveTime(state.lastSavedAt) }}</span>
+          </div>
 
           <button 
             @click="handleManualSaveDraft" 

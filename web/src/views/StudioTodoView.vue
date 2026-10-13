@@ -57,14 +57,28 @@
     <!-- 空态：无停线待办 -->
     <div 
       v-else-if="!errorMessage && todos.length === 0" 
-      class="p-12 text-center bg-atelier-900 border border-atelier-750 rounded-xl max-w-xl mx-auto space-y-3">
+      class="p-12 text-center bg-atelier-900 border border-atelier-750 rounded-xl max-w-xl mx-auto space-y-4">
       <div class="w-12 h-12 mx-auto rounded-full bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center text-emerald-400">
         <CheckCircle2 class="w-6 h-6" />
       </div>
-      <h3 class="text-sm font-semibold text-ink-100">暂无停线待办</h3>
-      <p class="text-xs text-ink-400 leading-relaxed">
-        所有章节均在自动闭环内推进，生产流水线状态健康，无需人工介入。
-      </p>
+      <div class="space-y-1">
+        <h3 class="text-sm font-semibold text-ink-100 font-serif">暂无停线待办</h3>
+        <p class="text-xs text-ink-400 leading-relaxed max-w-sm mx-auto">
+          所有章节均在自动闭环内推进，生产流水线状态健康，无需人工介入。
+        </p>
+      </div>
+      <div class="flex items-center justify-center gap-3 pt-2">
+        <button 
+          @click="state.activeTab = 'workbench'" 
+          class="px-4 py-2 bg-brand-amber hover:bg-brand-amber-hover text-atelier-950 font-bold text-xs rounded-lg shadow-amber-glow transition cursor-pointer">
+          前往工作台创作
+        </button>
+        <button 
+          @click="state.activeTab = 'studio-automation'" 
+          class="px-4 py-2 bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 text-xs rounded-lg border border-atelier-700 transition cursor-pointer">
+          查看自动化排程
+        </button>
+      </div>
     </div>
 
     <!-- 待办列表 -->
