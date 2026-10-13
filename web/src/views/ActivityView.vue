@@ -142,30 +142,142 @@ function toggleRun(key) {
   else openRuns.value.add(key);
 }
 
-// 按 run_id 折叠：同 run 的多步事件收成一组，散事件保持平铺。
+function hasDiffInfo(ev) {
+  if (!ev) return false;
+  return Boolean(
+    (ev.fields_changed && ev.fields_changed.length > 0) ||
+    ev.excerpt_after ||
+    ev.excerpt_before ||
+    ev.chars_added ||
+    ev.chars_removed
+  );
+}
+
+function areCompanionEvents(a, b) {
+  if (!a || !b || a.id === b.id) return false;
+  
+  // 必须作用于同一作品、同实体/同章节
+  const sameChapter = a.chapter_index === b.chapter_index;
+  const sameEntity = (a.entity_type === b.entity_type && a.entity_id === b.entity_id) ||
+    (a.entity_type === 'chapter' && b.entity_type === 'workshop') ||
+    (a.entity_type === 'workshop' && b.entity_type === 'chapter') ||
+    (a.entity_type === 'framework' && b.entity_type === 'framework') ||
+    (a.entity_type === 'project' && b.entity_type === 'project');
+
+  if (!sameChapter || !sameEntity) return false;
+
+  // 如果同属一个 run_id，或者是 10 秒以内的相邻操作
+  const sameRun = Boolean(a.run_id && b.run_id && a.run_id === b.run_id);
+  const timeDiff = Math.abs(new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  const closeInTime = !isNaN(timeDiff) && timeDiff < 10000;
+
+  if (!sameRun && !closeInTime) return false;
+
+  // 必须一个是带 diff 的底层事件，另一个是无 diff 的聚合/伴随事件
+  const aDiff = hasDiffInfo(a);
+  const bDiff = hasDiffInfo(b);
+  return (aDiff && !bDiff) || (!aDiff && bDiff);
+}
+
+function mergeCompanion(primary, companion) {
+  const merged = { ...primary };
+  if (!merged.token_usage && companion.token_usage) {
+    merged.token_usage = companion.token_usage;
+  }
+  if (!merged.summary && companion.summary) {
+    merged.summary = companion.summary;
+  } else if (companion.summary && !merged.summary.includes(companion.summary)) {
+    // 聚合补充更具业务语义的摘要
+    merged.summary = `${companion.summary} · ${merged.summary}`;
+  }
+  return merged;
+}
+
+function deduplicateEventList(list) {
+  if (!list || list.length <= 1) return list || [];
+  const result = [];
+  const mergedIds = new Set();
+
+  for (let i = 0; i < list.length; i++) {
+    const cur = list[i];
+    if (mergedIds.has(cur.id)) continue;
+
+    let mergedItem = cur;
+    for (let j = i + 1; j < list.length; j++) {
+      const candidate = list[j];
+      if (mergedIds.has(candidate.id)) continue;
+
+      if (areCompanionEvents(cur, candidate)) {
+        mergedIds.add(candidate.id);
+        const curHasDiff = hasDiffInfo(cur);
+        const primary = curHasDiff ? cur : candidate;
+        const comp = curHasDiff ? candidate : cur;
+        mergedItem = mergeCompanion(primary, comp);
+        break;
+      }
+    }
+    result.push(mergedItem);
+  }
+  return result;
+}
+
+// 按 run_id 折叠：同 run 的多步事件收成一组，散事件保持平铺，自动去重伴随双写事件。
 const groups = computed(() => {
   const runs = new Map();
-  const out = [];
+  const rawOut = [];
   for (const ev of events.value) {
     if (ev.run_id) {
       if (!runs.has(ev.run_id)) {
         const g = { key: ev.run_id, run: true, title: runTitle(ev), items: [] };
         runs.set(ev.run_id, g);
-        out.push(g);
+        rawOut.push(g);
       }
       runs.get(ev.run_id).items.push(ev);
     } else {
-      out.push({ key: ev.id, run: false, items: [ev] });
+      rawOut.push({ key: ev.id, run: false, items: [ev] });
     }
   }
-  // run 组标题取其最新（首条）事件的章节与类型
-  for (const g of out) {
+
+  // 1. 先对每个 run 组内进行智能去重合并
+  for (const g of rawOut) {
+    g.items = deduplicateEventList(g.items);
     if (g.run && g.items.length) {
       const first = g.items[0];
       g.title = first.chapter_index ? `第${first.chapter_index}章 · 一次生产` : '一次批量操作';
     }
   }
-  return out;
+
+  // 2. 对散事件进行跨条去重（如创世推演后保存作品等散事件）
+  const finalOut = [];
+  const mergedScatterIds = new Set();
+  for (let i = 0; i < rawOut.length; i++) {
+    const g = rawOut[i];
+    if (g.run) {
+      if (g.items.length > 0) finalOut.push(g);
+      continue;
+    }
+    const curEv = g.items[0];
+    if (mergedScatterIds.has(curEv.id)) continue;
+
+    for (let j = i + 1; j < rawOut.length; j++) {
+      const nextG = rawOut[j];
+      if (nextG.run) continue;
+      const nextEv = nextG.items[0];
+      if (mergedScatterIds.has(nextEv.id)) continue;
+
+      if (areCompanionEvents(curEv, nextEv)) {
+        mergedScatterIds.add(nextEv.id);
+        const curHasDiff = hasDiffInfo(curEv);
+        const primary = curHasDiff ? curEv : nextEv;
+        const comp = curHasDiff ? nextEv : curEv;
+        g.items = [mergeCompanion(primary, comp)];
+        break;
+      }
+    }
+    finalOut.push(g);
+  }
+
+  return finalOut;
 });
 
 function runTitle(ev) {

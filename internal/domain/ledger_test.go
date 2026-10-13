@@ -333,3 +333,79 @@ func TestRollbackStateMutation_RemoveHeldItemRestoresQuantity(t *testing.T) {
 		t.Errorf("expected rollback restore audit log, got %v", audit)
 	}
 }
+
+func TestParseItemAndQuantity_NarrativeNotes(t *testing.T) {
+	cases := []struct {
+		input    string
+		wantName string
+		wantQty  int
+	}{
+		{"劣质的定情玉佩（作为物证提交天道销毁）", "劣质的定情玉佩", 1},
+		{"劣质的定情玉佩(作为物证提交天道销毁)", "劣质的定情玉佩", 1},
+		{"劣质的定情玉佩【作为物证提交天道销毁】", "劣质的定情玉佩", 1},
+		{"洗髓丹x3（服用）", "洗髓丹", 3},
+		{"洗髓丹（服用）x3", "洗髓丹", 3},
+		{"灵石 100块 (贿赂长老)", "灵石", 100},
+		{"纯阳真经", "纯阳真经", 1},
+	}
+
+	for _, tc := range cases {
+		name, qty := parseItemAndQuantity(tc.input)
+		if name != tc.wantName || qty != tc.wantQty {
+			t.Errorf("parseItemAndQuantity(%q) = (%q, %d), want (%q, %d)", tc.input, name, qty, tc.wantName, tc.wantQty)
+		}
+	}
+}
+
+func TestReconcileNarrativeInventoryDelta(t *testing.T) {
+	prot := &CodexEntry{
+		Name:      "林尘",
+		Inventory: "随身物品待起草",
+	}
+
+	// 1. 正文有提及物品，自动追溯补全
+	content := "林尘咬牙取出那一枚劣质的定情玉佩，猛然捏碎作为物证提交天道销毁。"
+	mutation := StateMutation{
+		InventoryDelta: "-劣质的定情玉佩（作为物证提交天道销毁）",
+	}
+
+	reconciled := ReconcileNarrativeInventoryDelta(prot, content, 1, mutation)
+	if !strings.Contains(reconciled.InventoryDelta, "+劣质的定情玉佩") {
+		t.Fatalf("expected reconciled delta to contain '+劣质的定情玉佩', got: %s", reconciled.InventoryDelta)
+	}
+
+	// 演练结算应该零告警成功
+	trail, err := DryRunStateMutation(prot, reconciled)
+	if err != nil {
+		t.Fatalf("DryRunStateMutation failed: %v", err)
+	}
+	for _, tr := range trail {
+		if strings.Contains(tr, "[Ledger Warning]") {
+			t.Fatalf("unexpected warning in reconciled trail: %s", tr)
+		}
+	}
+
+	// 2. 无正文证据且非占位初始库存时拒绝补全
+	protOwned := &CodexEntry{
+		Name:      "林尘",
+		Inventory: "新手木剑",
+	}
+	mutationGhost := StateMutation{
+		InventoryDelta: "-辟毒珠",
+	}
+	reconciledGhost := ReconcileNarrativeInventoryDelta(protOwned, "平平无奇的叙事...", 2, mutationGhost)
+	if strings.Contains(reconciledGhost.InventoryDelta, "+辟毒珠") {
+		t.Fatalf("un-evidenced ghost item must not be auto-reconciled, got: %s", reconciledGhost.InventoryDelta)
+	}
+	trailGhost, _ := DryRunStateMutation(protOwned, reconciledGhost)
+	foundWarning := false
+	for _, tr := range trailGhost {
+		if strings.Contains(tr, "[Ledger Warning]") {
+			foundWarning = true
+			break
+		}
+	}
+	if !foundWarning {
+		t.Fatalf("expected warning for unowned unevidenced consume")
+	}
+}

@@ -204,27 +204,16 @@ func (s *Server) handleProjectFramework(w http.ResponseWriter, r *http.Request, 
 			}
 		}
 
-		// Ledger aggregate marker for the re-bootstrap run.
-		_ = s.store.AppendEvent(ctx, &activity.ActivityEvent{
-			ProjectID:  projectID,
-			RunID:      fwRunID,
-			EntityType: activity.EntityFramework,
-			EntityID:   projectID,
-			EventType:  activity.EventFrameworkBoot,
-			Actor:      activity.ActorAIReasoner,
-			Source:     activity.SourceBootstrap,
-			Title:      fmt.Sprintf("创世总纲已重新推演《%s》", p.Title),
-			Summary: fmt.Sprintf("%d 卷 · %d 势力 · %d 关键人物 · %d 种子伏笔",
-				len(fw.VolumeArcs), len(fw.Factions), len(fw.KeyCharacters), len(fw.SeedHooks)),
-			CreatedAt: time.Now(),
-		})
-
 		// Transient seeds have been persisted to codex_entries and plot_hooks.
 		// Clean them from the macro framework to maintain a single source of truth.
 		fw.Factions = nil
 		fw.KeyCharacters = nil
 		fw.SeedHooks = nil
-		_ = s.store.SaveProject(ctx, p)
+
+		sumText := fmt.Sprintf("%d 卷 · %d 势力 · %d 关键人物 · %d 种子伏笔",
+			len(fw.VolumeArcs), len(fw.Factions), len(fw.KeyCharacters), len(fw.SeedHooks))
+		saveCtx := activity.WithSummary(ctx, sumText)
+		_ = s.store.SaveProject(saveCtx, p)
 
 		jsonResponse(w, http.StatusOK, p.Framework)
 		return

@@ -376,19 +376,21 @@ function initNetwork() {
       hoverWidth: 2,
     },
     physics: {
-      solver: 'forceAtlas2Based',
-      forceAtlas2Based: {
-        gravitationalConstant: -60,
-        centralGravity: 0.012,
-        springLength: 130,
-        springConstant: 0.08,
-        damping: 0.45,
-        avoidOverlap: 1.0, // 工业级防节点重叠约束 (杜绝任何重叠)
+      enabled: true,
+      solver: 'barnesHut',
+      barnesHut: {
+        gravitationalConstant: -4000,
+        centralGravity: 0.3,
+        springLength: 110,
+        springConstant: 0.05,
+        damping: 0.7,
+        avoidOverlap: 0.3,
       },
       stabilization: {
         enabled: true,
-        iterations: 120,
+        iterations: 150,
         updateInterval: 25,
+        fit: true,
       },
     },
     interaction: {
@@ -408,6 +410,24 @@ function initNetwork() {
     { nodes: nodesDataSet, edges: edgesDataSet }, 
     options
   );
+
+  // 稳定化完成后彻底关闭力导向动态物理引擎，杜绝任何自转/转圈/绕质心公转漂移
+  networkInstance.on('stabilizationIterationsDone', () => {
+    if (networkInstance) {
+      networkInstance.setOptions({ physics: { enabled: false } });
+    }
+  });
+  networkInstance.on('stabilized', () => {
+    if (networkInstance) {
+      networkInstance.setOptions({ physics: { enabled: false } });
+    }
+  });
+  // 保底安全定时器：1.5 秒后强制静止物理引擎，确保静态定格无旋转
+  setTimeout(() => {
+    if (networkInstance) {
+      networkInstance.setOptions({ physics: { enabled: false } });
+    }
+  }, 1500);
 
   // 事件监听：单击节点或边
   networkInstance.on('click', (params) => {

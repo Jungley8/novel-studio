@@ -14,7 +14,16 @@ var (
 	qtyMultiplierRegex  = regexp.MustCompile(`(?i)[*x×]\s*(\d+)$`)
 	qtyChineseUnitRegex = regexp.MustCompile(`(\d+)\s*(个|颗|块|枚|把|瓶|张|本|支|道|条|粒|盒|株|坛|份|斤|件)$`)
 	qtyTrailingNumRegex = regexp.MustCompile(`\s+(\d+)$`)
+	noteSuffixRegex     = regexp.MustCompile(`[\(（【\[]([^\)）】\]]+)[\)）】\]]\s*$`)
 )
+
+func cleanItemNote(s string) string {
+	s = strings.TrimSpace(s)
+	if m := noteSuffixRegex.FindStringSubmatch(s); len(m) == 2 {
+		return strings.TrimSpace(s[:len(s)-len(m[0])])
+	}
+	return s
+}
 
 // ApplyStateMutation executes a structured transition on a character's state machine (such as the protagonist),
 // validating invariants (e.g. attempting to consume an item not present in inventory)
@@ -303,10 +312,13 @@ func parseItemAndQuantity(raw string) (name string, qty int) {
 		return "", 1
 	}
 
+	// 0. Pre-clean trailing parenthetical/bracket narrative notes
+	s = cleanItemNote(s)
+
 	// 1. Check multiplier suffix like "洗髓丹x3", "灵石*10"
 	if m := qtyMultiplierRegex.FindStringSubmatch(s); len(m) == 2 {
 		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
-			cleanName := strings.TrimSpace(s[:len(s)-len(m[0])])
+			cleanName := cleanItemNote(strings.TrimSpace(s[:len(s)-len(m[0])]))
 			if cleanName != "" {
 				return cleanName, n
 			}
@@ -316,7 +328,7 @@ func parseItemAndQuantity(raw string) (name string, qty int) {
 	// 2. Check Chinese unit suffix like "洗髓丹3颗", "灵石 100块"
 	if m := qtyChineseUnitRegex.FindStringSubmatch(s); len(m) == 3 {
 		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
-			cleanName := strings.TrimSpace(s[:len(s)-len(m[0])])
+			cleanName := cleanItemNote(strings.TrimSpace(s[:len(s)-len(m[0])]))
 			if cleanName != "" {
 				return cleanName, n
 			}
@@ -326,14 +338,14 @@ func parseItemAndQuantity(raw string) (name string, qty int) {
 	// 3. Check trailing number after whitespace like "灵石 10"
 	if m := qtyTrailingNumRegex.FindStringSubmatch(s); len(m) == 2 {
 		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
-			cleanName := strings.TrimSpace(s[:len(s)-len(m[0])])
+			cleanName := cleanItemNote(strings.TrimSpace(s[:len(s)-len(m[0])]))
 			if cleanName != "" {
 				return cleanName, n
 			}
 		}
 	}
 
-	return s, 1
+	return cleanItemNote(s), 1
 }
 
 func initInventoryItems(e *CodexEntry) []InventoryItem {
@@ -380,6 +392,66 @@ func findInventoryItemIndex(items []InventoryItem, targetName string) int {
 		}
 	}
 	return -1
+}
+
+// ContainsInventoryItem 检查实体当前库存（包含结构化条目与文本）是否持有目标物品
+func ContainsInventoryItem(e *CodexEntry, targetName string) bool {
+	if e == nil {
+		return false
+	}
+	items := initInventoryItems(e)
+	return findInventoryItemIndex(items, targetName) >= 0
+}
+
+// ReconcileNarrativeInventoryDelta 针对章节定稿中合乎正文叙事证据的未登记背景物品扣减，
+// 执行自动调解与追溯登记（Auto-Reconcile），避免因开篇背景物品未预先录入而阻断定稿。
+func ReconcileNarrativeInventoryDelta(prot *CodexEntry, content string, chapterIndex int, mutation StateMutation) StateMutation {
+	if prot == nil {
+		return mutation
+	}
+	rawDelta := strings.TrimSpace(mutation.InventoryDelta)
+	if rawDelta == "" {
+		return mutation
+	}
+
+	tokens := splitDeltaTokens(rawDelta)
+	var addReconciled []string
+	reconciledSet := make(map[string]bool)
+
+	for _, token := range tokens {
+		action, rawItem := detectItemAction(token)
+		if action != "REMOVE" {
+			continue
+		}
+		itemName, deltaQty := parseItemAndQuantity(rawItem)
+		if itemName == "" || reconciledSet[itemName] {
+			continue
+		}
+
+		// 检查主角当前是否已持有该物品
+		if ContainsInventoryItem(prot, itemName) {
+			continue
+		}
+
+		// 证据门判定：正文内容显式提及该物品名称（有明确正文叙事证据支撑）
+		hasTextEvidence := strings.Contains(content, itemName)
+
+		if hasTextEvidence {
+			reconciledSet[itemName] = true
+			qtyStr := ""
+			if deltaQty > 1 {
+				qtyStr = fmt.Sprintf("x%d", deltaQty)
+			}
+			addReconciled = append(addReconciled, fmt.Sprintf("+%s%s", itemName, qtyStr))
+		}
+	}
+
+	if len(addReconciled) > 0 {
+		// 将追溯补全的前置获得指令注入到当前变更链条头部
+		mutation.InventoryDelta = strings.Join(addReconciled, ", ") + ", " + mutation.InventoryDelta
+	}
+
+	return mutation
 }
 
 func applyPowerDelta(current, delta string) (updatedLevel, oldRealm, newRealm string) {

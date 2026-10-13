@@ -109,7 +109,8 @@ func (s *SQLiteStore) SaveProject(ctx context.Context, p *domain.Project) error 
 		}
 	}
 
-	e := newEvent(ctx, p.ID, activity.EntityProject, p.ID, 0, eventType, title, "")
+	summary := activity.SummaryFromCtx(ctx)
+	e := newEvent(ctx, p.ID, activity.EntityProject, p.ID, 0, eventType, title, summary)
 	if eventType == activity.EventFrameworkUpdated {
 		e.EntityType = activity.EntityFramework
 	}

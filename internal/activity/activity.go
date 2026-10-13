@@ -166,9 +166,10 @@ type EventQuery struct {
 type ctxKey string
 
 const (
-	ctxKeyActor  ctxKey = "novelstudio/activity-actor"
-	ctxKeySource ctxKey = "novelstudio/activity-source"
-	ctxKeyRunID  ctxKey = "novelstudio/activity-run"
+	ctxKeyActor   ctxKey = "novelstudio/activity-actor"
+	ctxKeySource  ctxKey = "novelstudio/activity-source"
+	ctxKeyRunID   ctxKey = "novelstudio/activity-run"
+	ctxKeySummary ctxKey = "novelstudio/activity-summary"
 )
 
 // WithActor tags content authorship (user vs which AI role).
@@ -184,6 +185,16 @@ func WithSource(ctx context.Context, source string) context.Context {
 // WithRunID correlates every event of one pipeline/manual run for timeline folding.
 func WithRunID(ctx context.Context, runID string) context.Context {
 	return context.WithValue(ctx, ctxKeyRunID, runID)
+}
+
+// WithSummary attaches a narrative summary into context so transactional store writes can carry it.
+func WithSummary(ctx context.Context, summary string) context.Context {
+	return context.WithValue(ctx, ctxKeySummary, summary)
+}
+
+// SummaryFromCtx returns the custom summary passed via context, if any.
+func SummaryFromCtx(ctx context.Context) string {
+	return stringFromCtx(ctx, ctxKeySummary)
 }
 
 func stringFromCtx(ctx context.Context, key ctxKey) string {

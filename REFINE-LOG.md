@@ -972,7 +972,43 @@ Wave 1 与 Wave 2 之后的第三波闭环升级（P1/P2/P3），各自独立 wo
 - **回归验证**：
   - `pnpm --dir web test` 13/13 前端测试全绿通过；
   - `pnpm --dir web build` 生产构建成功；
-  - `go test ./... -race -count=1` 全库（cmd, activity, config, coord, desktop, domain, engine, metrics, notify, scheduler, server, service, store）测试全部绿灯通过。
+### Wave 8: 图谱动态转圈消除 · 时间线双写去重 · 首章证据状态机自动调解 (Round 22)
+
+#### 1. 问题定位与设计目标
+1. **图谱关闭自动转圈效果**：
+   - **痛点**：关系图谱拓扑引擎 `GraphView.vue` 此前使用 `vis-network` 的 `forceAtlas2Based` 力导向解算器，由于解算器天然存在角动量无法消散的特性，且稳定化之后未关闭实时物理循环，导致节点群绕质心持续转圈自旋、公转漂移，视觉体验眩晕且消耗 CPU。
+   - **目标**：彻底消除自动转圈，节点稳定后完全静止定格，拖拽时精准点位调整，支持静态高品质力导向布局。
+2. **动态时间线重复显示一个操作显示 2 遍（一个有 diff，一个无 diff）**：
+   - **痛点**：`handlers_project.go`、`handlers_matrix.go` 等在执行宏观推演与持久化时，既显式调用了 `store.AppendEvent`（记录无 diff 的总结性事件），随后又调用 `store.SaveProject`（底层自动记录带 diff 的实体变更事件），导致同一时间同操作在动态时间线上生成两条记录，一条显示 diff 全文详情，一条无 diff 且内容相同。
+   - **目标**：后端收敛双写，前端 `ActivityView.vue` 建立智能伴随事件（Companion Events）合并与去重机制，保留 diff 详情与业务总结，杜绝任何重复条目。
+3. **新作第 1 章定稿实体状态机报错（`[Ledger Warning] 实体状态机不一致: 尝试移除未持有的物品...: 证据不足，拒绝无证据状态变更`）**：
+   - **痛点**：第一章开篇主角初始库存为占位符（如「随身物品待起草」或「无」），AI 在正文内描写了主角消耗自身携带的旧物（如 `劣质的定情玉佩（作为物证提交天道销毁）`），状态机检测到库存无此项抛出警告；且括号内补充理由未被清洗；`handlers_project.go` 盲目将所有 `[Ledger Warning]` 转为 400 阻断定稿，无视正文已有明确文本证据。
+   - **目标**：接口自动处理（Auto-Reconcile）——清洗中文/英文括号说明，当正文存在明确叙事证据时，自动追溯登记并扣减，维持账本严密一致性，杜绝阻断正常定稿；同时严格保留对正文无证据的凭空恶意扣减的 Fail-Closed 拦截。
+
+#### 2. 技术实现与架构改进
+- **图谱解算器静态定格 (`web/src/views/GraphView.vue`)**：
+  - 解算器切换为 `barnesHut`，配置阻尼 `damping: 0.7`、`centralGravity: 0.3`、`gravitationalConstant: -4000`，快速收敛；
+  - 监听 `stabilizationIterationsDone` 与 `stabilized` 事件，稳定后立即执行 `networkInstance.setOptions({ physics: { enabled: false } })` 彻底锁死力导向计算；
+  - 增加 1.5 秒安全兜底定时器，保证初始加载与切换时节点绝对静止定格，拖拽节点仅单点平移，杜绝全图转圈。
+- **动态时间线智能去重与伴随合并 (`web/src/views/ActivityView.vue` & `internal/activity/activity.go`)**：
+  - 后端：在 `internal/activity/activity.go` 增加 `WithSummary` 与 `SummaryFromCtx`，让 `SaveProject` 直接从上下文携带业务摘要，移除 `handlers_project.go` 和 `handlers_matrix.go` 中的冗余 `AppendEvent`；
+  - 前端：在 `ActivityView.vue` 实现 `areCompanionEvents`、`mergeCompanion`、`deduplicateEventList`。对于同一 `run_id` 或 10 秒内同实体的成对事件（一个带 diff、一个为无 diff 伴随总结），自动合并为一条完整卡片（保留 diff 与详情，并吸收富摘要与 Token 用量），彻底消除双重显示。
+- **实体状态机自动调解 (`internal/domain/ledger.go` & `internal/server/handlers_project.go`)**：
+  - 品名清洗：新增 `noteSuffixRegex`，在 `parseItemAndQuantity` 中剥离 `（...）`、`(...)`、`【...】` 等叙事理由后缀，提取核心品名（如 `劣质的定情玉佩（作为物证提交天道销毁）` ➔ `劣质的定情玉佩`）；
+  - 自动调解核心：实现 `domain.ReconcileNarrativeInventoryDelta(prot, content, chapterIndex, mutation)`。当检测到扣减未持有物品时，若正文明确包含该品名，自动在变动链条前置注入溯源补全指令（`+劣质的定情玉佩, -劣质的定情玉佩`）；
+  - 定稿放行与证据门：在 `handlers_project.go` 执行 `DryRunStateMutation` 前自动调解，使合规叙事扣减零告警平滑定稿；对正文无证据的凭空扣减（如 `TestPostChapters_EvidenceGateRejectsUnownedConsume`）依然坚守 Fail-Closed 抛 400。
+
+#### 3. 测试与验证全链路
+- **领域状态机与清洗单测 (`internal/domain/ledger_test.go`)**：
+  - `TestParseItemAndQuantity_NarrativeNotes`：覆盖中文全角括号、英文半角括号、方括号、带乘数单位等多种叙事注释形态；
+  - `TestReconcileNarrativeInventoryDelta`：覆盖正文有证据的自动调解与正文无证据的拒收。
+- **服务端集成测试 (`internal/server/server_test.go`)**：
+  - `TestPostChapters_AutoReconcileEvidencedItemInChapter1`：模拟第一章开篇主角携带待起草物品，正文提及劣质定情玉佩并提交天道销毁，断言 201 Created 成功定稿且主角状态机同步；
+  - `TestPostChapters_EvidenceGateRejectsUnownedConsume`：无正文证据的恶意扣减依然严格被证据门拦截。
+- **全栈回归验证**：
+  - `pnpm --dir web test`：13/13 前端测试全部绿灯通过；
+  - `pnpm --dir web build`：生产打包成功；
+  - `go test ./...`：cmd, activity, config, coord, desktop, domain, engine, metrics, notify, scheduler, server, service, store 全库测试全部通过！
 
 
 

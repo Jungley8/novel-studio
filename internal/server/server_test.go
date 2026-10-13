@@ -1188,6 +1188,49 @@ func TestPostChapters_EvidenceGateRejectsUnownedConsume(t *testing.T) {
 	}
 }
 
+func TestPostChapters_AutoReconcileEvidencedItemInChapter1(t *testing.T) {
+	srv, s, _ := setupTestServer(t)
+	ctx := context.Background()
+
+	p := &domain.Project{
+		ID:             "proj-auto-reconcile",
+		Title:          "首章背景物品自动调解测试",
+		TargetPlatform: "起点仙侠",
+	}
+	if err := s.SaveProject(ctx, p); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+	if err := s.SaveCodexEntry(ctx, &domain.CodexEntry{
+		ID:        "codex_proj-auto-reconcile_pro",
+		ProjectID: p.ID,
+		Category:  domain.CategoryCharacter,
+		Archetype: "PROTAGONIST",
+		Name:      "林尘",
+		Realm:     "凡人",
+		Inventory: "随身物品待起草",
+	}); err != nil {
+		t.Fatalf("SaveCodexEntry failed: %v", err)
+	}
+
+	// 真实生产场景：第一章正文包含劣质的定情玉佩，状态机声明移除劣质的定情玉佩（附带理由说明）
+	bodyJSON := `{"chapter_index":1,"title":"第一章 斩断前尘","content":"林尘站在天道台前，咬牙取出了那枚劣质的定情玉佩，毫不犹豫作为物证提交天道销毁。","state_mutation":{"inventory_delta":"-劣质的定情玉佩（作为物证提交天道销毁）"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+p.ID+"/chapters", strings.NewReader(bodyJSON))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created for evidenced chapter 1 commit, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 验证第一章成功定稿入库
+	getReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+p.ID+"/chapters/1", nil)
+	getW := httptest.NewRecorder()
+	srv.ServeHTTP(getW, getReq)
+	if getW.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for chapter 1, got %d: %s", getW.Code, getW.Body.String())
+	}
+}
+
 func TestPostChapters_EvidenceGatePassesClean(t *testing.T) {
 	srv, s, _ := setupTestServer(t)
 	ctx := context.Background()

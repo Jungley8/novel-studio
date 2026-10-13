@@ -288,6 +288,10 @@ func (s *Server) handleProjectChapters(w http.ResponseWriter, r *http.Request, p
 				return
 			}
 			if prot != nil {
+				// 自动调解正文叙事有证据的背景物品扣减（如第1章开篇主角携带但尚未在百科登记的旧物），
+				// 接口自动在账本状态机中溯源补全持有，避免无谓阻断作者定稿。
+				c.StateMutation = domain.ReconcileNarrativeInventoryDelta(prot, c.Content, c.ChapterIndex, c.StateMutation)
+
 				trail, err := domain.DryRunStateMutation(prot, c.StateMutation)
 				if err != nil {
 					errorResponse(w, http.StatusInternalServerError, err.Error())
@@ -1124,27 +1128,16 @@ func (s *Server) runAsyncBootstrap(projectID string, req BootstrapProjectRequest
 		}
 	}
 
-	// Ledger aggregate marker for the bootstrap run.
-	_ = s.store.AppendEvent(bgCtx, &activity.ActivityEvent{
-		ProjectID:  projectID,
-		RunID:      bootRunID,
-		EntityType: activity.EntityFramework,
-		EntityID:   projectID,
-		EventType:  activity.EventFrameworkBoot,
-		Actor:      activity.ActorAIReasoner,
-		Source:     activity.SourceBootstrap,
-		Title:      fmt.Sprintf("创世总纲已推演《%s》", req.Title),
-		Summary: fmt.Sprintf("%d 卷 · %d 势力 · %d 关键人物 · %d 种子伏笔",
-			len(fw.VolumeArcs), len(fw.Factions), len(fw.KeyCharacters), len(fw.SeedHooks)),
-		CreatedAt: time.Now(),
-	})
-
 	// Transient seeds have been persisted to codex_entries and plot_hooks.
 	// Clean them from the macro framework to maintain a single source of truth.
 	fw.Factions = nil
 	fw.KeyCharacters = nil
 	fw.SeedHooks = nil
-	_ = s.store.SaveProject(bgCtx, proj)
+
+	sumText := fmt.Sprintf("%d 卷 · %d 势力 · %d 关键人物 · %d 种子伏笔",
+		len(fw.VolumeArcs), len(fw.Factions), len(fw.KeyCharacters), len(fw.SeedHooks))
+	saveCtx := activity.WithSummary(bgCtx, sumText)
+	_ = s.store.SaveProject(saveCtx, proj)
 
 	s.setBootstrapStatus(projectID, &BootstrapJobStatus{
 		ProjectID: projectID,
