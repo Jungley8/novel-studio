@@ -753,4 +753,30 @@ main 最终 `go test ./... -race` 全绿 + `pnpm test` 4/4；变异亲手重放
 "done" 以 pane 真 Idle + 树里有提交 + DONE token 三者为准，等待改用被动
 `herdr agent wait`，不再向工作中 pane 注消息。
 
+### 第十七轮：Wave 3 审校闭环与回放装配（2026-10-13 · 并行批次：2×agy + 1×opencode + 集成方）
+
+Wave 1 与 Wave 2 之后的第三波闭环升级（P1/P2/P3），各自独立 worktree，集成方统一复验、变异重放、rebase 线性合并与嵌入构建：
+
+1. **P1 审读闭环：OPEN 高优 findings 注入节拍规划提示词**（`0515f52`→rebase main `644fa2d`）：
+   - `internal/engine/orchestrator_beats.go`：节拍规划 user prompt 在里程碑块后增加【全书结构审读·待处理高优问题】段（`BuildStructureFindingsPromptBlock`），逐条格式化 `第{start}-{end}章·{type}·{summary}·建议：{suggestion}`，空切片省略整段；
+   - `internal/engine/workshop.go`：`ProduceChapter` 内以窄接口断言（`interface{ ListStructureFindings(ctx, projectID string) ([]*domain.StructureFinding, error) }`）best-effort 读库，过滤 `Status==OPEN && Severity==HIGH`，按 chapter_start 排序取前 5 条；读库/断言失败 Fail-Open 降级为空继续，规划增强不阻断生产；
+   - `internal/engine/chronicle.go`：`CanonHorizon` 扩展 `StructureFindings []domain.StructureFinding`（`omitempty`）；
+   - 测试与变异：`orchestrator_test.go` 与 `workshop_test.go` 覆盖 4 个边界用例（注入与上限 5、非 open/high 省略、空 findings 省略、读库错误优雅降级）；亲手变异 `BuildStructureFindingsPromptBlock` 短路为空串 → 守卫用例红（`workshop_test.go` + `orchestrator_test.go:805`），还原确认绿。
+2. **P2 提示词预览拆分：Render / Beats 双装配**（`e0918e7` + 修正 `7304fcf` + 对齐 `7f2d3f8` + dist `c9aa4b2`）：
+   - `internal/server/handlers_workshop_prompt.go` + `PromptInspectorModal.vue`：提示词检查弹窗重构拆分为渲染路（Render）与节拍路（Beats）双装配视图；
+   - 彻底贯彻 C3 经验：预览侧直接调用生产端构造器（`BuildElementDisciplineBlock`、`BuildMotifConceptPrompt`、`BuildMilestoneContextBlock`、`buildPlatformStylePrompt`），杜绝手工镜像提示词文本带来的漂移；
+   - 支持逐路由世界观标题与主角条目逐字镜像；构建并提交前端 `web/dist`。
+3. **P3 审庭回放：工作台展示分庭判决与少数派 dissent**（`d0986b6` + dist `57c228e`）：
+   - `web/src/components/workbench/WorkbenchStepsPanel.vue`：工作台审计报告区增加分庭判决回放段，展示逻辑/风格/连续性三分庭各自 verdict，并支持展开少数派 dissent 原文；老报告无分庭字段时平滑隐藏；
+   - 数据链贯通：`internal/domain/models.go` + `internal/engine/review_court.go` 统一定义 `DivisionName`/`DivisionResult`，`AuditReport` 与 `ReviewResult` 补充 `Dissent` 与 `Divisions`（`omitempty`）；
+   - 单测覆盖：`internal/server/handlers_reviewgate_test.go` 增补分庭及 dissent 序列化与端点断言；亲手变异丢弃分庭数据触发单测红后还原；构建并提交前端 `web/dist`。
+
+验证（集成方独立执行）：
+- 三包各自独立 worktree 内 build、单测、gofmt、变异重放全绿；
+- 合并至 main 后全量 `go test ./... -race` 全绿（含 engine 93s 深度并发套件）；
+- `gofmt -l .` 无输出；
+- 前端 `cd web && pnpm test` 4/4 通过，`pnpm build` 顺利产出并提交至 `web/dist`；
+- 独立 worktree（`novel-studio-courtplayback`, `novel-studio-findingsloop`）与临时分支全部清理完毕。
+
+
 
