@@ -92,6 +92,7 @@ func TestCanonWrites_RejectedWhileProductionActive(t *testing.T) {
 		{"uncommit chapter", http.MethodPost, "/api/projects/p1/chapters/3/uncommit", ``},
 		{"delete chapter", http.MethodDelete, "/api/projects/p1/chapters/3", ``},
 		{"workshop produce", http.MethodPost, "/api/projects/p1/workshop/produce", `{}`},
+		{"delete project", http.MethodDelete, "/api/projects/p1", ``},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -124,5 +125,31 @@ func TestCanonWrites_RejectedWhileProductionActive(t *testing.T) {
 	srv.ServeHTTP(w, req)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201 after production released, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDeleteProject_EndToEnd(t *testing.T) {
+	srv, s := newCoordTestServer(t)
+	ctx := context.Background()
+
+	// Ensure p1 exists
+	p, err := s.GetProject(ctx, "p1")
+	if err != nil || p == nil {
+		t.Fatalf("expected project p1 to exist: %v", err)
+	}
+
+	// DELETE /api/projects/p1 without active production lease should succeed
+	req := httptest.NewRequest(http.MethodDelete, "/api/projects/p1", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on delete project, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify project is now gone
+	pAfter, _ := s.GetProject(ctx, "p1")
+	if pAfter != nil {
+		t.Fatalf("expected project p1 to be deleted, but still exists: %+v", pAfter)
 	}
 }

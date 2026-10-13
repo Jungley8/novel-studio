@@ -192,6 +192,25 @@ func (s *SQLiteStore) DeleteProject(ctx context.Context, id string) error {
 		}
 	}()
 
+	// 显式清理无外键 ON DELETE CASCADE 约束的附随表，确保零孤儿数据残留
+	orphanCleanupQueries := []string{
+		`DELETE FROM chapter_quality_metrics WHERE project_id = ?`,
+		`DELETE FROM chapter_versions WHERE project_id = ?`,
+		`DELETE FROM chapter_state_snapshots WHERE project_id = ?`,
+		`DELETE FROM compaction_cache WHERE project_id = ?`,
+		`DELETE FROM project_automation WHERE project_id = ?`,
+		`DELETE FROM memory_fts WHERE project_id = ?`,
+		`DELETE FROM scenes WHERE project_id = ?`,
+		`DELETE FROM book_queue WHERE project_id = ?`,
+		`DELETE FROM studio_messages WHERE project_id = ?`,
+		`DELETE FROM studio_threads WHERE project_id = ?`,
+	}
+	for _, q := range orphanCleanupQueries {
+		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+			return fmt.Errorf("cleanup project table %q: %w", q, err)
+		}
+	}
+
 	if _, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id); err != nil {
 		return err
 	}

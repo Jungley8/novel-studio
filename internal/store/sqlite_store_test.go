@@ -10,6 +10,8 @@ import (
 
 	"github.com/Jungley8/novel-studio/internal/domain"
 	"github.com/Jungley8/novel-studio/internal/store"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestSQLiteStore_CRUD(t *testing.T) {
@@ -1091,5 +1093,83 @@ func TestCodexEntry_InnerPsy_Roundtrip(t *testing.T) {
 	}
 	if gotUpdated.Ghost != entry.Ghost {
 		t.Errorf("updated Ghost mismatch: expected %q, got %q", entry.Ghost, gotUpdated.Ghost)
+	}
+}
+
+func TestDeleteProject_OrphanCleanup(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test_orphan_cleanup.db")
+
+	s, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer s.Close()
+
+	projID := "proj-to-delete"
+	p := &domain.Project{
+		ID:             projID,
+		Title:          "待删除测试作品",
+		TargetPlatform: "通用",
+	}
+	if err := s.SaveProject(ctx, p); err != nil {
+		t.Fatalf("SaveProject failed: %v", err)
+	}
+
+	// Insert into multiple non-FK tables
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite3 db: %v", err)
+	}
+	defer db.Close()
+
+	now := time.Now()
+	_, err = db.Exec(`
+		INSERT INTO chapter_quality_metrics (project_id, chapter_index, actual_words, words_target, word_quota_ratio, under_target, verdict, score, rewrite_loops, unresolved_observations, hook_claims_total, hook_claims_validated, hook_claims_rejected, compaction_failed, outcome, created_at)
+		VALUES (?, 1, 2000, 2000, 1.0, 0, 'PASS', 90, 0, 0, 0, 0, 0, 0, 'committed', ?);
+		INSERT INTO chapter_versions (id, project_id, chapter_index, source, word_count, content_hash, content, created_at)
+		VALUES ('ver-1', ?, 1, 'commit', 2000, 'hash1', '测试正文', ?);
+		INSERT INTO chapter_state_snapshots (id, project_id, chapter_index, protagonist_json, hooks_json, created_at)
+		VALUES ('snap-1', ?, 1, '{}', '[]', ?);
+		INSERT INTO compaction_cache (project_id, cache_key, compiled_text, created_at)
+		VALUES (?, 'key1', 'compiled', ?);
+		INSERT INTO project_automation (project_id, enabled, created_at, updated_at)
+		VALUES (?, 1, '2026-10-13', '2026-10-13');
+		INSERT INTO scenes (id, chapter_id, project_id, scene_index, beats_json, created_at, updated_at)
+		VALUES ('sc-1', 'ch-dummy', ?, 1, '[]', ?, ?);
+	`, projID, now, projID, now, projID, now, projID, now, projID, projID, now, now)
+	if err != nil {
+		t.Fatalf("insert orphan test data failed: %v", err)
+	}
+
+	// Call DeleteProject
+	if err := s.DeleteProject(ctx, projID); err != nil {
+		t.Fatalf("DeleteProject failed: %v", err)
+	}
+
+	// Verify project itself is deleted
+	if got, _ := s.GetProject(ctx, projID); got != nil {
+		t.Errorf("expected project to be deleted, but still exists: %+v", got)
+	}
+
+	// Verify all child tables are cleanly purged (count == 0)
+	tablesToCheck := []string{
+		"chapter_quality_metrics",
+		"chapter_versions",
+		"chapter_state_snapshots",
+		"compaction_cache",
+		"project_automation",
+		"scenes",
+	}
+	for _, tbl := range tablesToCheck {
+		var cnt int
+		q := "SELECT count(*) FROM " + tbl + " WHERE project_id = ?"
+		if err := db.QueryRow(q, projID).Scan(&cnt); err != nil {
+			t.Fatalf("query count on %s failed: %v", tbl, err)
+		}
+		if cnt != 0 {
+			t.Errorf("expected 0 rows for %s after project deletion, got %d", tbl, cnt)
+		}
 	}
 }

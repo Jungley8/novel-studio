@@ -101,6 +101,9 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 			}
 			jsonResponse(w, http.StatusOK, p)
 		case http.MethodDelete:
+			if s.rejectIfProducing(w, r, projectID, "删除作品") {
+				return
+			}
 			if err := s.store.DeleteProject(ctx, projectID); err != nil {
 				errorResponse(w, http.StatusInternalServerError, err.Error())
 				return
