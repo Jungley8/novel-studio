@@ -142,9 +142,9 @@
           新建第一部作品
         </button>
         <button 
-          @click="state.activeTab = 'studio-ideas'" 
+          @click="state.activeTab = 'studio-chat'" 
           class="px-4 py-2 bg-atelier-850 hover:bg-atelier-800 text-ink-300 hover:text-ink-100 text-xs rounded-lg border border-atelier-700 transition cursor-pointer">
-          前往灵感 Inbox
+          前往对话记录
         </button>
       </div>
     </div>

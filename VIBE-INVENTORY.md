@@ -112,17 +112,34 @@
 
 ---
 
+## 对话记录与灵感 Inbox 合二为一、文本自由复制与 Markdown 渲染优化专项（Wave 6 / Round 26）
+
+目标：将分散的 Inbox 与 灵感 彻底合二为一为「对话记录」，彻底消除根节点 `select-none` 释放文本复制自由，引入 `marked` 引擎进行深度 Markdown 优雅排版与一键复制。
+
+| # | 交付 | 模块 / Spec | 优先级 | 状态 |
+|---|------|------------|--------|------|
+| 1 | **Inbox 与 灵感 合二为一**（全局模块精炼为 6 大中枢，`studio-chat` 升级为「对话记录」双流统一工作区） | `web/src/stores/domain/projectScope.js` + `AppSidebar.vue` | **P0** | 🟢 已完成 |
+| 2 | **对话记录双流交互体验**（左栏支持【💬 会话记录】与【💡 灵感 Inbox】双流切换、消息一键收录为灵感/一键转创世） | `web/src/views/StudioChatView.vue` | **P0** | 🟢 已完成 |
+| 3 | **页面文本划选复制彻底解禁**（移除 `App.vue` 根节点 `select-none`，主工作区开启 `select-text`，解决无法复制顽疾） | `web/src/App.vue` + `web/src/assets/main.css` | **P0** | 🟢 已完成 |
+| 4 | **Marked 引擎与 Markdown 渲染排版**（引入 `marked`，封装 `renderMarkdown` 与 `copyToClipboard`，注入 `.markdown-body` 暗黑美学样式） | `web/src/utils/markdown.js` + `main.css` | **P0** | 🟢 已完成 |
+| 5 | **情境工坊对话同步升级**（单作品角色对戏抽屉接入 Markdown 渲染与一键复制，支持文本自由划选） | `web/src/components/modals/WorkshopChatDrawer.vue` | **P1** | 🟢 已完成 |
+| 6 | **专项回归测试与渲染断言**（作用域 6 大核心模块全覆盖、Markdown 标题/列表/代码块/引用块解析断言） | `web/test/nav-scope-isolation.test.mjs` | **P0** | 🟢 已完成 |
+
+---
+
 ## 精炼成果与总进度
 
 - 🟢 **已精炼完成**: 5/5 核心双轨制与割裂架构缺陷（主角、势力阵营、世界公理、关键人物影子、种子伏笔冗余）
 - 🟢 **AI-First 改造**: 10/10 交付完成（编排器引擎/CLI/API、框架级级联、对话持久化全栈、成本面板、默认批产参数、停线待办中心、pipeline 控制台、排程/无人值守）
 - 🟢 **God File 拆分**: 5/5 完成（sqlite_store 14 文件 / WorkbenchView 3 文件 / orchestrator 7 文件 / GraphView 3 文件 / handlers_workshop 5 文件）
 - 🟢 **作品删除与各模块 UX 专项 (Wave 4)**: 9/9 交付完成（后端全级联擦除、409 生产互斥门禁、前端状态切换闭环、7/7 回归单测、全场景危险确认与各模块 UX 增强）
-- 🟢 **全局与作品级菜单完全隔离 (Wave 5)**: 6/6 交付完成（双域单一事实源、Sidebar/Header 物理隔离、视图零状态兜底、11/11 回归单测全绿）
+- 🟢 **全局与作品级菜单完全隔离 (Wave 5)**: 6/6 交付完成（双域单一事实源、Sidebar/Header 物理隔离、视图零状态兜底）
+- 🟢 **对话记录/灵感合并、文本复制解禁与Markdown优化 (Wave 6)**: 6/6 交付完成（Inbox与灵感合一、select-none移除、marked解析排版、12/12 单测全绿）
 - 🟡 **进行中**: 0
 - 🔴 **待排期**: 无
 - **Go 测试**: `go test ./... -race -count=1` 全绿通过
-- **前端测试**: `pnpm test`（11/11 通过）
+- **前端测试**: `pnpm test`（12/12 通过）
 - **前端构建**: `pnpm --dir web build` 纯净构建通过
+
 
 

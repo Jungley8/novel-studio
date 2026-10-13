@@ -67,13 +67,23 @@
           {{ msg.role === 'user' ? '作者' : (chatRole === 'character_roleplay' ? '角色应答' : '工坊智囊') }}
         </span>
         <div 
-          :class="[
-            'p-3 rounded-xl text-xs leading-relaxed max-w-[88%] whitespace-pre-wrap',
-            msg.role === 'user' 
-              ? 'bg-brand-amber text-atelier-950 font-medium rounded-tr-none shadow-amber-glow' 
-              : 'bg-atelier-850 text-ink-100 border border-atelier-750 rounded-tl-none font-serif'
-          ]">
+          v-if="msg.role === 'user'"
+          class="p-3 rounded-xl text-xs leading-relaxed max-w-[88%] whitespace-pre-wrap bg-brand-amber text-atelier-950 font-medium rounded-tr-none shadow-amber-glow select-text">
           {{ msg.content }}
+        </div>
+        <div 
+          v-else
+          class="p-3.5 rounded-xl text-xs leading-relaxed max-w-[90%] bg-atelier-850 text-ink-100 border border-atelier-750 rounded-tl-none font-serif select-text space-y-2">
+          <div class="markdown-body select-text" v-html="renderMarkdown(msg.content)"></div>
+          <div class="pt-1.5 border-t border-atelier-750/60 flex items-center justify-end select-none">
+            <button 
+              @click="handleCopyMessage(msg.content, idx)"
+              class="flex items-center gap-1 text-[10px] font-mono text-ink-400 hover:text-ink-200 transition cursor-pointer">
+              <Check v-if="copiedIdx === idx" class="w-3 h-3 text-emerald-400" />
+              <Copy v-else class="w-3 h-3" />
+              <span>{{ copiedIdx === idx ? '已复制' : '复制' }}</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -113,7 +123,8 @@
 import { ref, watch, nextTick } from 'vue';
 import { state, computedState, notify } from '../../stores/appState';
 import { api } from '../../api/client';
-import { MessageSquare, X, Sparkles } from 'lucide-vue-next';
+import { renderMarkdown, copyToClipboard } from '../../utils/markdown';
+import { MessageSquare, X, Sparkles, Copy, Check } from 'lucide-vue-next';
 
 const modes = [
   { id: 'character_roleplay', label: '🎭 角色扮演' },
@@ -127,6 +138,18 @@ const messages = ref([]);
 const inputContent = ref('');
 const isLoading = ref(false);
 const messagesContainer = ref(null);
+const copiedIdx = ref(null);
+
+async function handleCopyMessage(text, idx) {
+  const ok = await copyToClipboard(text);
+  if (ok) {
+    copiedIdx.value = idx;
+    setTimeout(() => {
+      copiedIdx.value = null;
+    }, 2000);
+    notify('已复制', '回复内容已复制到剪贴板', 'success', 2000);
+  }
+}
 
 function clearMessages() {
   messages.value = [];

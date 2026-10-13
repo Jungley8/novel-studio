@@ -885,6 +885,47 @@ Wave 1 与 Wave 2 之后的第三波闭环升级（P1/P2/P3），各自独立 wo
   - `pnpm --dir web build` 生产构建成功；
   - `go test ./internal/server/... ./internal/store/... -race -count=1` 全部通过。
 
+---
+
+### Wave 6: Inbox与灵感合二为一为对话记录、文本自由复制释放、对话Markdown排版深层优化 (Round 20)
+
+#### 1. Inbox 与 灵感 合二为一（对话记录 `studio-chat`）
+- **理念与架构**：
+  - 用户灵感往往源于与 AI 的深度脑暴推演，独立且割裂的「灵感 Inbox」与「全局对话」被彻底合并；
+  - 全局导航重构为统一的 **「对话记录」**（`id: studio-chat`），整合会话历史流与灵感便签流；
+  - `projectScope.js` 中将全局模块精炼为 6 大中枢（多作品总览、对话记录、全自动流水线、停线待办、自动化排程、AI 系统设置），保留 `studio-ideas` 别名自动平滑重定向至 `studio-chat`。
+- **双流协同界面升级 (`StudioChatView.vue`)**：
+  - 左栏顶部提供双 Tab 切换：【💬 会话记录】与【💡 灵感 Inbox】；
+  - 在【会话记录】模式中自由切换历史 Threads 会话或开启新对话；
+  - 在【灵感 Inbox】模式中集中展示沉淀的脑洞卡片，支持快速录入、一键「转创世」大纲推演、以及一键「带入会话脑暴」；
+  - 每条 AI 回复气泡底栏新增专属操作栏：一键【📋 复制 Markdown】、一键【💡 收录为灵感】至左侧 Inbox、一键【🌌 转创世大纲】唤起建书。
+
+#### 2. 根除无法复制缺陷，全面释放文本划选自由
+- **根因修复**：
+  - 排查确认 `web/src/App.vue` 根节点上设置了 `select-none`，导致全局子元素默认继承了 `user-select: none`，使整个页面所有非输入框文本均无法鼠标划选与复制；
+  - 彻底移除 `App.vue` 根容器上的 `select-none`，并将主内容容器明确设置为 `select-text`；
+  - 在 `main.css` 注入规范工具类 `.select-text { user-select: text !important; -webkit-user-select: text !important; }`；
+  - 在正文手稿画布、阅读器、对话气泡、大纲等阅读/写作关键场景全面确立文本自由选择与右键/快捷键复制能力。
+
+#### 3. 对话内容 Markdown 排版深层优化
+- **Marked 引擎集成 (`web/src/utils/markdown.js`)**：
+  - 引入标准 `marked` 解析引擎，支持完整 GFM 规范（分级标题、任务/嵌套列表、等宽代码块、行内代码胶囊、引用边框、GFM 复杂表格、粗体斜体）；
+  - 导出 `renderMarkdown(content)` 与 `copyToClipboard(text)` 通用工具函数。
+- **Atelier 深色美学排版样式 (`web/src/assets/main.css`)**：
+  - 设计注入 `.markdown-body` 工业级暗黑主题排版样式；
+  - 标题端庄稳重，引用块左侧配有 3px 琥珀金边框与微暗底色背景，代码块呈现深黑圆角与等宽排版，表格对齐整齐；
+  - 同时惠及全局对话记录 (`StudioChatView.vue`) 与单作品角色对戏抽屉 (`WorkshopChatDrawer.vue`)，并带有复制成功高亮微反馈。
+
+#### 4. 测试与验证全链路
+- **`web/test/nav-scope-isolation.test.mjs`**：
+  - 新增 Markdown 渲染器解析各级标题、粗体、列表、代码块、引用块专项断言；
+  - 验证 `studio-ideas` 别名重定向与 `studio-chat` 对话记录元数据。
+- **验证结果**：
+  - `pnpm --dir web test` 12/12 单元测试全绿通过；
+  - `pnpm --dir web build` 生产构建通过；
+  - `go test ./internal/server/... ./internal/store/... -race -count=1` 后端测试全绿通过。
+
+
 
 
 

@@ -301,8 +301,7 @@ const globalNavGroups = computed(() => [
     title: 'Studio 中枢',
     items: [
       { id: 'studio-library', label: '多作品总览', desc: '全库作品进度与健康度总览', icon: Library, badge: state.projects.length ? `${state.projects.length}部` : '' },
-      { id: 'studio-ideas', label: '灵感 Inbox', desc: '记录捕捉灵感与快速转创世', icon: Lightbulb },
-      { id: 'studio-chat', label: '全局对话', desc: '跨项目闲聊与宏观设定风暴', icon: MessagesSquare },
+      { id: 'studio-chat', label: '对话记录', desc: '灵感脑洞推演、Inbox 沉淀与历史会话记录', icon: MessagesSquare },
       { id: 'pipeline', label: '全自动流水线', desc: '一键从创世跑到成章（含停线提示）', icon: Rocket },
       { id: 'studio-todos', label: '停线待办', desc: '需要人工介入的章节与原因', icon: AlertTriangle },
       { id: 'studio-automation', label: '自动化排程', desc: '定时续产与开书队列，无人值守', icon: CalendarClock },

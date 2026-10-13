@@ -1,10 +1,10 @@
 <template>
-  <div class="flex h-screen bg-atelier-950 text-ink-100 font-sans overflow-hidden antialiased select-none">
+  <div class="flex h-screen bg-atelier-950 text-ink-100 font-sans overflow-hidden antialiased">
     <!-- 侧边导航栏 (全局模式与作品空间物理隔离) -->
     <AppSidebar v-show="!state.isZenMode" />
 
-    <!-- 主工作区容器 -->
-    <main class="flex-1 flex flex-col min-w-0 bg-atelier-950 overflow-hidden relative">
+    <!-- 主工作区容器 (支持文本自由选中文档与复制) -->
+    <main class="flex-1 flex flex-col min-w-0 bg-atelier-950 overflow-hidden relative select-text">
       <!-- 顶部状态栏 (全局态与作品态严格区分) -->
       <AppHeader v-show="!state.isZenMode" @trigger-pipeline="actions.runAutonomousPipeline" />
 

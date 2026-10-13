@@ -10,7 +10,6 @@
 
 export const GLOBAL_TABS = [
   'studio-library',
-  'studio-ideas',
   'studio-chat',
   'pipeline',
   'studio-todos',
@@ -38,7 +37,7 @@ export const PROJECT_TABS = [
 ];
 
 export function isGlobalTab(tabId) {
-  return GLOBAL_TABS.includes(tabId);
+  return GLOBAL_TABS.includes(tabId) || tabId === 'studio-ideas';
 }
 
 export function isProjectTab(tabId) {
@@ -51,8 +50,8 @@ export function getTabScope(tabId) {
 
 export const TAB_META = {
   'studio-library': { label: '多作品总览', scope: 'global', group: 'Studio 中枢', desc: '全库小说创作进度、伏笔债务与多作品健康度全景' },
-  'studio-ideas': { label: '灵感 Inbox', scope: 'global', group: 'Studio 中枢', desc: '轻量随笔记录故事脑洞与核心冲突，一键跃迁至创世推演' },
-  'studio-chat': { label: '全局对话', scope: 'global', group: 'Studio 中枢', desc: '跨项目闲聊与宏观设定头脑风暴' },
+  'studio-chat': { label: '对话记录', scope: 'global', group: 'Studio 中枢', desc: '灵感脑洞推演、Inbox 沉淀与历史会话记录' },
+  'studio-ideas': { label: '对话记录', scope: 'global', group: 'Studio 中枢', desc: '灵感脑洞推演、Inbox 沉淀与历史会话记录' },
   'pipeline': { label: '全自动流水线', scope: 'global', group: 'Studio 中枢', desc: '从核心脑洞一键自动化串通创世、设定推演与批量成章' },
   'studio-todos': { label: '停线待办', scope: 'global', group: 'Studio 中枢', desc: '全自动流水线中因质检不达标或冲突而需人工介入的章节' },
   'studio-automation': { label: '自动化排程', scope: 'global', group: 'Studio 中枢', desc: '全书定时续产与开书队列，无人值守流水线排程' },

@@ -501,11 +501,13 @@ export const actions = {
   requestNotificationPermission,
   setActiveTab(tabId) {
     if (!tabId) return;
-    state.activeTab = tabId;
-    if (isGlobalTab(tabId)) {
-      state.lastGlobalTab = tabId;
-    } else if (isProjectTab(tabId)) {
-      state.lastProjectTab = tabId;
+    // 将 studio-ideas 平滑映射到合并后的 studio-chat (对话记录)
+    const normalizedTab = tabId === 'studio-ideas' ? 'studio-chat' : tabId;
+    state.activeTab = normalizedTab;
+    if (isGlobalTab(normalizedTab)) {
+      state.lastGlobalTab = normalizedTab;
+    } else if (isProjectTab(normalizedTab)) {
+      state.lastProjectTab = normalizedTab;
     }
 
     if (tabId === 'matrix') matrixActs.loadMatrixOverview();

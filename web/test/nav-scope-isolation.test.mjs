@@ -38,17 +38,19 @@ test('作用域划分：全局菜单与作品级菜单严格互斥且全覆盖',
   const intersection = GLOBAL_TABS.filter(t => PROJECT_TABS.includes(t));
   assert.deepEqual(intersection, [], '全局 Tab 与作品级 Tab 不应有任何交集');
 
-  // 2. 全局 7 大模块完整覆盖
-  assert.equal(GLOBAL_TABS.length, 7);
+  // 2. 全局 6 大核心模块完整覆盖 (studio-ideas 已与 studio-chat 合二为一为「对话记录」)
+  assert.equal(GLOBAL_TABS.length, 6);
   assert.ok(GLOBAL_TABS.includes('studio-library'));
-  assert.ok(GLOBAL_TABS.includes('studio-ideas'));
   assert.ok(GLOBAL_TABS.includes('studio-chat'));
   assert.ok(GLOBAL_TABS.includes('pipeline'));
   assert.ok(GLOBAL_TABS.includes('studio-todos'));
   assert.ok(GLOBAL_TABS.includes('studio-automation'));
   assert.ok(GLOBAL_TABS.includes('config'));
 
-  // 3. 作品级 13 大工序完整覆盖
+  // 3. 兼容性验证：studio-ideas 作为历史别名依然被判定为全局作用域
+  assert.equal(isGlobalTab('studio-ideas'), true);
+
+  // 4. 作品级 13 大工序完整覆盖
   assert.equal(PROJECT_TABS.length, 13);
   assert.ok(PROJECT_TABS.includes('framework'));
   assert.ok(PROJECT_TABS.includes('codex'));
@@ -64,7 +66,7 @@ test('作用域划分：全局菜单与作品级菜单严格互斥且全覆盖',
   assert.ok(PROJECT_TABS.includes('analytics'));
   assert.ok(PROJECT_TABS.includes('metrics'));
 
-  // 4. 所有 Tab 均具有完整元数据 (label, desc, scope, group)
+  // 5. 所有 Tab 均具有完整元数据 (label, desc, scope, group)
   const allTabs = [...GLOBAL_TABS, ...PROJECT_TABS];
   for (const t of allTabs) {
     assert.ok(TAB_META[t], `Tab ${t} 必须在 TAB_META 中声明`);
@@ -83,6 +85,16 @@ test('响应式作用域：computedState 正确判断当前导航模式与元数
   assert.equal(computedState.isProjectScope.value, false);
   assert.equal(computedState.activeTabMeta.value.label, '多作品总览');
 
+  // 对话记录（原灵感 Inbox 与全局对话合二为一）
+  actions.setActiveTab('studio-chat');
+  assert.equal(state.activeTab, 'studio-chat');
+  assert.equal(computedState.navScope.value, 'global');
+  assert.equal(computedState.activeTabMeta.value.label, '对话记录');
+
+  // 兼容别名重定向：设置 studio-ideas 自动映射到 studio-chat
+  actions.setActiveTab('studio-ideas');
+  assert.equal(state.activeTab, 'studio-chat');
+
   actions.setActiveTab('workbench');
   assert.equal(state.activeTab, 'workbench');
   assert.equal(computedState.navScope.value, 'project');
@@ -96,19 +108,19 @@ test('双域记忆跳转：switchToGlobal 与 switchToProject 独立记录并恢
   state.selectedProjectId = 'proj-1';
   state.currentProject = state.projects[0];
 
-  // 1. 在全局模式下浏览到灵感 Inbox
-  actions.switchToGlobal('studio-ideas');
-  assert.equal(state.activeTab, 'studio-ideas');
-  assert.equal(state.lastGlobalTab, 'studio-ideas');
+  // 1. 在全局模式下浏览到对话记录
+  actions.switchToGlobal('studio-chat');
+  assert.equal(state.activeTab, 'studio-chat');
+  assert.equal(state.lastGlobalTab, 'studio-chat');
 
   // 2. 切入作品模式浏览到全书大纲
   await actions.switchToProject(null, 'matrix');
   assert.equal(state.activeTab, 'matrix');
   assert.equal(state.lastProjectTab, 'matrix');
 
-  // 3. 返回全局模式，未指定具体 tab 时自动恢复上次停留在的 studio-ideas
+  // 3. 返回全局模式，未指定具体 tab 时自动恢复上次停留在的 studio-chat
   actions.switchToGlobal();
-  assert.equal(state.activeTab, 'studio-ideas');
+  assert.equal(state.activeTab, 'studio-chat');
   assert.equal(computedState.navScope.value, 'global');
 
   // 4. 再次切入作品模式，未指定具体 tab 时自动恢复上次停留在的 matrix
@@ -129,3 +141,27 @@ test('Fail-Closed 保护：当作品库为空时拒绝切入作品空间', async
   assert.equal(state.activeTab, 'studio-library', '应保持在全局视图中');
   assert.equal(state.showNewProjectModal, true, '应引导打开新建作品弹窗');
 });
+
+test('Markdown 渲染器：正确解析各级标题、粗体、列表与代码块', async () => {
+  const { renderMarkdown } = await import('../src/utils/markdown.js');
+
+  const mdInput = `### 核心反转
+
+- 阶段一：**金手指受限**
+- 阶段二：反向吞噬
+
+\`\`\`go
+func Activate() bool { return true }
+\`\`\`
+
+> 这是一段宏观世界观引言`;
+
+  const html = renderMarkdown(mdInput);
+  assert.ok(html.includes('<h3>核心反转</h3>'), '应包含 h3 标题');
+  assert.ok(html.includes('<strong>金手指受限</strong>'), '应包含粗体 strong');
+  assert.ok(html.includes('<ul>') && html.includes('<li>'), '应包含 ul 与 li 列表');
+  assert.ok(html.includes('<pre>') && html.includes('<code'), '应包含 pre 和 code 代码块');
+  assert.ok(html.includes('<blockquote>'), '应包含 blockquote 引用块');
+});
+
+
